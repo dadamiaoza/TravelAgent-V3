@@ -32,6 +32,24 @@ _Avoid_: 打卡点、行程条目、行程项
 影响行程生成的用户偏好——时间、地点、人数、预算范围、必去/避开地点等。
 _Avoid_: 条件、限制、参数
 
+### Agent 状态
+
+**状态** (State):
+Agent 在单次 `invoke` 内部持有的数据集合（LangGraph StateGraph）。包含 `messages` 字段（全量对话历史）和自定义字段（如已规划 POI 集合、当前天数等策略性摘要）。State 是"此刻有什么"。
+_Avoid_: 上下文、session、运行时数据
+
+**记忆** (Memory):
+将 State 跨轮次持久化的机制（LangGraph Checkpointer）。把 State 内容（messages + 自定义字段）序列化存入 PostgreSQL。同一 `thread_id` 下后续 `invoke` 恢复上次的 State，Agent 得以"记住"之前的决策。Memory 是"如何把此刻存下来给下次用"。
+_Avoid_: 对话记忆、聊天记录、缓存
+
+**Checkpointer** (检查点存储器):
+LangGraph 中实现 Memory 的具体组件。内置三种：`MemorySaver`（内存，开发用）、`SqliteSaver`（本地文件）、`PostgresSaver`（PG，本项目选择）。
+_Avoid_: 持久化层、存储后端
+
+**上下文隔离** (Context Isolation):
+每个行程拥有独立的 State 线程（`thread_id = trip-{trip_id}`），一个行程的规划决策不会污染另一个行程。
+_Avoid_: 会话隔离、线程、对话隔离
+
 ### 可信与优化
 
 **时效校验** (Fact Check):
@@ -43,7 +61,7 @@ _Avoid_: 准确性检查、信息验证
 _Avoid_: 路径规划、路线规划
 
 **版本快照** (Snapshot):
-每次行程修改或重算后自动保存的完整行程副本，支持对比与回滚。
+每次行程修改或重算后自动保存的完整行程副本，支持对比与回滚。与**对话记忆**不同——对话记忆存 Agent 状态，版本快照存行程数据结果。
 _Avoid_: 历史记录、备份
 
 ## 关系
@@ -54,6 +72,8 @@ _Avoid_: 历史记录、备份
 - 每次修改**行程节点**后自动生成新的**版本快照**
 - **时效校验**作用于**行程节点**，产出风险评估
 - **路线优化**作用于**行程节点**，产出重排后的节点序列
+- 每个**行程**拥有独立的**对话记忆**（`thread_id = trip-{trip_id}`），Agent 状态不跨行程泄露
+- **对话记忆**和**版本快照**是两种不同的记忆——前者存 Agent 对话状态，后者存行程数据副本
 
 ## 示例对话
 
@@ -66,3 +86,13 @@ _Avoid_: 历史记录、备份
 ## 已标记的歧义
 
 - "攻略" 曾被用于指代源材料、候选列表和行程三个不同概念 —— 已拆分。
+
+## 架构决策
+
+### 记忆系统设计
+
+- **两种记忆并存**：对话记忆（LangGraph PostgresSaver）+ 版本快照（DB Snapshot 表）
+- **Checkpointer 选型**：PostgresSaver（跨重启持久化，复用现有 PostgreSQL）
+- **上下文隔离粒度**：`thread_id = trip-{trip_id}`（按行程隔离，避免跨行程上下文污染）
+- **建表管理**：Alembic migration 管理 checkpointer 表（统一入口，避免隐式初始化）
+- **实现顺序**：先 PostgresSaver（Agent 记忆持久化），后 Snapshot（数据快照）
