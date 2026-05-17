@@ -1,31 +1,34 @@
 """Itinerary Generator Agent — Step 4 of agent learning path.
 
-Agent with MEMORY (LangGraph MemorySaver) — remembers prior planning
-decisions across multi-turn conversations.
+Agent with MEMORY (LangGraph PostgresSaver) — remembers prior planning
+decisions across multi-turn conversations and across server restarts.
 """
 
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg import connect
+from psycopg.rows import dict_row
 
 from app.agents.tools.attractions import search_attractions, get_travel_time
 from app.core.config import settings
 
+_conn = connect(settings.database_url, autocommit=True, prepare_threshold=0, row_factory=dict_row)
+_checkpointer = PostgresSaver(_conn)
+
 
 def create_itinerary_gen():
-    """Create an itinerary planning agent with MemorySaver checkpointer."""
+    """Create an itinerary planning agent with PostgresSaver checkpointer."""
     model = ChatOpenAI(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         model=settings.llm_model,
     )
 
-    checkpointer = MemorySaver()
-
     return create_agent(
         model=model,
         tools=[search_attractions, get_travel_time],
-        checkpointer=checkpointer,
+        checkpointer=_checkpointer,
         system_prompt=(
             "你是一个旅行行程规划助手。你的工作流程：\n"
             "1. 收到用户请求后，先调用 search_attractions 获取目的地景点池\n"

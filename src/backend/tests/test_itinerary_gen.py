@@ -69,6 +69,34 @@ def test_multi_turn_memory(agent):
     assert not overlap, f"Memory leak — these POIs appear in both days: {overlap}"
 
 
+def test_cross_restart_persistence():
+    """Simulate server restart: a NEW agent instance recovers old memory."""
+    thread = {"configurable": {"thread_id": "test_restart"}}
+
+    # "Before restart" — agent instance 1
+    agent1 = create_itinerary_gen()
+    r1 = agent1.invoke(
+        {"messages": [{"role": "user", "content": "请为上海1日游规划第一天的行程"}]},
+        config=thread,
+    )
+    j1 = json.loads(_get_final_json(r1["messages"]))
+    day1_pois = {item["poi_name"] for day in j1["days"] for item in day["items"]}
+
+    # "After restart" — agent instance 2 (same thread_id)
+    agent2 = create_itinerary_gen()
+    r2 = agent2.invoke(
+        {"messages": [{"role": "user", "content": "现在规划第二天"}]},
+        config=thread,
+    )
+    j2 = json.loads(_get_final_json(r2["messages"]))
+    day2_pois = {item["poi_name"] for day in j2["days"] for item in day["items"]}
+
+    # Day 2 must not reuse Day 1 POIs — persistence worked
+    overlap = day1_pois & day2_pois
+    assert not overlap, f"Restart persistence failed — overlap: {overlap}"
+    assert len(day2_pois) >= 2, f"Day2 too few POIs: {day2_pois}"
+
+
 def test_search_before_plan(agent):
     """Agent must call search_attractions before assigning POIs."""
     result = agent.invoke(
