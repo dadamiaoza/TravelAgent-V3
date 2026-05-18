@@ -20,6 +20,47 @@ class TripGenerate(BaseModel):
     pass  # No extra fields needed for MVP — reads trip constraints from DB later
 
 
+# ── Source (travelogue) parsing schemas ──
+
+class SourceParseRequest(BaseModel):
+    text: str = Field(..., min_length=1, examples=["第一天去了西湖，下午雷峰塔；第二天灵隐寺..."])
+
+
+class SourceEntityOut(BaseModel):
+    poi_name: str
+    day_index: int
+    seq: int
+    lat: float | None = None
+    lng: float | None = None
+
+
+class SourceParseOut(BaseModel):
+    entities: list[SourceEntityOut]
+
+
+# ── Fact check schemas ──
+
+class FactCheckItem(BaseModel):
+    poi_name: str
+    date: date
+
+
+class FactCheckRequest(BaseModel):
+    items: list[FactCheckItem] = Field(..., min_length=1)
+
+
+class FactCheckResult(BaseModel):
+    poi_name: str
+    date: date
+    weather: str | None = None
+    opening_hours: str | None = None
+    risk: str | None = None  # "low" | "medium" | "high"
+
+
+class FactCheckOut(BaseModel):
+    results: list[FactCheckResult]
+
+
 # ── Response schemas ──
 
 class ItineraryItemOut(BaseModel):

@@ -1,39 +1,102 @@
-"""Itinerary generation service — template-based for MVP (S1).
+"""Itinerary generation service — powered by LangChain itinerary_gen Agent.
 
-Will be replaced by LangChain itinerary_gen agent in Step 3.
+Replaces the mock template generator with real AI-generated itineraries.
 """
+
+import json
+import re
 from datetime import date, time, timedelta
+
 from sqlalchemy.orm import Session
+
+from app.agents.itinerary_gen import create_itinerary_gen
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 
 
 def generate_itinerary(db: Session, trip: Trip) -> Trip:
-    """Generate a simple day-by-day itinerary with mock POIs."""
-    day_count = (trip.end_date - trip.start_date).days + 1
-    mock_pois = ["当地热门景点", "推荐餐厅", "文化地标", "购物中心", "公园漫步", "博物馆"]
+    """Generate an itinerary using the LangChain agent, then persist to DB."""
+    agent = create_itinerary_gen()
 
-    for day_idx in range(day_count):
-        day_date = trip.start_date + timedelta(days=day_idx)
+    day_count = (trip.end_date - trip.start_date).days + 1
+    prompt = (
+        f"请为{trip.destination}{day_count}日游规划完整行程。"
+        f"旅行日期：{trip.start_date} 至 {trip.end_date}。"
+        f"人数：{trip.people_count}人。"
+    )
+    if trip.budget_min and trip.budget_max:
+        prompt += f"预算范围：{trip.budget_min}-{trip.budget_max}元。"
+    elif trip.budget_min:
+        prompt += f"最低预算：{trip.budget_min}元。"
+    elif trip.budget_max:
+        prompt += f"最高预算：{trip.budget_max}元。"
+
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": prompt}]},
+        config={"configurable": {"thread_id": f"trip-{trip.id}"}},
+    )
+
+    itinerary = _parse_agent_output(result["messages"])
+    _persist_itinerary(db, trip, itinerary, trip.start_date)
+    return trip
+
+
+def _parse_agent_output(messages: list) -> dict:
+    """Extract the itinerary JSON from agent messages. Raises ValueError on failure."""
+    from langchain_core.messages import AIMessage
+
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+            content = getattr(msg, "content", "")
+            if not content:
+                continue
+            content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+            for start_ch, end_ch in [("{", "}"), ("[", "]")]:
+                start = content.find(start_ch)
+                end = content.rfind(end_ch)
+                if start != -1 and end > start:
+                    return json.loads(content[start:end + 1])
+    raise ValueError("Agent did not return valid itinerary JSON")
+
+
+def _persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: date):
+    """Convert agent JSON to ORM objects and write to DB."""
+    # Clear old items if re-generating
+    if trip.days:
+        for day in trip.days:
+            db.delete(day)
+        db.flush()
+
+    days_data = itinerary.get("days", [])
+    for day_data in days_data:
+        day_idx = day_data["day_index"]
         day = ItineraryDay(
             trip_id=trip.id,
-            day_index=day_idx + 1,
-            date=day_date,
+            day_index=day_idx,
+            date=start_date + timedelta(days=day_idx - 1),
         )
         db.add(day)
         db.flush()
 
-        # Assign 3-5 POIs per day
-        for seq, poi in enumerate(mock_pois[: (3 + day_idx % 3)], start=1):
+        accumulated_minutes = 9 * 60  # Start at 09:00
+        for item_data in day_data.get("items", []):
+            duration_m = int(item_data.get("duration_h", 1.5) * 60)
+            travel_m = item_data.get("travel_minutes_from_prev", 0)
+
+            start_minutes = accumulated_minutes + travel_m
+            start_t = time(start_minutes // 60 % 24, start_minutes % 60)
+            end_t = time((start_minutes + duration_m) // 60 % 24, (start_minutes + duration_m) % 60)
+
             item = ItineraryItem(
                 day_id=day.id,
-                seq=seq,
-                poi_name=f"Day{day_idx+1} {poi}",
-                start_time=time(9 + seq * 2, 0),
-                end_time=time(10 + seq * 2, 0),
+                seq=item_data["seq"],
+                poi_name=item_data["poi_name"],
+                start_time=start_t,
+                end_time=end_t,
+                travel_minutes=travel_m,
             )
             db.add(item)
+            accumulated_minutes = start_minutes + duration_m
 
     trip.status = "generated"
     db.commit()
     db.refresh(trip)
-    return trip

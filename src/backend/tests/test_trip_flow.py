@@ -6,7 +6,7 @@ from app.services.itinerary import generate_itinerary
 def test_create_trip_db(db):
     """Direct DB: create a trip with itinerary."""
     trip = Trip(
-        destination="pytest-db",
+        destination="杭州",
         start_date="2026-06-01",
         end_date="2026-06-02",
         people_count=1,
@@ -26,7 +26,7 @@ def test_create_trip_db(db):
 def test_create_trip_api(client):
     """POST /trips via TestClient."""
     r = client.post("/api/v1/trips", json={
-        "destination": "pytest-api",
+        "destination": "北京",
         "start_date": "2026-07-01",
         "end_date": "2026-07-02",
         "people_count": 2,
@@ -34,14 +34,14 @@ def test_create_trip_api(client):
     assert r.status_code == 201, r.text
     data = r.json()
     assert "id" in data
-    assert data["destination"] == "pytest-api"
+    assert data["destination"] == "北京"
     assert len(data["days"]) == 2
 
 
 def test_get_trip(client):
     """POST → GET /trips/{id} round-trip."""
     r = client.post("/api/v1/trips", json={
-        "destination": "pytest-get",
+        "destination": "上海",
         "start_date": "2026-08-01",
         "end_date": "2026-08-03",
     })
@@ -49,7 +49,7 @@ def test_get_trip(client):
 
     r2 = client.get(f"/api/v1/trips/{trip_id}")
     assert r2.status_code == 200
-    assert r2.json()["destination"] == "pytest-get"
+    assert r2.json()["destination"] == "上海"
     assert len(r2.json()["days"]) == 3
 
 
@@ -63,7 +63,7 @@ def test_list_trips(client):
 def test_read_trip(db):
     """Direct DB: query back a trip with its days and items."""
     trip = Trip(
-        destination="pytest-read",
+        destination="杭州",
         start_date="2026-09-01",
         end_date="2026-09-02",
         people_count=3,
@@ -76,7 +76,7 @@ def test_read_trip(db):
 
     found = db.query(Trip).filter(Trip.id == trip.id).first()
     assert found is not None
-    assert found.destination == "pytest-read"
+    assert found.destination == "杭州"
     assert len(found.days) == 2
     for day in found.days:
         assert len(day.items) > 0
