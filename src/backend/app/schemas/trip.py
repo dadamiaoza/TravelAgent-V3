@@ -113,3 +113,15 @@ class TripBrief(BaseModel):
     status: str
 
     model_config = {"from_attributes": True}
+
+
+# ── Chat schemas ──
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, examples=["帮我规划北京3日游，偏好历史文化"])
+    thread_id: str | None = None  # 可选，指定后可以延续之前的对话
+
+
+class ChatOut(BaseModel):
+    reply: str
+    thread_id: str

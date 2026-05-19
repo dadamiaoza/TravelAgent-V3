@@ -64,6 +64,14 @@ _Avoid_: 路径规划、路线规划
 一种 Agent 编排模式：上游 Agent 的输出作为下游 Agent 的输入，在服务层按顺序串联调用。与 Supervisor 模式（Agent 互相感知）不同，链式调用中各 Agent 互不知晓。
 _Avoid_: Agent 串联、流水线、Pipeline
 
+**主管 Agent** (Supervisor):
+一种多 Agent 编排模式：一个"主管"Agent 管理多个"专家"子 Agent，通过 Tool Calling 机制动态决定将用户请求路由给哪个专家。Supervisor 本身就是一个 Agent，其 Tool 是其他 Agent。
+_Avoid_: 调度器、编排器、Orchestrator
+
+**移交 Tool** (Handoff Tool):
+Supervisor 模式下自动生成的 Tool，每个子 Agent 对应一个。当 Supervisor 调用该 Tool 时，控制权连同对话消息一起转移给子 Agent。子 Agent 完成后，控制权返回 Supervisor。
+_Avoid_: 切换工具、委托工具、路由 Tool
+
 **版本快照** (Snapshot):
 每次行程修改或重算后自动保存的完整行程副本，支持对比与回滚。与**对话记忆**不同——对话记忆存 Agent 状态，版本快照存行程数据结果。
 _Avoid_: 历史记录、备份
@@ -79,6 +87,7 @@ _Avoid_: 历史记录、备份
 - itinerary_gen Agent 输出 → route_optimizer Agent 输入，构成**链式 Agent 调用**
 - 每个**行程**拥有独立的**对话记忆**（`thread_id = trip-{trip_id}`），Agent 状态不跨行程泄露
 - **对话记忆**和**版本快照**是两种不同的记忆——前者存 Agent 对话状态，后者存行程数据副本
+- `POST /api/v1/chat` 入口收归到**主管 Agent**，主管通过**移交 Tool** 动态调度子 Agent
 
 ## 示例对话
 
@@ -111,3 +120,12 @@ _Avoid_: 历史记录、备份
 - **坐标策略**：optimize_itinerary 顺带 geocode + 回填 lat/lng，Step 5 保持原序不排序
 - **高德 MCP**：延后至 Step 7，与真实路径规划统一接入
 - **Memory**：不加 Checkpointer（一次性优化，无多轮需求）
+
+### Step 6 多 Agent 编排设计
+
+- **编排框架**：`langgraph-supervisor`（官方扩展，自动生成 Handoff Tool）
+- **编排方式**：Supervisor 模式（LLM 动态决策）替代硬编码链式调用
+- **子 Agent**：全部 4 个（guide_parser、itinerary_gen、route_optimizer、fact_checker）
+- **Supervisor Memory**：PostgresSaver（聊天本身就是多轮对话，需记忆）
+- **入口**：新增 `POST /api/v1/chat` 统一入口，原有独立端点保留
+- **服务层下沉**：编排决策上移至 Supervisor，服务层退为"执行者"（JSON 解析、ORM 映射、DB 读写）

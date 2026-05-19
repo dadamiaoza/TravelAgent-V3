@@ -6,6 +6,7 @@ from app.api.v1.health import router as health_router
 from app.api.v1.trips import router as trips_router
 from app.api.v1.sources import router as sources_router
 from app.api.v1.facts import router as facts_router
+from app.api.v1.chat import router as chat_router
 
 app = FastAPI(title="AI Travel Assistant", version="0.1.0")
 
@@ -21,3 +22,4 @@ app.include_router(health_router, prefix="/api/v1")
 app.include_router(trips_router, prefix="/api/v1")
 app.include_router(sources_router, prefix="/api/v1")
 app.include_router(facts_router, prefix="/api/v1")
+app.include_router(chat_router, prefix="/api/v1")
