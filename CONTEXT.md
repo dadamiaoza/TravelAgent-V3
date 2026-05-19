@@ -72,6 +72,10 @@ _Avoid_: 调度器、编排器、Orchestrator
 Supervisor 模式下自动生成的 Tool，每个子 Agent 对应一个。当 Supervisor 调用该 Tool 时，控制权连同对话消息一起转移给子 Agent。子 Agent 完成后，控制权返回 Supervisor。
 _Avoid_: 切换工具、委托工具、路由 Tool
 
+**降级兜底** (Graceful Degradation):
+API 不可用（无 Key、超时、限流）时自动切换到备用方案（mock 数据），保证系统不崩溃。对 Agent 透明——Agent 不需要知道"这是真实数据还是估算"。
+_Avoid_: 回退、兜底、fallback
+
 **版本快照** (Snapshot):
 每次行程修改或重算后自动保存的完整行程副本，支持对比与回滚。与**对话记忆**不同——对话记忆存 Agent 状态，版本快照存行程数据结果。
 _Avoid_: 历史记录、备份
