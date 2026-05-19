@@ -57,8 +57,12 @@ _Avoid_: 会话隔离、线程、对话隔离
 _Avoid_: 准确性检查、信息验证
 
 **路线优化** (Route Optimization):
-基于地理坐标减少行程折返与不合理通勤的节点重排。
+基于地理坐标减少行程折返与不合理通勤的节点重排。由 route_optimizer Agent 自动执行。
 _Avoid_: 路径规划、路线规划
+
+**链式 Agent 调用** (Chained Agent Invocation):
+一种 Agent 编排模式：上游 Agent 的输出作为下游 Agent 的输入，在服务层按顺序串联调用。与 Supervisor 模式（Agent 互相感知）不同，链式调用中各 Agent 互不知晓。
+_Avoid_: Agent 串联、流水线、Pipeline
 
 **版本快照** (Snapshot):
 每次行程修改或重算后自动保存的完整行程副本，支持对比与回滚。与**对话记忆**不同——对话记忆存 Agent 状态，版本快照存行程数据结果。
@@ -71,7 +75,8 @@ _Avoid_: 历史记录、备份
 - 用户勾选**源材料实体**后写入**行程节点**
 - 每次修改**行程节点**后自动生成新的**版本快照**
 - **时效校验**作用于**行程节点**，产出风险评估
-- **路线优化**作用于**行程节点**，产出重排后的节点序列
+- **路线优化**作用于**行程节点**，产出重排后的节点序列并回填地理坐标
+- itinerary_gen Agent 输出 → route_optimizer Agent 输入，构成**链式 Agent 调用**
 - 每个**行程**拥有独立的**对话记忆**（`thread_id = trip-{trip_id}`），Agent 状态不跨行程泄露
 - **对话记忆**和**版本快照**是两种不同的记忆——前者存 Agent 对话状态，后者存行程数据副本
 
@@ -96,3 +101,13 @@ _Avoid_: 历史记录、备份
 - **上下文隔离粒度**：`thread_id = trip-{trip_id}`（按行程隔离，避免跨行程上下文污染）
 - **建表管理**：Alembic migration 管理 checkpointer 表（统一入口，避免隐式初始化）
 - **实现顺序**：先 PostgresSaver（Agent 记忆持久化），后 Snapshot（数据快照）
+
+### Step 5 路线优化设计
+
+- **触发方式**：自动触发（generate_itinerary 末尾串联调用）
+- **实现模式**：Agent + Tool（route_optimizer Agent + optimize_itinerary Tool）
+- **编排方式**：服务层串联（itinerary_gen → route_optimizer 顺序调用）
+- **Tool 粒度**：粗粒度单 Tool（一次性处理所有天，Agent 只调一次）
+- **坐标策略**：optimize_itinerary 顺带 geocode + 回填 lat/lng，Step 5 保持原序不排序
+- **高德 MCP**：延后至 Step 7，与真实路径规划统一接入
+- **Memory**：不加 Checkpointer（一次性优化，无多轮需求）
