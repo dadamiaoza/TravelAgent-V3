@@ -3,7 +3,7 @@
 ## 概述
 
 **日期**：2026-05-20
-**阶段**：逐步实现中（7.1 已完成）
+**阶段**：全部完成（7.1-7.6 ✅）
 **学习目标**：在 Agent 架构不变的前提下，把 mock 工具替换为真实 API，让项目从"学习演示"变成"可用的应用"
 
 ---
@@ -159,7 +159,7 @@ preference="自然风光" → types="110000|140000"
 | 7.3 | `search_attractions` | 高德 POI 搜索 | ✅ 已完成 |
 | 7.4 | `get_opening_hours` | 高德 POI 搜索 biz_ext | ✅ 已完成 |
 | 7.5 | `get_weather` | 和风天气 7d 预报 | ✅ 已完成 |
-| 7.6 | `optimize_itinerary` | 升级为真实路径排序 | 待实现（Step 5 顺延） |
+| 7.6 | `optimize_itinerary` | 升级为真实路径排序 | ✅ 已完成 |
 
 ### Step 8+：增强功能
 
@@ -483,6 +483,54 @@ JWT 自验证通过（签名正确），但和风返回 401。排查 6 种密钥
 ```
 pip install pyjwt cryptography
 ```
+
+---
+
+## 7.6 optimize_itinerary → 高德路径规划真实排序（✅ 已完成）
+
+### 概述
+
+将 `optimize_itinerary` 从"只填坐标"升级为"地理编码 + 路径规划 + POI 重排序 + 交通时间填充"的完整路线优化工具。
+
+### 核心设计
+
+**混合交通方式**：每对 POI 按 Haversine 距离自动选择 walking（< 1.5km）或 transit（≥ 1.5km）。高德 transit/integrated 端点本身包含步行段，无需单独处理。
+
+**贪心最近邻排序**：每日 POI 中，第一个（Agent 选择的起点）固定不动，后续 POI 按最近邻贪心重排。
+
+**geocode_poi 增强**：返回 dict 新增 `city` 字段（高德地理编码 API 响应中原有的数据），供 transit API 的必填 `city` 参数使用。向后兼容（现有调用方只取 `lat`/`lng` 不受影响）。
+
+**降级策略**：任一 Direction API 调用失败 → 该日整体降级，保持 Agent 原始顺序 + Haversine 距离估算 travel_minutes_from_prev。
+
+### 新增函数
+
+`route_optimizer.py` 新增 9 个模块私有函数：
+
+| 函数 | 职责 |
+|------|------|
+| `_select_mode(distance_m)` | <1500m → walking, ≥1500m → transit |
+| `_haversine_distance(lat1, lng1, lat2, lng2)` | 球面距离（米） |
+| `_amap_direction_direct(lng1, lat1, lng2, lat2, mode, city)` | 坐标直调高德 Direction API，返回分钟数 |
+| `_extract_duration_direct(data, mode)` | 从 API 响应提取 duration（秒） |
+| `_build_travel_time_matrix(items)` | 构建 N×(N-1) 有向旅行时间矩阵 |
+| `_reorder_by_nearest_neighbor(items, matrix)` | 贪心最近邻重排，items[0] 固定 |
+| `_fill_travel_times_from_matrix(items, matrix, index_map)` | 真实矩阵数据回填 travel_minutes_from_prev |
+| `_estimate_travel_minutes_from_distance(distance_m)` | Haversine 距离 → 估算分钟 |
+| `_fill_travel_times_fallback(items)` | 降级路径：保持原始顺序 + Haversine 估算 |
+
+### API 消耗
+
+5 POI/日 × 4 = 20 次/日，3 日行程 = 60 次/月。高德免费额度 15 万次/月（geocode+direction 共享），绰绰有余。
+
+### 测试结果
+
+20 个测试全部通过（3 个旧 + 17 个新）。
+
+### 局限性
+
+- `geocode_poi` 不传 `city` 参数时，Amap 对部分 POI（如"灵隐寺"）可能返回错误城市的同名地点。需要 Agent 或上层传入城市上下文来改善。
+- 贪心最近邻不保证全局最优路径，但对 3-5 个 POI 的日常行程影响可忽略。
+- transit 模式依赖 `city` 字段。若 geocode 返回空 city（mock 降级场景）且距离 ≥ 1.5km，当前实现会因缺少 city 而返回 None → 触发降级。
 
 ---
 

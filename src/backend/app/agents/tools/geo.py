@@ -48,7 +48,7 @@ def geocode_poi(name: str, city: str = "") -> dict:
         city: Optional city name for more precise results, e.g. "北京"
 
     Returns:
-        Dict with keys: name (str), lat (float), lng (float).
+        Dict with keys: name (str), lat (float), lng (float), city (str).
     """
     if settings.amap_api_key:
         try:
@@ -83,9 +83,15 @@ def _geocode_amap(name: str, city: str = "") -> dict | None:
         return None
 
     # Amap returns "lng,lat" — split and convert
-    location = data["geocodes"][0]["location"]
+    geocode = data["geocodes"][0]
+    location = geocode["location"]
     lng_str, lat_str = location.split(",")
-    return {"name": name, "lat": float(lat_str), "lng": float(lng_str)}
+    return {
+        "name": name,
+        "lat": float(lat_str),
+        "lng": float(lng_str),
+        "city": geocode.get("city", ""),
+    }
 
 
 # ── Mock fallback ──
@@ -93,10 +99,15 @@ def _geocode_amap(name: str, city: str = "") -> dict | None:
 def _geocode_mock(name: str) -> dict:
     """Mock geocode using hardcoded database with hash-based fallback."""
     if name in _MOCK_POI:
-        return {"name": name, "lat": _MOCK_POI[name]["lat"], "lng": _MOCK_POI[name]["lng"]}
+        return {
+            "name": name,
+            "lat": _MOCK_POI[name]["lat"],
+            "lng": _MOCK_POI[name]["lng"],
+            "city": "",
+        }
 
     import hashlib
     h = int(hashlib.md5(name.encode()).hexdigest()[:8], 16)
     lat = 30.0 + (h % 10000) / 10000.0 * 10.0
     lng = 116.0 + ((h >> 16) % 10000) / 10000.0 * 10.0
-    return {"name": name, "lat": round(lat, 4), "lng": round(lng, 4)}
+    return {"name": name, "lat": round(lat, 4), "lng": round(lng, 4), "city": ""}
