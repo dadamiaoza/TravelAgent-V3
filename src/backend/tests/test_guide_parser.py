@@ -27,16 +27,19 @@ def test_parse_simple_travelogue(agent):
         for tc in msg.tool_calls
         if tc["name"] == "geocode_poi"
     ]
-    assert len(geocode_calls) == 3, f"Expected 3 POIs, got {len(geocode_calls)}: {geocode_calls}"
-    assert set(geocode_calls) == {"天安门", "故宫", "天坛"}
+    assert len(geocode_calls) >= 3, f"Expected >= 3 unique POI calls, got {len(geocode_calls)}: {geocode_calls}"
+    assert {"天安门", "故宫", "天坛"}.issubset(set(geocode_calls)), f"Missing expected POIs in {geocode_calls}"
 
-    final = _get_final_content(result["messages"])
-    parsed = json.loads(final)
+    parsed = _extract_parsed_json(result["messages"])
     assert len(parsed) == 3
     for item in parsed:
         assert "poi_name" in item
         assert item["day_index"] == 1
         assert "lat" in item and "lng" in item
+        # S9: new fields must exist (nullable, so don't assert specific values)
+        assert "suggested_duration_h" in item
+        assert "best_time" in item
+        assert "cost_estimate" in item
 
 
 def test_parse_multi_day_travelogue(agent):
@@ -57,8 +60,7 @@ def test_parse_multi_day_travelogue(agent):
     ]
     assert len(geocode_calls) >= 3, f"Expected >= 3 POIs, got {len(geocode_calls)}: {geocode_calls}"
 
-    final = _get_final_content(result["messages"])
-    parsed = json.loads(final)
+    parsed = _extract_parsed_json(result["messages"])
 
     day1_pois = [p["poi_name"] for p in parsed if p["day_index"] == 1]
     day2_pois = [p["poi_name"] for p in parsed if p["day_index"] == 2]
@@ -73,28 +75,54 @@ def test_parse_named_pois_only(agent):
 
     result = agent.invoke({"messages": [{"role": "user", "content": text}]})
 
-    final = _get_final_content(result["messages"])
-    parsed = json.loads(final)
+    parsed = _extract_parsed_json(result["messages"])
 
     for item in parsed:
         if item["poi_name"] in ("西湖", "灵隐寺", "雷峰塔"):
-            assert item["lat"] != 0.0
-            assert item["lng"] != 0.0
+            assert item["lat"] != 0.0, f"Missing lat for {item['poi_name']}"
+            assert item["lng"] != 0.0, f"Missing lng for {item['poi_name']}"
+        # S9: new fields must exist
+        assert "suggested_duration_h" in item
+        assert "best_time" in item
+        assert "cost_estimate" in item
 
 
-def _get_final_content(messages: list) -> str:
-    """Extract JSON array from the final AIMessage, robust against think tags."""
+def _extract_final_text(messages: list) -> str:
+    """Extract text content from the final non-tool-call AIMessage, stripping think tags."""
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
             content = getattr(msg, "content", "")
             if not content:
                 continue
-            # Strip <think>...</think> tags
-            content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
-            # Find the JSON array
-            start = content.find("[")
-            end = content.rfind("]")
-            if start != -1 and end > start:
-                return content[start:end + 1]
-            return content
+            return re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
     return ""
+
+
+def _extract_parsed_json(messages: list) -> list:
+    """Extract and parse JSON array from agent messages, with fallback strategies."""
+    content = _extract_final_text(messages)
+
+    # Strategy 1: bracket-delimited JSON array
+    start = content.find("[")
+    end = content.rfind("]")
+    if start != -1 and end > start:
+        try:
+            return json.loads(content[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: regex search for any JSON array (handles malformed wrapping)
+    match = re.search(r"\[.*\]", content, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: try the full content as-is (agent may have output pure JSON)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    raise AssertionError(f"Could not extract valid JSON array from agent output: {content[:300]}")

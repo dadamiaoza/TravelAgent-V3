@@ -32,10 +32,39 @@ class SourceEntityOut(BaseModel):
     seq: int
     lat: float | None = None
     lng: float | None = None
+    suggested_duration_h: float | None = None
+    best_time: str | None = None
+    cost_estimate: str | None = None
 
 
 class SourceParseOut(BaseModel):
     entities: list[SourceEntityOut]
+
+
+# ── Merge schemas ──
+
+class MergeSourceIn(BaseModel):
+    label: str = Field(..., min_length=1, examples=["攻略A"])
+    entities: list[SourceEntityOut]
+
+
+class MergeRequest(BaseModel):
+    sources: list[MergeSourceIn] = Field(..., min_length=1)
+
+
+class MergedEntityOut(BaseModel):
+    poi_name: str
+    lat: float | None = None
+    lng: float | None = None
+    suggested_duration_h: float | None = None
+    best_time: str | None = None
+    cost_estimate: str | None = None
+    mention_count: int
+    source_names: list[str]
+
+
+class MergeOut(BaseModel):
+    entities: list[MergedEntityOut]
 
 
 # ── Fact check schemas ──

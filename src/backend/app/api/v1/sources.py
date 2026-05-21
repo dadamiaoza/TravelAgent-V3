@@ -1,4 +1,4 @@
-"""Source (travelogue) parsing API — Agent-powered guide parsing."""
+"""Source (travelogue) parsing API — Agent-powered guide parsing + multi-source merge."""
 import json
 import re
 
@@ -6,7 +6,11 @@ from fastapi import APIRouter, HTTPException
 from langchain_core.messages import AIMessage
 
 from app.agents.guide_parser import create_guide_parser
-from app.schemas.trip import SourceParseRequest, SourceParseOut, SourceEntityOut
+from app.schemas.trip import (
+    SourceParseRequest, SourceParseOut, SourceEntityOut,
+    MergeRequest, MergeOut, MergedEntityOut,
+)
+from app.services.merge import merge_candidates
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -27,9 +31,24 @@ def parse_source(body: SourceParseRequest):
             seq=item.get("seq", 0),
             lat=item.get("lat"),
             lng=item.get("lng"),
+            suggested_duration_h=item.get("suggested_duration_h"),
+            best_time=item.get("best_time"),
+            cost_estimate=item.get("cost_estimate"),
         ))
 
     return SourceParseOut(entities=entities)
+
+
+@router.post("/merge", response_model=MergeOut)
+def merge_sources(body: MergeRequest):
+    """Merge candidate lists from multiple parsed sources via LLM semantic dedup."""
+    sources = [
+        (src.label, [e.model_dump(exclude_none=True) for e in src.entities])
+        for src in body.sources
+    ]
+    merged = merge_candidates(sources)
+    entities = [MergedEntityOut(**item) for item in merged]
+    return MergeOut(entities=entities)
 
 
 def _extract_json(messages: list) -> list:

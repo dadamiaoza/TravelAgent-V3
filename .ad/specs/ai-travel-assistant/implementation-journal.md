@@ -194,29 +194,78 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
 
 ---
 
-## 7. 未完成项与后续计划
+## 7. V2 增强迭代（当前阶段）
 
-### 7.1 未完成（按优先级）
+> V1（S0-S7）全链路已跑通。V2 进入增强迭代，聚焦三个方向：
+> 1. 能力扩展——搜索抓取（MCP 接入）
+> 2. 数据质量——攻略解析增强 + 多源合并 + 源归属
+> 3. 记忆系统——结构化状态注入 + 上下文修剪
 
-1. S2：版本快照回滚（restore）能力。  
-2. S3：图片攻略解析（当前仅文本/链接）。  
-3. 生产级地图接入（当前为简化 SVG 导览，不含真实地图服务）。  
-4. 生产级时效数据源接入（当前为 mock-live-provider）。
+### 7.1 V2 开发步骤
 
-### 7.2 近期下一步（下一阶段）
+| 步骤 | 里程碑 | 内容 | 依赖 | 状态 |
+|------|--------|------|------|------|
+| **S11** | A. 能力扩展 | Tavily + Firecrawl MCP 接入 guide_parser | 无 | ✅ 已完成 |
+| **S9** | B. 数据质量 | guide_parser 输出增强（duration/best_time/cost） | 无 | ✅ 已完成 |
+| **S10** | B. 数据质量 | 多源合并去重 | S9 | ✅ 已完成 |
+| **S13** | B. 数据质量 | 源归属追踪（DB migration + 模型更新） | S9 | 待开始 |
+| **S12** | C. 能力扩展 | Tavily + Firecrawl MCP 接入 fact_checker | S11 | 待开始 |
+| **S8** | D. 记忆系统 | 结构化状态注入 + 上下文修剪中间件 | 无 | 待开始 |
+| **S14** | E. 远期 | 用户画像 | S8 | 远期 |
 
-后续进入“增强迭代阶段”：优先补齐版本回滚和图片攻略解析。
+### 7.2 V2 需求与技术方案
+
+- 需求文档：`requirements-v2.md`（同目录）
+- 技术方案：`technical-solution-v2.md`（同目录）
+- 设计决策：`docs/decisions.md` #14-15
+- Post-MVP 分析：`.ad/retrospect/2026-05-20_Post-MVP-Planning.md`
+
+### 7.3 V1 遗留（低优先级）
+
+1. S2：版本快照回滚（restore）能力
+2. S3：图片攻略解析（需多模态 LLM，远期）
+3. 生产级地图接入（当前为简化 SVG 导览）
+
+### 7.4 S9 完成详情（2026-05-21）
+
+**改动**：
+1. `guide_parser.py` — system_prompt 新增 3 个字段提取要求
+   - `suggested_duration_h`（float\|null）：区间转中值，半天→4.0，一整天→8.0
+   - `best_time`（"morning"\|"afternoon"\|"evening"\|"all_day"\|null）：仅明确表达时填，不确定→null
+   - `cost_estimate`（string\|null）：仅有明确票价数字时输出，不做"便宜/略贵"换算
+2. `schemas/trip.py` — `SourceEntityOut` 新增 3 个 nullable 字段
+3. `api/v1/sources.py` — parse 端点透传新字段
+4. `tests/test_guide_parser.py` — JSON 提取逻辑统一为 `_extract_parsed_json`（2 层 fallback），断言覆盖新字段存在性
+
+### 7.5 S10 完成详情（2026-05-21）
+
+**设计决策**：放弃纯规则管线（归一化→别名→模糊→geocode），改用 LLM 语义判断。同名变体、错别字、跨城歧义等判断全部交给 LLM。
+
+**改动**：
+1. `app/services/merge.py`（新增）— `merge_candidates()` 纯函数，单源直接返回，多源调 LLM 语义去重
+   - 输入：`list[tuple[str, list[dict]]]`（带标签的候选列表）
+   - 输出：合并后列表，含 `mention_count` + `source_names`
+   - 单源短路：不调 LLM，直接加 mention_count=1
+2. `schemas/trip.py` — 新增 `MergeSourceIn`、`MergeRequest`、`MergedEntityOut`、`MergeOut`
+3. `api/v1/sources.py` — 新增 `POST /sources/merge` 端点
+4. `tests/test_merge.py` — 5 个单元测试（mock LLM），覆盖单源、空输入、多源合并、JSON 包裹解析
 
 ---
 
-## 8. 为什么当前还没有“AI 智能生成”
+## 8. 项目阶段演进
 
-当前 S1 使用的是“规则模板生成”，不是最终 AI 版本。  
-这是故意的，原因是：
+### V1（S0-S7）：Agent 化全链路 ✅
 
-1. 先保证链路稳定（输入、存储、展示、测试）。  
-2. 新手阶段先把工程骨架搭稳，再接入 LLM，排障更容易。  
-3. 避免把“模型效果问题”和“工程问题”混在一起，导致定位困难。
+S1 最初用规则模板生成行程，S4 起全面 Agent 化。当前已完成：
+
+- 4 个 Agent（guide_parser / itinerary_gen / route_optimizer / fact_checker）全部接入真实 API
+- Supervisor 多 Agent 编排 + PostgresSaver 记忆持久化
+- 15 个真实 API 端点 + 降级兜底
+- 20 个测试覆盖路线优化
+
+### V2（S8-S14）：增强迭代 ← 当前
+
+从”能跑通”到”用得好”——搜索抓取、数据质量、记忆系统三大增强方向。
 
 ---
 
@@ -249,6 +298,10 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
 | 2026-05-13 | S4 | 完成路线优化与地图导览（后端重排 + 前端可视化） | backend: 3 passed；frontend: lint/build passed | `490e5b4` |
 | 2026-05-13 | S5 | 完成时效刷新与风险提示（后端 fact-check + 前端风险标签） | backend: 3 passed；frontend: lint/build passed | `f7c464c` |
 | 2026-05-13 | S6 | 完成稳定化与交付（新手 README + 冒烟脚本 + 全链路验证） | backend: 3 passed；frontend: lint/build passed；smoke: passed | 待提交 |
+| 2026-05-21 | V2 规划 | 完成 V2 需求分析 + 技术方案 + 7 步拆解（S8-S14） | 文档产出：requirements-v2.md, technical-solution-v2.md | — |
+| 2026-05-21 | S11 | MCP 封装层 + guide_parser 集成 Tavily/Firecrawl（5+24 tools） | 39 passed | 待提交 |
+| 2026-05-21 | S9 | guide_parser 输出增强：suggested_duration_h + best_time + cost_estimate + 测试 flakiness 修复 | 39 passed（0 失败，0 回归） | 待提交 |
+| 2026-05-21 | S10 | 多源合并去重：LLM 语义判断替代规则管线 + merge API 端点 + 5 个单元测试 | 44 passed（+5 merge tests，0 回归） | 待提交 |
 
 ---
 
@@ -264,6 +317,8 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
 | `implementation-journal.md` | Implement/Verify | Active | 开始实施阶段时创建 | 每次代码变更后（功能、测试、遗留项、变更记录） | 全程保留；作为项目执行日志 |
 | `design.md` | Design（标准位） | Planned | 若需要按 bootstrap 标准分离设计文档时创建 | 当 `technical-solution.md` 不再承载全部设计内容时同步维护 | 若继续使用 `technical-solution.md` 可不单独启用 |
 | `tasks.md` | Breakdown（标准位） | Planned | 若进入严格任务拆解清单流时创建 | 每个任务开始/完成、依赖变化、验收标准变化时 | 全任务完成后可冻结并归档 |
+| `requirements-v2.md` | V2 Discovery + PRD | Active | V2 需求澄清时创建（2026-05-21） | V2 范围变化、用户故事调整时 | V2 完成后转为 Frozen |
+| `technical-solution-v2.md` | V2 Design | Active | V2 技术方案确认时创建（2026-05-21） | V2 架构/接口/步骤调整时 | V2 完成后转为 Frozen |
 
 ### 11.1 生命周期状态定义
 
