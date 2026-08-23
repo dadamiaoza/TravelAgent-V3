@@ -84,6 +84,12 @@ class FactCheckResult(BaseModel):
     weather: str | None = None
     opening_hours: str | None = None
     risk: str | None = None  # "low" | "medium" | "high"
+    risk_type: str | None = None  # weekly_closure / holiday_adjustment / weather_risk / none
+    reason: str | None = None
+    source: str | None = None
+    needs_manual_confirmation: bool = True
+    advice: str | None = None
+    checked_at: datetime | None = None
 
 
 class FactCheckOut(BaseModel):

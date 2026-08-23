@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "museum-monday-closed",
+      "poi_pattern": "博物馆",
+      "match_mode": "contains",
+      "rule_type": "weekly_closure",
+      "closed_weekdays": [0],
+      "effect": "closed",
+      "priority": 10,
+      "source": "示例规则，实际需根据具体场馆官方信息确认",
+      "notes": "大多数博物馆周一闭馆"
+    },
+    {
+      "id": "memorial-monday-closed",
+      "poi_pattern": "纪念馆",
+      "match_mode": "contains",
+      "rule_type": "weekly_closure",
+      "closed_weekdays": [0],
+      "effect": "closed",
+      "priority": 10,
+      "source": "示例规则，实际需根据具体场馆官方信息确认",
+      "notes": "多数纪念馆周一闭馆"
+    },
+    {
+      "id": "museum-national-holiday-open",
+      "poi_pattern": "博物馆",
+      "match_mode": "contains",
+      "rule_type": "holiday_override",
+      "holiday_name": "国庆假期",
+      "date_range": ["2026-10-01", "2026-10-07"],
+      "effect": "open",
+      "priority": 20,
+      "source": "示例规则，实际需根据具体场馆官方公告确认",
+      "notes": "法定节假日期间博物馆可能取消周一闭馆，改为正常开放"
+    },
+    {
+      "id": "scenic-holiday-adjusted",
+      "poi_pattern": "景区",
+      "match_mode": "contains",
+      "rule_type": "holiday_closure",
+      "holiday_name": "国庆假期",
+      "date_range": ["2026-10-01", "2026-10-07"],
+      "effect": "adjusted",
+      "priority": 30,
+      "source": "示例规则，实际需根据景区官方公告确认",
+      "notes": "节假日景区可能限流或调整开放时间，仅作原型示例"
+    }
+  ]
+}

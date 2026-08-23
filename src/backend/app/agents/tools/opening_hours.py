@@ -9,6 +9,7 @@ import requests
 
 from app.agents.tools.geo import geocode_poi
 from app.core.config import settings
+from app.services.closure_rules import evaluate_closure_rule
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,35 @@ def get_opening_hours(name: str, date: str) -> str:
         try:
             result = _opening_hours_amap(name, date)
             if result:
-                return result
+                return _append_rule_hint(result, name, date)
         except Exception:
             logger.warning("高德 POI 详情查询失败，降级到 mock", exc_info=True)
 
-    return _opening_hours_mock(name, date)
+    return _append_rule_hint(_opening_hours_mock(name, date), name, date)
+
+
+def _append_rule_hint(base: str, name: str, date: str) -> str:
+    """把 A-1 规则引擎的结果拼到开放时间结果后面。
+
+    产品原则：只做风险提示，不承诺 100% 准确；建议出行前再确认。
+    """
+    rule = evaluate_closure_rule(name, date)
+
+    if rule["matched"]:
+        reason = rule.get("reason") or "命中时效规则"
+        source = rule.get("source") or "内部规则"
+        if rule.get("closed"):
+            hint = f"时效提示：{reason}；来源：{source}；建议出行前再确认"
+        elif rule.get("effect") == "adjusted":
+            hint = f"时效提示：{reason}；来源：{source}；建议出行前再确认"
+        else:
+            # 节假日开放覆盖也提示一下，让用户知道已识别到特殊安排
+            hint = f"时效提示：{reason}；来源：{source}；建议出行前再确认"
+    else:
+        hint = "时效提示：未命中固定闭馆规则；建议出行前以官方公告为准"
+
+    return f"{base}；{hint}"
+
 
 
 # ── 高德 POI 搜索 → biz_ext 深度信息 ──
