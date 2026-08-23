@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -15,6 +16,14 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     firecrawl_api_key: str = ""
     firecrawl_mcp_url: str = ""
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        # Railway PostgreSQL 有时给 postgres://，SQLAlchemy/psycopg 更统一用 postgresql://
+        if value.startswith("postgres://"):
+            return "postgresql://" + value[len("postgres://"):]
+        return value
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

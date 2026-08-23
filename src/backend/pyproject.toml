@@ -13,11 +13,18 @@ dependencies = [
     "sqlalchemy>=2.0.36",
     "alembic>=1.14.0",
     "psycopg2-binary>=2.9.10",
+    "psycopg[binary]>=3.3.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
     "langchain>=1.0.0",
     "langchain-openai>=1.0.0",
     "langchain-mcp-adapters>=0.2.0",
+    "langgraph>=1.2.0",
+    "langgraph-supervisor>=0.0.31",
+    "langgraph-checkpoint-postgres>=3.1.0",
+    "requests>=2.32.0",
+    "PyJWT>=2.12.0",
+    "cryptography>=42.0.0",
     "httpx>=0.28.0",
 ]
 
