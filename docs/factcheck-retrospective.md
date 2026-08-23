@@ -126,3 +126,46 @@
 ### 已识别但本次不做的延伸点
 - 动态公告搜索（Tavily + Firecrawl）仍未接入，用于临时闭园/天气闭园。
 - `fact_checks` 持久化（A-4）尚未做。
+
+## 任务 A-4: fact_checks 持久化
+
+### 做了什么
+- 新增 `FactCheckRecord` ORM 模型，表名 `fact_checks`。
+- 新增 Alembic migration `0003_fact_checks.py`，并已在本机执行 `alembic upgrade head` 成功。
+- 扩展 `FactCheckRequest` / `FactCheckItem`：
+  - 请求级可选 `trip_id`
+  - 单项可选 `itinerary_item_id`
+  - 不传仍兼容，传了可追溯。
+- 修改 `/facts/check`：
+  - 增加 `db` 依赖。
+  - 每次校验结果写入 `fact_checks`。
+  - 保存关联、风险字段、来源、建议和 `checked_at`。
+- 更新测试，新增“持久化并保留 trip/item 关联”的测试。
+- 测试结果：
+  - 相关接口/规则/工具测试 12 个通过
+  - 原有 fact_checker Agent 测试 3 个通过
+
+### 遇到的问题 / 权衡取舍
+1. **关联字段是可选的**
+   - 当前调用方不一定传 `trip_id` / `itinerary_item_id`。
+   - 如果强制必填，会破坏现有 API 兼容性。
+   - 所以采用“可选 + NULL”，既能立即落库，又能支持未来前端传关联。
+
+2. **为什么用单表而不是批次表/JSONB**
+   - 当前查询以“某个行程/某个 POI 的风险”为主。
+   - 单表结构最直接，不需要 join。
+   - 以后如果一次请求要完整审计，可以再增加批次 ID，不推翻主表。
+
+3. **落库时 LLM 返回结果和请求项的对应关系**
+   - 不能假设 LLM 一定按顺序返回。
+   - 使用 `(poi_name, date)` 作为 key 找回原始请求项，从而正确保存 `itinerary_item_id`。
+
+### 面试可以怎么讲
+- “持久化采用可选关联，优先保证向后兼容，同时为后续追溯留好字段。”
+- “校验结果不只返回给前端，还落库，这样风险历史可以查询和复盘。”
+- “Alembic 管理数据库结构，代码和迁移同步提交，部署时可以直接升级。”
+
+### 已识别但本次不做的延伸点
+- 目前还没有查询 `fact_checks` 的 REST 端点，后续可以加 `GET /facts/checks?trip_id=...`。
+- 动态公告搜索（Tavily + Firecrawl）仍未接入。
+

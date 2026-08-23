@@ -72,10 +72,12 @@ class MergeOut(BaseModel):
 class FactCheckItem(BaseModel):
     poi_name: str
     date: date
+    itinerary_item_id: UUID | None = None
 
 
 class FactCheckRequest(BaseModel):
     items: list[FactCheckItem] = Field(..., min_length=1)
+    trip_id: UUID | None = None
 
 
 class FactCheckResult(BaseModel):

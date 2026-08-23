@@ -11,6 +11,21 @@ from app.api.v1.facts import check_facts
 from app.schemas.trip import FactCheckItem, FactCheckRequest
 
 
+class FakeDB:
+    """最小可用的 fake DB，只记录 add/commit 调用。"""
+
+    def __init__(self):
+        self.added = []
+        self.committed = False
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def commit(self):
+        self.committed = True
+
+
+
 def _fake_agent(output: list[dict]):
     class FakeAgent:
         def invoke(self, messages):
@@ -42,10 +57,11 @@ def test_check_facts_returns_unified_risk_for_closed_rule():
         },
     ])
 
+    db = FakeDB()
     with patch("app.api.v1.facts.create_fact_checker", return_value=fake):
         result = check_facts(FactCheckRequest(
             items=[FactCheckItem(poi_name="萍乡博物馆", date="2026-08-24")],
-        ))
+        ), db=db)
 
     item = result.results[0]
     assert item.risk == "high"
@@ -54,6 +70,11 @@ def test_check_facts_returns_unified_risk_for_closed_rule():
     assert item.checked_at is not None
     # 规则引擎结果必须已注入 prompt
     assert "museum-monday-closed" in fake.last_prompt
+    # A-4：结果应被持久化
+    assert db.committed is True
+    assert len(db.added) == 1
+    assert db.added[0].poi_name == "萍乡博物馆"
+    assert db.added[0].risk == "high"
 
 
 def test_check_facts_returns_low_risk_when_rule_not_hit():
@@ -73,12 +94,54 @@ def test_check_facts_returns_low_risk_when_rule_not_hit():
         },
     ])
 
+    db = FakeDB()
     with patch("app.api.v1.facts.create_fact_checker", return_value=fake):
         result = check_facts(FactCheckRequest(
             items=[FactCheckItem(poi_name="萍乡博物馆", date="2026-08-25")],
-        ))
+        ), db=db)
 
     item = result.results[0]
     assert item.risk == "low"
     assert item.risk_type == "none"
     assert item.checked_at is not None
+    assert len(db.added) == 1
+    assert db.added[0].risk == "low"
+
+def test_check_facts_persists_trip_and_item_association():
+    """传入 trip_id / itinerary_item_id 时，持久化记录应保留关联。"""
+    import uuid
+
+    trip_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    fake = _fake_agent([
+        {
+            "poi_name": "萍乡博物馆",
+            "date": "2026-08-24",
+            "risk": "high",
+            "risk_type": "weekly_closure",
+            "reason": "周一闭馆",
+            "source": "规则配置",
+            "weather": "晴",
+            "opening_hours": "09:00-17:00",
+            "needs_manual_confirmation": True,
+            "advice": "出行前确认",
+        },
+    ])
+
+    db = FakeDB()
+    with patch("app.api.v1.facts.create_fact_checker", return_value=fake):
+        result = check_facts(FactCheckRequest(
+            trip_id=trip_id,
+            items=[FactCheckItem(
+                itinerary_item_id=item_id,
+                poi_name="萍乡博物馆",
+                date="2026-08-24",
+            )],
+        ), db=db)
+
+    assert len(db.added) == 1
+    record = db.added[0]
+    assert record.trip_id == trip_id
+    assert record.itinerary_item_id == item_id
+    assert result.results[0].poi_name == "萍乡博物馆"
+

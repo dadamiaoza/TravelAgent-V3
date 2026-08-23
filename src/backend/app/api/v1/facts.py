@@ -3,10 +3,13 @@ import json
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import AIMessage
+from sqlalchemy.orm import Session
 
 from app.agents.fact_checker import create_fact_checker
+from app.db.session import get_db
+from app.models.fact_check import FactCheckRecord
 from app.schemas.trip import FactCheckRequest, FactCheckOut, FactCheckResult
 from app.services.closure_rules import evaluate_closure_rule
 
@@ -14,8 +17,8 @@ router = APIRouter(prefix="/facts", tags=["facts"])
 
 
 @router.post("/check", response_model=FactCheckOut)
-def check_facts(body: FactCheckRequest):
-    """Check weather and opening hours for a list of itinerary items."""
+def check_facts(body: FactCheckRequest, db: Session = Depends(get_db)):
+    """Check weather and opening hours for a list of itinerary items and persist results."""
     agent = create_fact_checker()
 
     poi_list = "\n".join(f"- {item.date}: {item.poi_name}" for item in body.items)
@@ -61,6 +64,30 @@ def check_facts(body: FactCheckRequest):
             advice=item.get("advice"),
             checked_at=checked_at,
         ))
+
+    # A-4：将本次校验结果持久化，便于后续查询与追溯。
+    # 如果调用方没传 trip_id / itinerary_item_id，这些字段为 NULL，不影响落库。
+    original_by_key = {
+        (item.poi_name, item.date): item for item in body.items
+    }
+    for result in results:
+        original = original_by_key.get((result.poi_name, result.date))
+        db.add(FactCheckRecord(
+            trip_id=body.trip_id,
+            itinerary_item_id=original.itinerary_item_id if original else None,
+            poi_name=result.poi_name,
+            check_date=result.date,
+            risk=result.risk or "low",
+            risk_type=result.risk_type,
+            reason=result.reason,
+            source=result.source,
+            weather=result.weather,
+            opening_hours=result.opening_hours,
+            needs_manual_confirmation=result.needs_manual_confirmation,
+            advice=result.advice,
+            checked_at=result.checked_at or datetime.now(timezone.utc),
+        ))
+    db.commit()
 
     return FactCheckOut(results=results)
 
