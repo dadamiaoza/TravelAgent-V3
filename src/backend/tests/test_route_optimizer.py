@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 
 from app.agents.route_optimizer import create_route_optimizer
 from app.agents.tools.route_optimizer import (optimize_itinerary,
-    _haversine_distance, _reorder_by_nearest_neighbor,
+    _geocode_with_fallback, _haversine_distance, _reorder_by_nearest_neighbor,
     _fill_travel_times_from_matrix, _fill_travel_times_fallback,
     _select_mode, _estimate_travel_minutes_from_distance)
 
@@ -70,6 +70,72 @@ def test_optimize_itinerary_tool_unknown_poi():
     # 即使是未知 POI，也应该有坐标（fallback）
     assert isinstance(item["lat"], (int, float))
     assert isinstance(item["lng"], (int, float))
+
+
+def test_optimize_itinerary_passes_city_to_geocode():
+    """服务层传入 city 后，地理编码必须带上该城市，避免同名 POI 匹配到外地。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.return_value = {"lat": 27.0, "lng": 113.0, "city": "萍乡"}
+
+        input_json = json.dumps({
+            "city": "萍乡",
+            "days": [{
+                "day_index": 1,
+                "theme": "测试",
+                "items": [
+                    {"seq": 1, "poi_name": "玉湖湿地公园", "duration_h": 2, "travel_minutes_from_prev": 0},
+                    {"seq": 2, "poi_name": "杨岐山", "duration_h": 1, "travel_minutes_from_prev": 10},
+                ],
+            }],
+        }, ensure_ascii=False)
+
+        result = json.loads(optimize_itinerary(input_json))
+        assert result["days"][0]["items"][0]["lat"] == 27.0
+        mock_geocode.assert_any_call("玉湖湿地公园", city="萍乡", mock_fallback=False)
+
+
+
+def test_geocode_with_fallback_prefers_item_city():
+    """有指定城市时，优先用该城市做严格地理编码。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.return_value = {"lat": 27.0, "lng": 113.0, "city": "萍乡"}
+        result = _geocode_with_fallback("玉湖湿地公园", "萍乡")
+        assert result["lat"] == 27.0
+        mock_geocode.assert_called_once_with("玉湖湿地公园", city="萍乡", mock_fallback=False)
+
+
+def test_geocode_with_fallback_falls_back_to_no_city():
+    """指定城市搜不到时，放开城市限制，兼容跨城景点。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.side_effect = [
+            None,
+            {"lat": 30.0, "lng": 120.0, "city": "嘉兴"},
+        ]
+        result = _geocode_with_fallback("乌镇", "杭州")
+        assert result["lat"] == 30.0
+        assert mock_geocode.call_count == 2
+        assert mock_geocode.call_args_list[0].kwargs == {
+            "city": "杭州",
+            "mock_fallback": False,
+        }
+        assert mock_geocode.call_args_list[1].kwargs == {
+            "city": "",
+            "mock_fallback": False,
+        }
+
+
+def test_geocode_with_fallback_uses_mock_as_last_resort():
+    """所有真实搜索都失败时，才使用 mock 兜底坐标。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.side_effect = [
+            None,
+            None,
+            {"lat": 31.0, "lng": 121.0, "city": ""},
+        ]
+        result = _geocode_with_fallback("一个不存在的跨城POI", "杭州")
+        assert result["lat"] == 31.0
+        assert mock_geocode.call_count == 3
+        assert mock_geocode.call_args_list[2].kwargs == {"city": "杭州"}
 
 
 # ── Agent 测试（完整 Agent + Tool 管道）──

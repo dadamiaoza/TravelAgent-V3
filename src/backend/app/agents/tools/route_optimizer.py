@@ -28,6 +28,24 @@ _WALK_DISTANCE_THRESHOLD = 1500
 
 # ── 公共接口 ──
 
+
+def _geocode_with_fallback(name: str, preferred_city: str) -> dict:
+    """POI 地理编码回退链：优先指定城市 → 无城市搜索 → mock 兜底。"""
+    # 1. 先按 POI 自己的城市/行程城市搜索，消除同名歧义
+    if preferred_city:
+        result = geocode_poi(name, city=preferred_city, mock_fallback=False)
+        if result is not None:
+            return result
+
+    # 2. 找不到时放开城市限制，兼容跨城景点
+    result = geocode_poi(name, city="", mock_fallback=False)
+    if result is not None:
+        return result
+
+    # 3. 仍找不到才使用 mock 兜底，保证行程始终有可展示坐标
+    return geocode_poi(name, city=preferred_city)
+
+
 def optimize_itinerary(itinerary_json: str) -> str:
     """对行程中的 POI 进行地理编码、路径优化排序和交通时间填充。
 
@@ -51,6 +69,8 @@ def optimize_itinerary(itinerary_json: str) -> str:
         seq 已按优化后的顺序重新编号。
     """
     itinerary = json.loads(itinerary_json)
+    # 行程级城市作为全局兜底；单个 POI 可用自己的 city 覆盖
+    fallback_city = itinerary.get("city", "")
     amap_available = bool(settings.amap_api_key)
 
     for day in itinerary.get("days", []):
@@ -58,9 +78,10 @@ def optimize_itinerary(itinerary_json: str) -> str:
         if not items:
             continue
 
-        # 第一步：地理编码所有 POI
+        # 第一步：地理编码所有 POI（优先使用 POI 级城市）
         for item in items:
-            result = geocode_poi(item["poi_name"])
+            item_city = item.get("city") or fallback_city
+            result = _geocode_with_fallback(item["poi_name"], item_city)
             item["lat"] = result["lat"]
             item["lng"] = result["lng"]
             item["city"] = result.get("city", "")

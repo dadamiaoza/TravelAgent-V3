@@ -37,6 +37,10 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
     )
 
     itinerary = _parse_agent_output(result["messages"])
+
+    # 把目的地城市写入行程 JSON，让路线优化地理编码时消除同名 POI 歧义（如“玉湖湿地公园”）
+    itinerary["city"] = trip.destination
+
     itinerary = _run_route_optimizer(itinerary)
     _persist_itinerary(db, trip, itinerary, trip.start_date)
     return trip

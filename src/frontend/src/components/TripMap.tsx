@@ -1,0 +1,173 @@
+import { useEffect, useRef, useState } from "react";
+import type { DayView, ItineraryItem } from "@/lib/types";
+import {
+  getAmapConfig,
+  loadAMap,
+  type AMapInfoWindow,
+  type AMapMap,
+  type AMapNamespace,
+  type AMapOverlay,
+} from "@/lib/amap";
+
+interface TripMapProps {
+  days: DayView[];
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[char] ?? char,
+  );
+}
+
+function buildPopupContent(item: ItineraryItem): string {
+  const timeText =
+    item.start_time || item.end_time
+      ? `${item.start_time?.slice(0, 5) ?? ""} - ${item.end_time?.slice(0, 5) ?? ""}`
+      : "时间待定";
+  const briefParts: string[] = [];
+  if (item.transport_mode) briefParts.push(escapeHtml(item.transport_mode));
+  if (item.travel_minutes != null) briefParts.push(`${item.travel_minutes} 分钟`);
+  if (item.cost_estimate != null) briefParts.push(`预计花费 ¥${item.cost_estimate}`);
+
+  return `
+    <div style="min-width: 180px; padding: 4px 2px;">
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px;">${escapeHtml(item.poi_name)}</div>
+      <div style="font-size: 12px; color: #666;">${escapeHtml(timeText)}</div>
+      ${briefParts.length ? `<div style="font-size: 12px; color: #666; margin-top: 2px;">${briefParts.join(" · ")}</div>` : ""}
+    </div>
+  `;
+}
+
+export default function TripMap({ days }: TripMapProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const overlaysRef = useRef<AMapOverlay[]>([]);
+  const infoWindowRef = useRef<AMapInfoWindow | null>(null);
+
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [amap, setAmap] = useState<AMapNamespace | null>(null);
+  const [map, setMap] = useState<AMapMap | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { key, securityCode } = getAmapConfig();
+
+  // 初始化地图：只创建一次
+  useEffect(() => {
+    if (!key || !securityCode) {
+      setError("地图未配置：请在 frontend/.env 设置 VITE_AMAP_KEY 和 VITE_AMAP_SECURITY_CODE");
+      return;
+    }
+
+    let cancelled = false;
+    loadAMap()
+      .then((AMapNS) => {
+        if (cancelled || !containerRef.current) return;
+        const instance = new AMapNS.Map(containerRef.current, {
+          zoom: 12,
+        });
+        setAmap(AMapNS);
+        setMap(instance);
+      })
+      .catch(() => {
+        if (!cancelled) setError("高德地图加载失败，请检查网络和 Key");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [key, securityCode]);
+
+  // 根据选中的 Day 渲染标记和直线
+  useEffect(() => {
+    if (!amap || !map) return;
+
+    const day = days[selectedDayIndex];
+    if (!day) return;
+
+    // 关闭上一个信息窗，再清掉上一次的覆盖物
+    infoWindowRef.current?.close();
+    infoWindowRef.current = null;
+    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+    overlaysRef.current = [];
+
+    const validItems = day.items.filter(
+      (item) => item.lat != null && item.lng != null,
+    );
+
+    if (validItems.length === 0) {
+      setError(`Day ${day.day_index} 暂无坐标数据`);
+      return;
+    }
+
+    setError(null);
+
+    const infoWindow = new amap.InfoWindow();
+    infoWindowRef.current = infoWindow;
+
+    validItems.forEach((item) => {
+      const marker = new amap.Marker({
+        position: [item.lng!, item.lat!],
+        title: item.poi_name,
+      });
+      marker.on("click", () => {
+        infoWindow.setContent(buildPopupContent(item));
+        infoWindow.open(map, marker.getPosition());
+      });
+      marker.setMap(map);
+      overlaysRef.current.push(marker);
+    });
+
+    const line = new amap.Polyline({
+      path: validItems.map((item) => [item.lng!, item.lat!]),
+      strokeColor: "#2563eb",
+      strokeWeight: 4,
+      strokeOpacity: 0.8,
+    });
+    line.setMap(map);
+    overlaysRef.current.push(line);
+
+    map.setFitView(overlaysRef.current);
+  }, [amap, map, selectedDayIndex, days]);
+
+  // 组件卸载时销毁地图，避免内存泄漏
+  useEffect(() => {
+    return () => {
+      map?.destroy();
+    };
+  }, [map]);
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {days.map((day) => (
+          <button
+            key={day.id}
+            type="button"
+            onClick={() => setSelectedDayIndex(days.indexOf(day))}
+            className={`rounded-md px-3 py-1 text-sm ${
+              selectedDayIndex === days.indexOf(day)
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            Day {day.day_index}
+          </button>
+        ))}
+      </div>
+
+      <div
+        ref={containerRef}
+        className="h-[400px] w-full rounded-md border border-gray-200 bg-gray-50"
+      />
+
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}

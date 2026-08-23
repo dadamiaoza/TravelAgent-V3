@@ -37,18 +37,26 @@ _MOCK_POI: Dict[str, Dict[str, float]] = {
 }
 
 
-def geocode_poi(name: str, city: str = "") -> dict:
+def geocode_poi(
+    name: str,
+    city: str = "",
+    mock_fallback: bool = True,
+) -> dict | None:
     """Convert a POI name to geographic coordinates.
 
-    Tries Amap Geocoding API first. Falls back to mock database if the API
-    is unavailable (no key configured, network error, or empty result).
+    Tries Amap Geocoding API first. If ``mock_fallback`` is True, falls back
+    to the local mock database when the API is unavailable or returns nothing.
+    If ``mock_fallback`` is False, returns None instead, allowing callers to
+    implement their own fallback chain.
 
     Args:
         name: POI name in Chinese, e.g. "西湖", "故宫"
         city: Optional city name for more precise results, e.g. "北京"
+        mock_fallback: Whether to fall back to mock coordinates when no result.
 
     Returns:
-        Dict with keys: name (str), lat (float), lng (float), city (str).
+        Dict with keys: name (str), lat (float), lng (float), city (str),
+        or None if no real result was found and mock fallback is disabled.
     """
     if settings.amap_api_key:
         try:
@@ -58,7 +66,9 @@ def geocode_poi(name: str, city: str = "") -> dict:
         except Exception:
             logger.warning("高德地理编码失败，降级到 mock", exc_info=True)
 
-    return _geocode_mock(name)
+    if mock_fallback:
+        return _geocode_mock(name)
+    return None
 
 
 # ── Amap API ──

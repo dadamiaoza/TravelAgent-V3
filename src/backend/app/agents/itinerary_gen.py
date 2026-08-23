@@ -38,9 +38,10 @@ def create_itinerary_gen():
             "5. 多轮对话时，查看历史记录避免与已规划天重复使用景点\n\n"
             "输出 JSON 格式（不要包含其他文字）：\n"
             '{"days": [{"day_index": 1, "theme": "主题概括", "items": ['
-            '{"seq": 1, "poi_name": "...", "duration_h": 0, "travel_minutes_from_prev": 0}, ...]}]}\n\n'
+            '{"seq": 1, "poi_name": "...", "city": "所在城市", "duration_h": 0, "travel_minutes_from_prev": 0}, ...]}]}\n\n'
             "规则：\n"
             "- theme 用简短中文概括当天主题（如「西湖经典一日」「皇城文化深度」）\n"
+            "- city 填写该景点实际所在城市；与行程目的地相同可省略，跨城景点必须填写\n"
             "- travel_minutes_from_prev 是到上一个景点的交通时间，第一个景点为 0\n"
             "- 如果用户分多次规划（多轮对话），务必检查历史消息已分配的景点，不要重复"
         ),

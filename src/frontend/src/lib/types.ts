@@ -6,7 +6,12 @@ export interface Trip {
   start_date: string;
   end_date: string;
   people_count: number;
+  budget_min?: number | null;
+  budget_max?: number | null;
   status: string;
+  created_at?: string;
+  updated_at?: string;
+  days?: DayView[];
 }
 
 export interface DayView {
@@ -19,12 +24,14 @@ export interface DayView {
 
 export interface ItineraryItem {
   id: string;
-  day_id: string;
   seq: number;
   poi_name: string;
-  start_time?: string;
-  end_time?: string;
-  transport_mode?: string;
-  travel_minutes?: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  transport_mode?: string | null;
+  travel_minutes?: number | null;
+  cost_estimate?: number | null;
   is_locked: boolean;
 }
