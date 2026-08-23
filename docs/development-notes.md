@@ -128,3 +128,104 @@
 - [ ] 已存在的旧行程数据仍保留错误坐标；新代码只影响新生成的行程。
 - [ ] 跨城场景目前依赖 LLM 在 `city` 字段中正确填写城市；这属于 Agent prompt 层面的约束，后续可考虑用结构化工具输出强制保证。
 - [ ] 若需支持真实路线（非直线），后续可接入高德路径规划 API 在地图上绘制实际路线。
+
+
+## 6. Railway 部署与前后端通信
+
+### 部署形态
+- Railway 上运行三个服务：
+  - PostgreSQL（Railway 托管，替代本地 docker-compose）
+  - backend（FastAPI）
+  - frontend（Nginx + 静态文件）
+- 代码侧准备：
+  - 后端 `Dockerfile` + `start.sh`，启动前自动执行 `alembic upgrade head`
+  - 前端多阶段 `Dockerfile`：Node 构建 → Nginx 托管 `dist/`
+  - Nginx 使用官方模板机制自动 envsubst `BACKEND_URL` 和 `PORT`
+  - `config.py` 兼容 Railway 的 `postgres://` → `postgresql://`
+
+### 前后端通信流程
+```text
+浏览器
+  ↓
+访问前端公网域名
+  ↓
+Nginx 返回 HTML/JS/CSS
+  ↓
+前端 JS 请求 /api/v1/...
+  ↓
+Nginx 收到 /api 请求
+  ↓
+代理到 http://backend:8080
+  ↓
+FastAPI 处理并返回 JSON
+  ↓
+Nginx 返回给浏览器
+```
+
+### 关键设计：同源代理
+- 前端生产环境不直接请求后端公网地址。
+- 所有 `/api` 请求都走前端同域名，由 Nginx 反向代理到后端。
+- 好处：
+  - 浏览器不需要处理 CORS。
+  - 前端代码里仍然使用 `/api/v1`，不需要根据环境切换 base URL。
+
+### 关键环境变量
+前端服务：
+- `BACKEND_URL=http://backend:8080`
+  - Nginx 把 `/api` 转发到 Railway 内部后端服务。
+- `PORT=8080`
+  - Nginx 监听 Railway 期望的端口。
+- `VITE_AMAP_KEY`
+- `VITE_AMAP_SECURITY_CODE`
+  - 构建时写入前端静态资源，用于高德地图。
+
+后端服务：
+- `PORT=8080`
+  - FastAPI 监听端口。
+- `DATABASE_URL`
+  - Railway PostgreSQL 连接串，代码已做 `postgres://` 兼容。
+- `LLM_API_KEY / AMAP_API_KEY / QWEATHER_* / TAVILY_* / FIRECRAWL_*`
+  - AI、高德、和风、MCP 搜索所需密钥。
+
+### 部署踩坑记录
+1. **Railway 内部地址不要写成 `backend.railway.internal:8000`**
+   - 正确使用短服务名：`backend:8080`。
+   - `.railway.internal` 不一定可解析，短服务名在同项目内更稳定。
+
+2. **端口不要写死 8000**
+   - Railway 会注入 `PORT=8080`。
+   - 后端和前端都应按环境变量 `PORT` 监听。
+
+3. **Railway 公共域名端口要和 Nginx 监听端口一致**
+   - 如果 Railway 前端服务配置的 Port 是 `80`，但 Nginx 监听 `8080`，会得到 `Application failed to respond`。
+   - 最终把 Railway 前端服务的 Port 改为 `8080`，与 Nginx 对齐后成功。
+
+4. **Nginx 需要同时监听 IPv4 和 IPv6**
+   - 容器内 `localhost` 可能解析到 `::1`。
+   - 只监听 IPv4 时，`wget localhost:8080` 会连接拒绝。
+   - 修复：`listen ${PORT};` + `listen [::]:${PORT};`。
+
+### 为什么前后端都监听 8080？
+- 8080 不是代码里写死的，而是 **Railway 自动注入的 `PORT` 环境变量**。
+- 后端 `start.sh`：
+  ```bash
+  uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+  ```
+  即：有 `PORT` 用 `PORT`，没有则默认 8000。
+- 前端 Nginx 模板：
+  ```nginx
+  listen ${PORT};
+  listen [::]:${PORT};
+  ```
+  即：Nginx 监听 `PORT` 指定的端口。
+- Railway 给前后端各自注入 `PORT=8080`，所以两边都监听 8080。
+- 前后端是不同容器，各自网络空间独立，因此同一个端口号不会冲突。
+- 如果修改端口：
+  - 后端设 `PORT=新端口`
+  - 前端设 `PORT=新端口`
+  - 前端 `BACKEND_URL` 改为 `http://backend:新端口`
+  - Railway 前端公网 Port 也要同步修改
+
+
+### 面试可以怎么讲
+> “生产环境我采用同源代理架构：前端 Nginx 同时托管静态资源和反向代理 `/api` 到后端内部服务，避免 CORS，也让浏览器只需要知道前端域名。后端通过 Railway 的内部服务地址 `backend:8080` 通信，数据库使用 Railway 托管的 PostgreSQL，部署时由启动脚本自动执行 Alembic migration。”
