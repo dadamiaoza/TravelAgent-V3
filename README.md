@@ -256,5 +256,5 @@ http://backend:8080
 ## 📦 Demo
 
 ```text
-https://frontend-production-40d77.up.railway.app
+https://travel-40d77.up.railway.app
 ```
