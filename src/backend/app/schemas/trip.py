@@ -110,6 +110,7 @@ class ItineraryItemOut(BaseModel):
     lng: float | None = None
     transport_mode: str | None = None
     travel_minutes: int | None = None
+    route_polyline: list[list[float]] | None = None
     cost_estimate: int | None = None
     is_locked: bool
 

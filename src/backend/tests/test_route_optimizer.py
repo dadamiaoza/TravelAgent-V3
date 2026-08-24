@@ -414,6 +414,39 @@ def test_travel_times_from_matrix():
         assert items[1]["travel_minutes_from_prev"] == 15  # mock 返回值
 
 
+def test_matrix_fills_route_polyline_and_transport_mode():
+    """高德返回路线信息时，应回填交通方式和真实道路坐标。"""
+    with patch("app.agents.tools.route_optimizer.settings") as mock_settings, \
+         patch("app.agents.tools.route_optimizer._amap_direction_direct") as mock_direct:
+        mock_settings.amap_api_key = "fake-key"
+        mock_direct.return_value = {
+            "minutes": 15,
+            "mode": "walking",
+            "path": [[116.0, 39.9], [116.1, 39.91], [116.2, 39.92]],
+        }
+
+        input_json = json.dumps({
+            "days": [{
+                "day_index": 1,
+                "theme": "测试",
+                "items": [
+                    {"seq": 1, "poi_name": "西湖", "duration_h": 2, "travel_minutes_from_prev": 0},
+                    {"seq": 2, "poi_name": "雷峰塔", "duration_h": 1, "travel_minutes_from_prev": 0},
+                ],
+            }]
+        }, ensure_ascii=False)
+
+        result = json.loads(optimize_itinerary(input_json))
+        items = result["days"][0]["items"]
+
+        assert items[0]["transport_mode"] is None
+        assert items[0]["route_polyline"] is None
+        assert items[1]["travel_minutes_from_prev"] == 15
+        assert items[1]["transport_mode"] == "walking"
+        assert items[1]["route_polyline"] == [[116.0, 39.9], [116.1, 39.91], [116.2, 39.92]]
+
+
+
 def test_multi_day_isolation():
     """多日行程：每日独立优化，互不干扰。"""
     with patch("app.agents.tools.route_optimizer.settings") as mock_settings, \

@@ -2,6 +2,7 @@
 import uuid
 from datetime import date, time, datetime
 from sqlalchemy import String, Integer, Float, Boolean, Date, Time, DateTime, ForeignKey, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
@@ -53,6 +54,8 @@ class ItineraryItem(Base):
     lng: Mapped[float | None] = mapped_column(Float(), nullable=True)
     transport_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     travel_minutes: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    # 从上一个节点到当前节点的真实道路坐标，格式 [[lng,lat], ...]
+    route_polyline: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
     cost_estimate: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean(), default=False)
 

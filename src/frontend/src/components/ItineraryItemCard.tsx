@@ -1,10 +1,10 @@
 import type { ItineraryItem } from "@/lib/types";
 
-// 把后端可能返回的英文交通方式转成中文展示
+// 把后端可能返回的英文交通方式转成中文 + 图标展示
 const TRANSPORT_LABELS: Record<string, string> = {
-  walking: "步行",
-  transit: "公交/地铁",
-  driving: "驾车",
+  walking: "🚶 步行",
+  transit: "🚌 公交/地铁",
+  driving: "🚗 驾车",
 };
 
 function formatTime(value?: string | null): string {

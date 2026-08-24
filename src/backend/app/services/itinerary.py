@@ -113,7 +113,9 @@ def _persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: dat
                 end_time=end_t,
                 lat=item_data.get("lat"),
                 lng=item_data.get("lng"),
+                transport_mode=item_data.get("transport_mode"),
                 travel_minutes=travel_m,
+                route_polyline=item_data.get("route_polyline"),
             )
             db.add(item)
             accumulated_minutes = start_minutes + duration_m
