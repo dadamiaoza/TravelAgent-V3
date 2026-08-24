@@ -40,6 +40,7 @@ class SourceParseRequest(BaseModel):
 
 
 class SourceEntityOut(BaseModel):
+    id: UUID | None = None
     poi_name: str
     day_index: int
     seq: int
@@ -48,6 +49,8 @@ class SourceEntityOut(BaseModel):
     suggested_duration_h: float | None = None
     best_time: str | None = None
     cost_estimate: str | None = None
+
+    model_config = {"from_attributes": True}
 
 
 class SourceParseOut(BaseModel):
@@ -84,6 +87,12 @@ class MergeSourceIn(BaseModel):
     label: str = Field(..., min_length=1, examples=["攻略A"])
     entities: list[SourceEntityOut]
 
+
+
+
+class EntityImportRequest(BaseModel):
+    """将选中的攻略候选 POI 导入到指定行程。"""
+    entity_ids: list[UUID] = Field(..., min_length=1)
 
 class MergeRequest(BaseModel):
     sources: list[MergeSourceIn] = Field(..., min_length=1)

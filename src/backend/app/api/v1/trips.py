@@ -1,9 +1,12 @@
 """Trip CRUD + itinerary generation API endpoints."""
+from datetime import timedelta
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
     TripCreate,
@@ -13,6 +16,7 @@ from app.schemas.trip import (
     ItineraryDayOut,
     ItineraryItemUpdate,
     ItineraryDayReorder,
+    EntityImportRequest,
 )
 from app.services.itinerary import generate_itinerary
 
@@ -111,6 +115,60 @@ def reorder_day_items(
     db.refresh(day)
     return day
 
+
+@router.post("/{trip_id}/entities/import", response_model=TripOut)
+def import_entities_to_trip(
+    trip_id: UUID,
+    body: EntityImportRequest,
+    db: Session = Depends(get_db),
+):
+    """把用户勾选的攻略候选 POI 写入指定行程，补全对应 Day/Item。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    entities = (
+        db.query(SourceEntity)
+        .filter(SourceEntity.id.in_(body.entity_ids))
+        .all()
+    )
+    if not entities:
+        raise HTTPException(status_code=400, detail="No matching source entities")
+
+    # 按 day_index 分组，保持 app 内出现顺序
+    entities.sort(key=lambda e: (e.day_index, e.seq))
+    days_by_index = {day.day_index: day for day in trip.days}
+    imported_count = 0
+
+    for entity in entities:
+        day_index = max(1, entity.day_index)
+        if day_index not in days_by_index:
+            day = ItineraryDay(
+                trip_id=trip.id,
+                day_index=day_index,
+                date=trip.start_date + timedelta(days=day_index - 1),
+            )
+            db.add(day)
+            db.flush()
+            days_by_index[day_index] = day
+
+        day = days_by_index[day_index]
+        next_seq = max((item.seq for item in day.items), default=0) + 1
+        db.add(ItineraryItem(
+            day_id=day.id,
+            seq=next_seq,
+            poi_name=entity.poi_name,
+            lat=entity.lat,
+            lng=entity.lng,
+        ))
+        imported_count += 1
+
+    if imported_count == 0:
+        raise HTTPException(status_code=400, detail="No entities were imported")
+
+    db.commit()
+    db.refresh(trip)
+    return trip
 
 
 @router.get("", response_model=list[TripBrief])

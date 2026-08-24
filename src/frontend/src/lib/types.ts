@@ -40,6 +40,7 @@ export interface ItineraryItem {
 
 
 export interface SourceEntity {
+  id?: string;
   poi_name: string;
   day_index: number;
   seq: number;
