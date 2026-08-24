@@ -37,3 +37,24 @@ export interface ItineraryItem {
   cost_estimate?: number | null;
   is_locked: boolean;
 }
+
+
+export interface SourceEntity {
+  poi_name: string;
+  day_index: number;
+  seq: number;
+  lat?: number | null;
+  lng?: number | null;
+  suggested_duration_h?: number | null;
+  best_time?: string | null;
+  cost_estimate?: string | null;
+}
+
+export interface SourceDocument {
+  id: string;
+  title: string;
+  url?: string | null;
+  content: string;
+  created_at?: string;
+  entities?: SourceEntity[];
+}

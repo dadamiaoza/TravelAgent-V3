@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import TripCreateForm from "@/components/TripCreateForm";
 
 export default function HomePage() {
@@ -10,6 +11,11 @@ export default function HomePage() {
         </p>
       </div>
       <TripCreateForm />
+      <div className="mt-6 text-center">
+        <Link to="/sources" className="text-blue-600 hover:underline">
+          去解析攻略
+        </Link>
+      </div>
     </main>
   );
 }

@@ -54,6 +54,30 @@ class SourceParseOut(BaseModel):
     entities: list[SourceEntityOut]
 
 
+
+class SourceCreateRequest(BaseModel):
+    """保存一篇攻略原文，后续再触发解析。"""
+    title: str = Field(default="", max_length=256)
+    url: str | None = None
+    text: str = Field(..., min_length=1)
+
+
+class SourceDocumentOut(BaseModel):
+    id: UUID
+    title: str
+    url: str | None = None
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SourceDocumentDetailOut(SourceDocumentOut):
+    entities: list[SourceEntityOut] = []
+
+    model_config = {"from_attributes": True}
+
+
 # ── Merge schemas ──
 
 class MergeSourceIn(BaseModel):
