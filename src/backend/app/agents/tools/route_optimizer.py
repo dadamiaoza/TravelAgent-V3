@@ -142,10 +142,11 @@ def _amap_direction_direct(
     origin_lng: float, origin_lat: float,
     dest_lng: float, dest_lat: float,
     mode: str, city: str = "",
-) -> int | None:
-    """用坐标直调高德 Direction API，返回旅行分钟数。
+) -> dict | None:
+    """用坐标直调高德 Direction API，返回分钟数、交通方式和道路坐标。
 
-    不做 geocode——调用方自行提供坐标。失败返回 None。
+    返回结构：{"minutes": int, "mode": str, "path": [[lng, lat], ...]}
+    失败返回 None。
     """
     if not settings.amap_api_key:
         return None
@@ -186,7 +187,11 @@ def _amap_direction_direct(
     if duration_sec <= 0:
         return None
 
-    return math.ceil(duration_sec / 60)
+    return {
+        "minutes": math.ceil(duration_sec / 60),
+        "mode": mode,
+        "path": _extract_route_path_direct(data, mode),
+    }
 
 
 def _extract_duration_direct(data: dict, mode: str) -> int | None:
@@ -203,6 +208,50 @@ def _extract_duration_direct(data: dict, mode: str) -> int | None:
             return transits[0].get("duration")
 
     return None
+
+
+def _append_polyline_points(coords: list[list[float]], polyline: str | None) -> None:
+    """把高德返回的 "lng,lat;lng,lat" 字符串追加到坐标列表。"""
+    if not polyline:
+        return
+    for point in polyline.split(";"):
+        if not point:
+            continue
+        try:
+            lng_str, lat_str = point.split(",")
+            coords.append([float(lng_str), float(lat_str)])
+        except (ValueError, TypeError):
+            continue
+
+
+def _extract_route_path_direct(data: dict, mode: str) -> list[list[float]]:
+    """从高德 Direction API 响应中尽力提取真实道路坐标。"""
+    route = data.get("route", {})
+    coords: list[list[float]] = []
+
+    if mode == "walking":
+        paths = route.get("paths") or []
+        if paths:
+            for step in (paths[0].get("steps") or []):
+                _append_polyline_points(coords, step.get("polyline"))
+        return coords
+
+    if mode == "transit":
+        transits = route.get("transits") or []
+        if not transits:
+            return coords
+        for segment in (transits[0].get("segments") or []):
+            # 步行段
+            walking = segment.get("walking") or {}
+            for step in (walking.get("steps") or []):
+                _append_polyline_points(coords, step.get("polyline"))
+            # 公交段
+            bus = segment.get("bus") or {}
+            for line in (bus.get("buslines") or []):
+                _append_polyline_points(coords, line.get("polyline"))
+        return coords
+
+    return coords
 
 
 # ── 旅行时间矩阵 ──
@@ -235,25 +284,36 @@ def _build_travel_time_matrix(items: list[dict]) -> dict | None:
             mode = _select_mode(dist)
             city = items[j].get("city", "")
 
-            minutes = _amap_direction_direct(
+            route_info = _amap_direction_direct(
                 items[i]["lng"], items[i]["lat"],
                 items[j]["lng"], items[j]["lat"],
                 mode=mode, city=city,
             )
 
-            if minutes is None:
+            if route_info is None:
                 logger.warning(
                     "Direction API 失败: %s → %s，该日降级到估算",
                     items[i]["poi_name"], items[j]["poi_name"],
                 )
                 return None
 
-            matrix[(i, j)] = minutes
+            # 兼容旧的 int 返回（测试 mock），真实返回是 {minutes,mode,path}
+            matrix[(i, j)] = route_info
 
     return matrix
 
 
 # ── 贪心最近邻排序 ──
+
+def _matrix_minutes(matrix: dict, key: tuple[int, int]) -> int:
+    """从矩阵中取分钟数，兼容 int 和 {minutes, mode, path} 两种形态。"""
+    value = matrix.get(key)
+    if isinstance(value, dict):
+        return int(value.get("minutes", 10 ** 9))
+    if value is None:
+        return 10 ** 9
+    return int(value)
+
 
 def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
     """贪心最近邻重排 POI。
@@ -272,7 +332,7 @@ def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
     current = 0
 
     while remaining:
-        nearest = min(remaining, key=lambda j: matrix.get((current, j), 10 ** 9))
+        nearest = min(remaining, key=lambda j: _matrix_minutes(matrix, (current, j)))
         ordered.append(nearest)
         remaining.discard(nearest)
         current = nearest
@@ -288,13 +348,25 @@ def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
 # ── 交通时间填充 ──
 
 def _fill_travel_times_from_matrix(items: list[dict], matrix: dict, index_map: list[int]):
-    """用真实矩阵数据回填 travel_minutes_from_prev。"""
+    """用真实矩阵数据回填 travel_minutes、transport_mode 和 route_polyline。"""
     items[0]["travel_minutes_from_prev"] = 0
+    items[0]["transport_mode"] = None
+    items[0]["route_polyline"] = None
 
     for i in range(1, len(items)):
         orig_from = index_map[i - 1]  # 前一个 POI 的原始索引
         orig_to = index_map[i]        # 当前 POI 的原始索引
-        items[i]["travel_minutes_from_prev"] = matrix.get((orig_from, orig_to), 0)
+        route_info = matrix.get((orig_from, orig_to), 0)
+
+        # 兼容旧测试：直接传 int 时只填时间
+        if isinstance(route_info, dict):
+            items[i]["travel_minutes_from_prev"] = route_info.get("minutes", 0)
+            items[i]["transport_mode"] = route_info.get("mode")
+            items[i]["route_polyline"] = route_info.get("path") or None
+        else:
+            items[i]["travel_minutes_from_prev"] = route_info
+            items[i]["transport_mode"] = None
+            items[i]["route_polyline"] = None
 
 
 # ── 降级路径 ──
@@ -308,8 +380,10 @@ def _estimate_travel_minutes_from_distance(distance_m: float) -> int:
 
 
 def _fill_travel_times_fallback(items: list[dict]):
-    """降级路径：保持原始顺序 + Haversine 距离估算填充。"""
+    """降级路径：保持原始顺序 + Haversine 距离估算填充，不提供真实路线。"""
     items[0]["travel_minutes_from_prev"] = 0
+    items[0]["transport_mode"] = None
+    items[0]["route_polyline"] = None
 
     for i in range(1, len(items)):
         prev = items[i - 1]
@@ -318,4 +392,7 @@ def _fill_travel_times_fallback(items: list[dict]):
             prev["lat"], prev["lng"],
             curr["lat"], curr["lng"],
         )
+        # 降级时仍给出交通方式（按距离估算），但无真实道路坐标
         items[i]["travel_minutes_from_prev"] = _estimate_travel_minutes_from_distance(dist_m)
+        items[i]["transport_mode"] = _select_mode(dist_m)
+        items[i]["route_polyline"] = None

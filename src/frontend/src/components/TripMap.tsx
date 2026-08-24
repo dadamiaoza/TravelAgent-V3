@@ -27,13 +27,21 @@ function escapeHtml(value: string): string {
   );
 }
 
+const TRANSPORT_LABELS: Record<string, string> = {
+  walking: "🚶 步行",
+  transit: "🚌 公交/地铁",
+  driving: "🚗 驾车",
+};
+
 function buildPopupContent(item: ItineraryItem): string {
   const timeText =
     item.start_time || item.end_time
       ? `${item.start_time?.slice(0, 5) ?? ""} - ${item.end_time?.slice(0, 5) ?? ""}`
       : "时间待定";
   const briefParts: string[] = [];
-  if (item.transport_mode) briefParts.push(escapeHtml(item.transport_mode));
+  if (item.transport_mode) {
+    briefParts.push(escapeHtml(TRANSPORT_LABELS[item.transport_mode] ?? item.transport_mode));
+  }
   if (item.travel_minutes != null) briefParts.push(`${item.travel_minutes} 分钟`);
   if (item.cost_estimate != null) briefParts.push(`预计花费 ¥${item.cost_estimate}`);
 
@@ -124,14 +132,24 @@ export default function TripMap({ days }: TripMapProps) {
       overlaysRef.current.push(marker);
     });
 
-    const line = new amap.Polyline({
-      path: validItems.map((item) => [item.lng!, item.lat!]),
-      strokeColor: "#2563eb",
-      strokeWeight: 4,
-      strokeOpacity: 0.8,
-    });
-    line.setMap(map);
-    overlaysRef.current.push(line);
+    // 每段路线：优先画后端返回的真实道路坐标；没有则回退为直线
+    for (let i = 1; i < validItems.length; i++) {
+      const prev = validItems[i - 1];
+      const curr = validItems[i];
+      const realPath = curr.route_polyline && curr.route_polyline.length > 0
+        ? curr.route_polyline
+        : [[prev.lng!, prev.lat!], [curr.lng!, curr.lat!]];
+      const strokeColor = curr.transport_mode === "transit" ? "#16a34a" : "#2563eb";
+
+      const legLine = new amap.Polyline({
+        path: realPath,
+        strokeColor,
+        strokeWeight: 4,
+        strokeOpacity: 0.85,
+      });
+      legLine.setMap(map);
+      overlaysRef.current.push(legLine);
+    }
 
     map.setFitView(overlaysRef.current);
   }, [amap, map, selectedDayIndex, days]);
