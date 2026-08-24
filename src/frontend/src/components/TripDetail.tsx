@@ -21,7 +21,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
       {days.length > 0 ? (
         <div className="space-y-4">
           {days.map((day) => (
-            <ItineraryDayCard key={day.id} day={day} />
+            <ItineraryDayCard key={day.id} day={day} tripId={trip.id} />
           ))}
         </div>
       ) : (

@@ -33,6 +33,7 @@ export interface ItineraryItem {
   transport_mode?: string | null;
   travel_minutes?: number | null;
   route_polyline?: number[][] | null;
+  notes?: string | null;
   cost_estimate?: number | null;
   is_locked: boolean;
 }
