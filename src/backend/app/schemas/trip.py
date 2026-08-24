@@ -20,6 +20,19 @@ class TripGenerate(BaseModel):
     pass  # No extra fields needed for MVP — reads trip constraints from DB later
 
 
+class ItineraryItemUpdate(BaseModel):
+    """用户编辑单个行程节点时允许修改的字段。"""
+    poi_name: str | None = Field(default=None, max_length=256)
+    start_time: time | None = None
+    end_time: time | None = None
+    notes: str | None = None
+
+
+class ItineraryDayReorder(BaseModel):
+    """同一天内的节点排序：item_ids 即新顺序。"""
+    item_ids: list[UUID] = Field(..., min_length=1)
+
+
 # ── Source (travelogue) parsing schemas ──
 
 class SourceParseRequest(BaseModel):
@@ -111,6 +124,7 @@ class ItineraryItemOut(BaseModel):
     transport_mode: str | None = None
     travel_minutes: int | None = None
     route_polyline: list[list[float]] | None = None
+    notes: str | None = None
     cost_estimate: int | None = None
     is_locked: bool
 

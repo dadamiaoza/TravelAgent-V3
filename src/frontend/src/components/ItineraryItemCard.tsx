@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { ItineraryItem } from "@/lib/types";
+import { useUpdateItineraryItem } from "@/hooks/useItineraryMutations";
 
 // 把后端可能返回的英文交通方式转成中文 + 图标展示
 const TRANSPORT_LABELS: Record<string, string> = {
@@ -35,7 +37,21 @@ function buildBrief(item: ItineraryItem): string {
   return parts.length > 0 ? parts.join(" · ") : "待补充详细信息";
 }
 
-export default function ItineraryItemCard({ item }: { item: ItineraryItem }) {
+export default function ItineraryItemCard({
+  item,
+  tripId,
+}: {
+  item: ItineraryItem;
+  tripId: string;
+}) {
+  const updateItem = useUpdateItineraryItem(tripId);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [poiName, setPoiName] = useState(item.poi_name);
+  const [startTime, setStartTime] = useState(item.start_time?.slice(0, 5) ?? "");
+  const [endTime, setEndTime] = useState(item.end_time?.slice(0, 5) ?? "");
+  const [notes, setNotes] = useState(item.notes ?? "");
+
   const start = formatTime(item.start_time);
   const end = formatTime(item.end_time);
   const timeText =
@@ -47,17 +63,113 @@ export default function ItineraryItemCard({ item }: { item: ItineraryItem }) {
           ? `至 ${end}`
           : "时间待定";
 
+  function toTimeValue(value: string): string | null {
+    if (!value) return null;
+    return value.length === 5 ? `${value}:00` : value;
+  }
+
+  function handleSave() {
+    updateItem.mutate(
+      {
+        itemId: item.id,
+        payload: {
+          poi_name: poiName.trim() || item.poi_name,
+          start_time: toTimeValue(startTime),
+          end_time: toTimeValue(endTime),
+          notes: notes.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => setIsEditing(false),
+      },
+    );
+  }
+
+  const inputClass =
+    "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
+
   return (
     <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-gray-900">{item.poi_name}</p>
-          <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
+      {!isEditing ? (
+        <>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-gray-900">{item.poi_name}</p>
+              <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
+              {item.notes && (
+                <p className="mt-1 text-xs text-gray-600">备注：{item.notes}</p>
+              )}
+            </div>
+            <span className="shrink-0 text-xs tabular-nums text-gray-500">
+              {timeText}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsEditing(true)}
+            className="mt-2 text-xs text-blue-600 hover:underline"
+          >
+            编辑
+          </button>
+        </>
+      ) : (
+        <div className="space-y-2">
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">名称</label>
+            <input
+              value={poiName}
+              onChange={(e) => setPoiName(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">开始时间</label>
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">结束时间</label>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">备注</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className={inputClass}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={updateItem.isPending}
+              className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-60"
+            >
+              保存
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsEditing(false)}
+              className="rounded bg-gray-200 px-3 py-1 text-xs"
+            >
+              取消
+            </button>
+          </div>
         </div>
-        <span className="shrink-0 text-xs tabular-nums text-gray-500">
-          {timeText}
-        </span>
-      </div>
+      )}
     </div>
   );
 }
