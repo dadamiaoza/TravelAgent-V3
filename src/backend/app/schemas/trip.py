@@ -26,6 +26,21 @@ class TripUpdate(BaseModel):
     destination: str | None = Field(default=None, max_length=128)
 
 
+class TripSuggestRequest(BaseModel):
+    """用户自由输入的自然语言行程需求。"""
+    text: str = Field(..., min_length=1)
+
+
+class TripSuggestOut(BaseModel):
+    """提示词优化结果：结构化参数 + 优化后的提示词。"""
+    destination: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    people_count: int = 1
+    optimized_prompt: str = ""
+
+
+
 class ItineraryItemUpdate(BaseModel):
     """用户编辑单个行程节点时允许修改的字段。"""
     poi_name: str | None = Field(default=None, max_length=256)

@@ -2,15 +2,20 @@
 from datetime import timedelta
 from uuid import UUID
 
+from langchain_openai import ChatOpenAI
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
     TripCreate,
     TripUpdate,
+    TripSuggestRequest,
+    TripSuggestOut,
     TripOut,
     TripBrief,
     ItineraryItemOut,
@@ -24,6 +29,41 @@ from app.services.itinerary import generate_itinerary
 router = APIRouter(prefix="/trips", tags=["trips"])
 
 
+
+
+@router.post("/suggest", response_model=TripSuggestOut)
+def suggest_trip(body: TripSuggestRequest):
+    """把用户自然语言优化为结构化行程参数 + 优化提示词。"""
+    model = ChatOpenAI(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+    )
+    prompt = (
+        "你是旅行规划提示词优化助手。请把用户的自然语言需求解析为结构化行程参数，"
+        "并生成一段更精确的优化提示词。\n"
+        "只输出 JSON，不要其他文字，格式：\n"
+        '{"destination":"目的地","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",'
+        '"people_count":1,"optimized_prompt":"优化后的提示词"}\n'
+        "如果用户没有提供明确日期，start_date/end_date 可以填空字符串。\n\n"
+        f"用户输入：{body.text}\n"
+    )
+    response = model.invoke(prompt)
+    content = response.content.strip()
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end <= start:
+        raise HTTPException(status_code=500, detail="Failed to optimize trip prompt")
+
+    import json as _json
+    data = _json.loads(content[start:end + 1])
+    return TripSuggestOut(
+        destination=(data.get("destination") or "").strip() or None,
+        start_date=data.get("start_date") or None,
+        end_date=data.get("end_date") or None,
+        people_count=int(data.get("people_count") or 1),
+        optimized_prompt=data.get("optimized_prompt", body.text),
+    )
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(body: TripCreate, db: Session = Depends(get_db)):
     """Create a new trip and auto-generate a template itinerary."""

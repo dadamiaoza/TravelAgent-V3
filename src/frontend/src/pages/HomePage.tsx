@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import TripCreateForm from "@/components/TripCreateForm";
+import TripPromptForm from "@/components/TripPromptForm";
 import { api } from "@/lib/api";
 import type { Trip } from "@/lib/types";
 
@@ -31,7 +31,7 @@ export default function HomePage() {
         </p>
       </div>
 
-      <TripCreateForm />
+      <TripPromptForm />
 
       {trips.length > 0 && (
         <section className="mt-8 rounded-lg border bg-white p-4 shadow-sm">

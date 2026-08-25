@@ -59,3 +59,12 @@ export interface SourceDocument {
   created_at?: string;
   entities?: SourceEntity[];
 }
+
+export interface TripSuggestOut {
+  destination?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  people_count?: number;
+  optimized_prompt?: string;
+}
+
