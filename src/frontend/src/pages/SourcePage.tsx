@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import type { SourceDocument, Trip } from "@/lib/types";
@@ -10,8 +10,17 @@ export default function SourcePage() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<SourceDocument | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [tripId, setTripId] = useState("");
   const [importedTrip, setImportedTrip] = useState<Trip | null>(null);
+
+  useEffect(() => {
+    api.get<Trip[]>("/trips")
+      .then(setTrips)
+      .catch(() => {
+        // 列表加载失败不阻塞页面
+      });
+  }, []);
 
   async function handleParse() {
     if (!text.trim()) {
@@ -50,8 +59,8 @@ export default function SourcePage() {
   }
 
   async function handleImport() {
-    if (!tripId.trim()) {
-      setError("请填写目标行程 ID");
+    if (!tripId) {
+      setError("请选择目标行程");
       return;
     }
     if (selectedIds.size === 0) {
@@ -72,7 +81,7 @@ export default function SourcePage() {
     setLoading(true);
     setError(null);
     try {
-      const trip = await api.post<Trip>(`/trips/${tripId.trim()}/entities/import`, {
+      const trip = await api.post<Trip>(`/trips/${tripId}/entities/import`, {
         entity_ids: entityIds,
       });
       setImportedTrip(trip);
@@ -165,22 +174,38 @@ export default function SourcePage() {
 
           <div className="space-y-3 rounded-lg border bg-white p-4 shadow-sm">
             <div>
-              <label className="mb-1 block text-sm font-medium">目标行程 ID</label>
-              <input
+              <label className="mb-1 block text-sm font-medium">选择目标行程</label>
+              <select
                 value={tripId}
                 onChange={(e) => setTripId(e.target.value)}
-                placeholder="例如：2433d72f-..."
                 className={inputClass}
-              />
+              >
+                <option value="">请选择行程</option>
+                {trips.map((trip) => (
+                  <option key={trip.id} value={trip.id}>
+                    {trip.destination} · {trip.start_date} 至 {trip.end_date}
+                  </option>
+                ))}
+              </select>
+              {trips.length === 0 && (
+                <p className="mt-1 text-xs text-gray-500">
+                  还没有行程，请先{" "}
+                  <Link to="/" className="text-blue-600 hover:underline">
+                    创建行程
+                  </Link>
+                </p>
+              )}
             </div>
+
             <button
               type="button"
               onClick={handleImport}
-              disabled={loading || selectedIds.size === 0}
+              disabled={loading || selectedIds.size === 0 || !tripId}
               className="rounded bg-green-600 px-4 py-2 text-sm text-white disabled:opacity-60"
             >
               {loading ? "正在导入…" : `导入 ${selectedIds.size} 个 POI 到行程`}
             </button>
+
             {importedTrip && (
               <p className="text-sm text-green-700">
                 已导入到行程：
