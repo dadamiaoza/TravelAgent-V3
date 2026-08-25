@@ -94,6 +94,13 @@ class EntityImportRequest(BaseModel):
     """将选中的攻略候选 POI 导入到指定行程。"""
     entity_ids: list[UUID] = Field(..., min_length=1)
 
+
+class InferredTripOut(BaseModel):
+    """从攻略内容中推断出的新行程基本信息。"""
+    destination: str
+    day_count: int = Field(..., ge=1, le=30)
+
+
 class MergeRequest(BaseModel):
     sources: list[MergeSourceIn] = Field(..., min_length=1)
 

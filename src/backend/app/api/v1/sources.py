@@ -5,6 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import AIMessage
+from langchain_openai import ChatOpenAI
+from app.core.config import settings
 from sqlalchemy.orm import Session
 
 from app.agents.guide_parser import create_guide_parser
@@ -19,6 +21,7 @@ from app.schemas.trip import (
     SourceEntityOut,
     MergeRequest,
     MergeOut,
+    InferredTripOut,
     MergedEntityOut,
 )
 from app.services.merge import merge_candidates
@@ -56,6 +59,38 @@ def get_source(source_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/{source_id}/parse", response_model=SourceDocumentDetailOut)
+
+
+@router.post("/{source_id}/infer-trip", response_model=InferredTripOut)
+def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
+    """从攻略内容中自动推断目的地和天数，用于创建新行程。"""
+    doc = db.query(SourceDocument).filter(SourceDocument.id == source_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    model = ChatOpenAI(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+    )
+    prompt = (
+        "你是旅行规划助手。请根据以下攻略内容推断行程基本信息。\n"
+        "只输出 JSON，不要其他文字，格式："
+        '{"destination": "目的地城市", "day_count": 天数整数}\n\n'
+        f"攻略标题：{doc.title}\n"
+        f"攻略内容：\n{doc.content}\n"
+    )
+    response = model.invoke(prompt)
+    content = response.content.strip()
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end <= start:
+        raise HTTPException(status_code=500, detail="Failed to infer trip from source")
+    data = json.loads(content[start:end + 1])
+    return InferredTripOut(
+        destination=str(data.get("destination", "未知目的地")),
+        day_count=max(1, int(data.get("day_count", 1))),
+    )
 def parse_source_persist(source_id: UUID, db: Session = Depends(get_db)):
     """对已保存的攻略执行 Agent 解析，并将候选实体持久化。"""
     doc = db.query(SourceDocument).filter(SourceDocument.id == source_id).first()
