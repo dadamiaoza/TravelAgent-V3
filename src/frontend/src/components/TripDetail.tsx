@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { Trip } from "@/lib/types";
 import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
+import GuideImportPanel from "@/components/GuideImportPanel";
 
 export default function TripDetail({ trip }: { trip: Trip }) {
   const days = trip.days ?? [];
@@ -40,6 +41,8 @@ export default function TripDetail({ trip }: { trip: Trip }) {
           暂无行程内容
         </p>
       )}
+
+      <GuideImportPanel tripId={trip.id} />
     </div>
   );
 }
