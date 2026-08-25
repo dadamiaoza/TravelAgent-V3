@@ -10,6 +10,7 @@ from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
     TripCreate,
+    TripUpdate,
     TripOut,
     TripBrief,
     ItineraryItemOut,
@@ -171,6 +172,23 @@ def import_entities_to_trip(
     return trip
 
 
+
+
+@router.patch("/{trip_id}", response_model=TripOut)
+def update_trip(
+    trip_id: UUID,
+    body: TripUpdate,
+    db: Session = Depends(get_db),
+):
+    """编辑行程标题（destination）。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if body.destination is not None:
+        trip.destination = body.destination.strip()
+    db.commit()
+    db.refresh(trip)
+    return trip
 @router.get("", response_model=list[TripBrief])
 def list_trips(db: Session = Depends(get_db)):
     """List all trips (brief)."""

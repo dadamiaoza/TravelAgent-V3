@@ -20,6 +20,12 @@ class TripGenerate(BaseModel):
     pass  # No extra fields needed for MVP — reads trip constraints from DB later
 
 
+
+class TripUpdate(BaseModel):
+    """编辑行程标题（destination）。"""
+    destination: str | None = Field(default=None, max_length=128)
+
+
 class ItineraryItemUpdate(BaseModel):
     """用户编辑单个行程节点时允许修改的字段。"""
     poi_name: str | None = Field(default=None, max_length=256)
