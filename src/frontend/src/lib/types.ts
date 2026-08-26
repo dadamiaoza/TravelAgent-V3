@@ -66,5 +66,6 @@ export interface TripSuggestOut {
   end_date?: string | null;
   people_count?: number;
   optimized_prompt?: string;
+  must_visit?: string[];
 }
 

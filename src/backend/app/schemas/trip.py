@@ -13,6 +13,10 @@ class TripCreate(BaseModel):
     people_count: int = Field(default=1, ge=1, le=20)
     budget_min: int | None = None
     budget_max: int | None = None
+    # 用户优化后的提示词，会传给 itinerary_gen 作为补充需求
+    user_prompt: str | None = None
+    # 用户明确指定的必去地点
+    must_visit: list[str] | None = None
 
 
 class TripGenerate(BaseModel):
@@ -34,6 +38,7 @@ class TripSuggestRequest(BaseModel):
 class TripSuggestOut(BaseModel):
     """提示词优化结果：结构化参数 + 优化后的提示词。"""
     destination: str | None = None
+    must_visit: list[str] = []
     start_date: date | None = None
     end_date: date | None = None
     people_count: int = 1
@@ -209,6 +214,8 @@ class TripOut(BaseModel):
     people_count: int
     budget_min: int | None = None
     budget_max: int | None = None
+    user_prompt: str | None = None
+    must_visit: list[str] | None = None
     status: str
     created_at: datetime
     updated_at: datetime

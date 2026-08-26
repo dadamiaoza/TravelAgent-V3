@@ -31,6 +31,12 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
     elif trip.budget_max:
         prompt += f"最高预算：{trip.budget_max}元。"
 
+    if trip.user_prompt:
+        prompt += f"\n用户补充需求：{trip.user_prompt}\n"
+    if trip.must_visit:
+        prompt += f"\n必须包含用户指定的地点：{', '.join(trip.must_visit)}\n"
+
+
     result = agent.invoke(
         {"messages": [{"role": "user", "content": prompt}]},
         config={"configurable": {"thread_id": f"trip-{trip.id}"}},

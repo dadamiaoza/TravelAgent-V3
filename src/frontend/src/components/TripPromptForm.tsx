@@ -11,6 +11,8 @@ export default function TripPromptForm() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [peopleCount, setPeopleCount] = useState("1");
+  const [optimizedPrompt, setOptimizedPrompt] = useState("");
+  const [mustVisit, setMustVisit] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +30,8 @@ export default function TripPromptForm() {
       setStartDate(result.start_date ?? "");
       setEndDate(result.end_date ?? "");
       setPeopleCount(String(result.people_count ?? 1));
+      setOptimizedPrompt(result.optimized_prompt ?? "");
+      setMustVisit((result.must_visit ?? []).join("，"));
     } catch {
       setError("提示词优化失败，请稍后重试");
     } finally {
@@ -58,6 +62,11 @@ export default function TripPromptForm() {
         start_date: startDate,
         end_date: endDate,
         people_count: count,
+        user_prompt: optimizedPrompt.trim() || undefined,
+        must_visit: mustVisit
+          .split(/[，,]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
       });
       navigate(`/trips/${trip.id}`);
     } catch {
@@ -100,7 +109,15 @@ export default function TripPromptForm() {
         <div className="space-y-3 rounded-md border border-blue-100 bg-blue-50/50 p-4">
           <div>
             <h3 className="text-sm font-semibold text-gray-900">优化后的提示词</h3>
-            <p className="mt-1 text-sm text-gray-600">{suggestion.optimized_prompt}</p>
+            <textarea
+              value={optimizedPrompt}
+              onChange={(e) => setOptimizedPrompt(e.target.value)}
+              rows={3}
+              className={inputClass}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              你可以直接修改这段提示词，生成时会作为用户补充需求传给 AI。
+            </p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -141,6 +158,18 @@ export default function TripPromptForm() {
                 className={inputClass}
               />
             </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">
+              必去地点（用逗号分隔）
+            </label>
+            <input
+              value={mustVisit}
+              onChange={(e) => setMustVisit(e.target.value)}
+              placeholder="例如：武功山，安源路矿工人运动纪念馆"
+              className={inputClass}
+            />
           </div>
 
           <button

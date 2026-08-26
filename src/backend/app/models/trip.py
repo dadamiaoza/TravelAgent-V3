@@ -18,6 +18,9 @@ class Trip(Base):
     people_count: Mapped[int] = mapped_column(Integer(), default=1)
     budget_min: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     budget_max: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    user_prompt: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    must_visit: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
+
     status: Mapped[str] = mapped_column(String(32), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))

@@ -44,8 +44,9 @@ def suggest_trip(body: TripSuggestRequest):
         "并生成一段更精确的优化提示词。\n"
         "只输出 JSON，不要其他文字，格式：\n"
         '{"destination":"目的地","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",'
-        '"people_count":1,"optimized_prompt":"优化后的提示词"}\n'
+        '"people_count":1,"optimized_prompt":"简洁的优化提示词","must_visit":["用户明确指定必去地点"]}\n'
         "如果用户没有提供明确日期，start_date/end_date 可以填空字符串。\n\n"
+          "optimized_prompt 保持简洁，不要写太长。\n"
         f"用户输入：{body.text}\n"
     )
     response = model.invoke(prompt)
@@ -63,6 +64,7 @@ def suggest_trip(body: TripSuggestRequest):
         end_date=data.get("end_date") or None,
         people_count=int(data.get("people_count") or 1),
         optimized_prompt=data.get("optimized_prompt", body.text),
+          must_visit=data.get("must_visit") or [],
     )
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(body: TripCreate, db: Session = Depends(get_db)):
@@ -74,6 +76,8 @@ def create_trip(body: TripCreate, db: Session = Depends(get_db)):
         people_count=body.people_count,
         budget_min=body.budget_min,
         budget_max=body.budget_max,
+          user_prompt=body.user_prompt,
+          must_visit=body.must_visit,
     )
     db.add(trip)
     db.commit()
