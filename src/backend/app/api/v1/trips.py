@@ -43,7 +43,7 @@ def suggest_trip(body: TripSuggestRequest):
         "你是旅行规划提示词优化助手。请把用户的自然语言需求解析为结构化行程参数，"
         "并生成一段更精确的优化提示词。\n"
         "只输出 JSON，不要其他文字，格式：\n"
-        '{"destination":"目的地","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",'
+        '{"destination":"目的地","city":"干净的城市名","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",'
         '"people_count":1,"optimized_prompt":"简洁的优化提示词","must_visit":["用户明确指定必去地点"]}\n'
         "如果用户没有提供明确日期，start_date/end_date 可以填空字符串。\n\n"
           "optimized_prompt 保持简洁，不要写太长。\n"
@@ -60,6 +60,7 @@ def suggest_trip(body: TripSuggestRequest):
     data = _json.loads(content[start:end + 1])
     return TripSuggestOut(
         destination=(data.get("destination") or "").strip() or None,
+          city=(data.get("city") or "").strip() or None,
         start_date=data.get("start_date") or None,
         end_date=data.get("end_date") or None,
         people_count=int(data.get("people_count") or 1),
@@ -71,6 +72,7 @@ def create_trip(body: TripCreate, db: Session = Depends(get_db)):
     """Create a new trip and auto-generate a template itinerary."""
     trip = Trip(
         destination=body.destination,
+          city=body.city,
         start_date=body.start_date,
         end_date=body.end_date,
         people_count=body.people_count,

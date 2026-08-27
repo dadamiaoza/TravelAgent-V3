@@ -119,7 +119,7 @@ export default function SourcePage() {
     setError(null);
     try {
       // 1. 根据攻略内容自动推断目的地和天数
-      const inferred = await api.post<{ destination: string; day_count: number }>(
+      const inferred = await api.post<{ destination: string; city?: string | null; day_count: number }>(
         `/sources/${source.id}/infer-trip`,
         {},
       );
@@ -133,6 +133,7 @@ export default function SourcePage() {
 
       const newTrip = await api.post<Trip>("/trips", {
         destination: inferred.destination,
+          city: inferred.city ?? undefined,
         start_date: startDate,
         end_date: endDate,
         people_count: 1,

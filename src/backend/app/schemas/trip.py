@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 class TripCreate(BaseModel):
     destination: str = Field(..., min_length=1, max_length=128, examples=["北京"])
+    city: str | None = Field(default=None, max_length=128)
+
     start_date: date = Field(..., examples=["2026-06-01"])
     end_date: date = Field(..., examples=["2026-06-03"])
     people_count: int = Field(default=1, ge=1, le=20)
@@ -38,6 +40,8 @@ class TripSuggestRequest(BaseModel):
 class TripSuggestOut(BaseModel):
     """提示词优化结果：结构化参数 + 优化后的提示词。"""
     destination: str | None = None
+    city: str | None = None
+
     must_visit: list[str] = []
     start_date: date | None = None
     end_date: date | None = None
@@ -124,6 +128,8 @@ class EntityImportRequest(BaseModel):
 class InferredTripOut(BaseModel):
     """从攻略内容中推断出的新行程基本信息。"""
     destination: str
+    city: str | None = None
+
     day_count: int = Field(..., ge=1, le=30)
 
 
@@ -209,6 +215,8 @@ class ItineraryDayOut(BaseModel):
 class TripOut(BaseModel):
     id: UUID
     destination: str
+    city: str | None = None
+
     start_date: date
     end_date: date
     people_count: int

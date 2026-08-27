@@ -76,7 +76,7 @@ def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
     prompt = (
         "你是旅行规划助手。请根据以下攻略内容推断行程基本信息。\n"
         "只输出 JSON，不要其他文字，格式："
-        '{"destination": "目的地城市", "day_count": 天数整数}\n\n'
+        '{"destination": "展示名称", "city": "干净城市名", "day_count": 天数整数}\n\n'
         f"攻略标题：{doc.title}\n"
         f"攻略内容：\n{doc.content}\n"
     )
@@ -89,6 +89,7 @@ def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
     data = json.loads(content[start:end + 1])
     return InferredTripOut(
         destination=str(data.get("destination", "未知目的地")),
+          city=str(data.get("city") or "").strip() or None,
         day_count=max(1, int(data.get("day_count", 1))),
     )
 def parse_source_persist(source_id: UUID, db: Session = Depends(get_db)):

@@ -62,6 +62,7 @@ export interface SourceDocument {
 
 export interface TripSuggestOut {
   destination?: string | null;
+  city?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   people_count?: number;

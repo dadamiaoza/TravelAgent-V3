@@ -8,6 +8,7 @@ export default function TripPromptForm() {
   const [text, setText] = useState("");
   const [suggestion, setSuggestion] = useState<TripSuggestOut | null>(null);
   const [destination, setDestination] = useState("");
+    const [city, setCity] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [peopleCount, setPeopleCount] = useState("1");
@@ -26,6 +27,7 @@ export default function TripPromptForm() {
     try {
       const result = await api.post<TripSuggestOut>("/trips/suggest", { text });
       setSuggestion(result);
+        setCity(result.city ?? "");
       setDestination(result.destination ?? "");
       setStartDate(result.start_date ?? "");
       setEndDate(result.end_date ?? "");
@@ -59,6 +61,7 @@ export default function TripPromptForm() {
     try {
       const trip = await api.post<Trip>("/trips", {
         destination: destination.trim(),
+          city: city.trim() || undefined,
         start_date: startDate,
         end_date: endDate,
         people_count: count,
@@ -129,6 +132,15 @@ export default function TripPromptForm() {
                 className={inputClass}
               />
             </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">城市（用于地理编码）</label>
+                <input
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  placeholder="例如：萍乡"
+                  className={inputClass}
+                />
+              </div>
             <div>
               <label className="mb-1 block text-xs text-gray-500">人数</label>
               <input
