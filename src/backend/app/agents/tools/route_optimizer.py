@@ -95,6 +95,9 @@ def optimize_itinerary(itinerary_json: str) -> str:
             item["lat"] = result["lat"]
             item["lng"] = result["lng"]
             item["city"] = result.get("city", "")
+            item["amap_poi_id"] = result.get("amap_poi_id")
+            item["poi_address"] = result.get("poi_address")
+            item["poi_type"] = result.get("poi_type")
             prev_center = (item["lat"], item["lng"])
 
         # 第二步：尝试构建真实旅行时间矩阵

@@ -62,6 +62,9 @@ class ItineraryItem(Base):
     # 从上一个节点到当前节点的真实道路坐标，格式 [[lng,lat], ...]
     route_polyline: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    amap_poi_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    poi_address: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    poi_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cost_estimate: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean(), default=False)
 

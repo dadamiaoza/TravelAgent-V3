@@ -197,6 +197,9 @@ class ItineraryItemOut(BaseModel):
     travel_minutes: int | None = None
     route_polyline: list[list[float]] | None = None
     notes: str | None = None
+    amap_poi_id: str | None = None
+    poi_address: str | None = None
+    poi_type: str | None = None
     cost_estimate: int | None = None
     is_locked: bool
 

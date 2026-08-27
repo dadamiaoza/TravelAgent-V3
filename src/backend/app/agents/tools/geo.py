@@ -3,11 +3,13 @@
 Primary: Amap Place Search + Nearby Search when a city/nearby context is provided.
 Fallback: Amap Geocoding API, then mock POI database.
 """
+import json
 import logging
 import re
 from typing import Dict
 
 import requests
+from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
 
@@ -120,7 +122,7 @@ def _geocode_amap_around(name: str, nearby: tuple[float, float]) -> dict | None:
     if not pois:
         return None
 
-    best = _best_match_poi(search_name, pois)
+    best = _resolve_candidate(search_name, pois)
     if best is None:
         return None
 
@@ -133,6 +135,9 @@ def _geocode_amap_around(name: str, nearby: tuple[float, float]) -> dict | None:
         "lat": float(lat_str),
         "lng": float(lng_str),
         "city": best.get("cityname") or best.get("adname", ""),
+        "amap_poi_id": best.get("id"),
+        "poi_address": best.get("address"),
+        "poi_type": best.get("type"),
     }
 
 
@@ -159,7 +164,7 @@ def _geocode_amap_poi(name: str, city: str = "") -> dict | None:
     if not pois:
         return None
 
-    best = _best_match_poi(search_name, pois)
+    best = _resolve_candidate(search_name, pois)
     if best is None:
         return None
 
@@ -172,6 +177,9 @@ def _geocode_amap_poi(name: str, city: str = "") -> dict | None:
         "lat": float(lat_str),
         "lng": float(lng_str),
         "city": best.get("cityname") or best.get("adname", ""),
+        "amap_poi_id": best.get("id"),
+        "poi_address": best.get("address"),
+        "poi_type": best.get("type"),
     }
 
 
@@ -200,6 +208,70 @@ def _geocode_amap(name: str, city: str = "") -> dict | None:
         "lng": float(lng_str),
         "city": geocode.get("city", ""),
     }
+
+
+
+def _resolve_candidate(query_name: str, pois: list) -> dict | None:
+    """先确定性匹配；如果名称较弱且候选较多，则用 LLM 做消歧。"""
+    best, best_score = _best_match_poi_scored(query_name, pois)
+    if best is None:
+        return None
+
+    if len(pois) > 1 and best_score < 2:
+        llm_best = _disambiguate_with_llm(query_name, pois)
+        if llm_best is not None:
+            return llm_best
+
+    return best
+
+
+def _best_match_poi_scored(query_name: str, pois: list) -> tuple[dict | None, int]:
+    """返回最佳 POI 及其名称匹配分。"""
+    if not pois:
+        return None, 0
+    best = pois[0]
+    best_score = _name_match_score(query_name, best.get("name", ""))
+    for p in pois[1:]:
+        score = _name_match_score(query_name, p.get("name", ""))
+        if score > best_score:
+            best = p
+            best_score = score
+    return (best, best_score) if best_score >= 1 else (None, best_score)
+
+
+def _disambiguate_with_llm(query_name: str, pois: list) -> dict | None:
+    """当多个候选相似时，让 LLM 根据名称/地址/类型/距离选择最合理的一个。"""
+    model = ChatOpenAI(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+    )
+
+    lines = []
+    for idx, p in enumerate(pois[:10]):
+        lines.append(
+            f"{idx}. {p.get('name', '')} | 地址: {p.get('address', '')} | "
+            f"类型: {p.get('type', '')} | 坐标: {p.get('location', '')}"
+        )
+
+    prompt = (
+        "你是旅行目的地消歧助手。以下是从高德搜索到的候选地点，"
+        f"请根据用户要找的“{query_name}”选择最匹配的一个。\n"
+        "只输出 JSON：{\"index\": 数字}\n\n"
+        f"候选列表：\n" + "\n".join(lines)
+    )
+    try:
+        response = model.invoke(prompt)
+        content = response.content.strip()
+        start = content.find("{")
+        end = content.rfind("}")
+        data = json.loads(content[start:end + 1])
+        index = int(data.get("index", 0))
+        if 0 <= index < len(pois):
+            return pois[index]
+    except Exception:
+        logger.warning("LLM POI 消歧失败，回退到名称匹配", exc_info=True)
+    return None
 
 
 def _best_match_poi(query_name: str, pois: list) -> dict | None:
