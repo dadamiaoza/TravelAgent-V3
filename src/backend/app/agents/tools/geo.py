@@ -1,9 +1,10 @@
 """Geocoding tool — converts POI names to lat/lng coordinates.
 
-Primary: Amap Place Search API when a city is provided (better for POIs inside scenic areas)
+Primary: Amap Place Search + Nearby Search when a city/nearby context is provided.
 Fallback: Amap Geocoding API, then mock POI database.
 """
 import logging
+import re
 from typing import Dict
 
 import requests
@@ -37,18 +38,36 @@ _MOCK_POI: Dict[str, Dict[str, float]] = {
 }
 
 
+def _normalize_poi_search_name(name: str) -> str:
+    """去掉括号说明和常见日出/日落/云海等场景描述，保留核心 POI 名。"""
+    s = re.sub(r"[（(][^）)]*[）)]", "", name)
+    for token in ("观日出", "赏日落", "看日出", "看日落", "日出", "日落", "云海", "观景"):
+        s = s.replace(token, "")
+    return s.strip() or name
+
+
 def geocode_poi(
     name: str,
     city: str = "",
     mock_fallback: bool = True,
+    nearby: tuple[float, float] | None = None,
 ) -> dict | None:
     """Convert a POI name to geographic coordinates.
 
-    With a city context, prefer Amap Place Search because it returns precise
-    sub-POI locations inside scenic areas (e.g. 武功山金顶, 吊马桩).
+    With a nearby location, first searches Amap Around API because it can
+    disambiguate same-name places inside scenic areas (e.g. 金顶帐篷营地).
     """
     if settings.amap_api_key:
-        # 1. 带城市时先用 POI 搜索，避免把景区子景点匹配到外地同名地点
+        # 1. 有上下文坐标时，优先周边搜索
+        if nearby:
+            try:
+                result = _geocode_amap_around(name, nearby)
+                if result:
+                    return result
+            except Exception:
+                logger.warning("高德周边搜索失败，继续其他方式", exc_info=True)
+
+        # 2. 带城市时用 POI 搜索，避免景区子景点匹配到外地同名地点
         if city:
             try:
                 result = _geocode_amap_poi(name, city)
@@ -57,7 +76,7 @@ def geocode_poi(
             except Exception:
                 logger.warning("高德 POI 搜索失败，尝试地理编码", exc_info=True)
 
-        # 2. 再尝试传统 geocode
+        # 3. 再尝试传统 geocode
         try:
             result = _geocode_amap(name, city)
             if result:
@@ -74,13 +93,52 @@ def geocode_poi(
 
 AMAP_GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo"
 AMAP_PLACE_TEXT_URL = "https://restapi.amap.com/v3/place/text"
+AMAP_PLACE_AROUND_URL = "https://restapi.amap.com/v3/place/around"
+
+
+def _geocode_amap_around(name: str, nearby: tuple[float, float]) -> dict | None:
+    """使用高德周边搜索，围绕已知坐标查找同名/相似 POI。"""
+    lat, lng = nearby
+    search_name = _normalize_poi_search_name(name)
+    params = {
+        "key": settings.amap_api_key,
+        "location": f"{lng},{lat}",
+        "radius": 3000,
+        "keywords": search_name,
+        "offset": 20,
+        "extensions": "all",
+        "sortrule": 1,
+    }
+    resp = requests.get(AMAP_PLACE_AROUND_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data.get("status") != "1" or int(data.get("count", 0)) == 0:
+        return None
+
+    pois = data.get("pois") or []
+    if not pois:
+        return None
+
+    best = _best_match_poi(search_name, pois)
+    if best is None:
+        return None
+
+    location = best.get("location", "")
+    if not location:
+        return None
+    lng_str, lat_str = location.split(",")
+    return {
+        "name": best.get("name", name),
+        "lat": float(lat_str),
+        "lng": float(lng_str),
+        "city": best.get("cityname") or best.get("adname", ""),
+    }
 
 
 def _geocode_amap_poi(name: str, city: str = "") -> dict | None:
     """使用高德 POI 搜索获取更精确的景点坐标。"""
-    import re
-    # 去掉括号说明，例如“金顶(赏日落)”用“金顶”搜索
-    search_name = re.sub(r"[（(][^）)]*[）)]", "", name).strip() or name
+    search_name = _normalize_poi_search_name(name)
     params = {
         "key": settings.amap_api_key,
         "keywords": search_name,
@@ -145,34 +203,22 @@ def _geocode_amap(name: str, city: str = "") -> dict | None:
 
 
 def _best_match_poi(query_name: str, pois: list) -> dict | None:
-    """从 POI 搜索结果中按名称相似度选择最佳匹配。
-
-    会去掉查询中的括号说明（如“金顶(赏日落)” → “金顶”），
-    因为这些括号内容通常是用户补充的场景描述，不是 POI 正式名称。
-    """
-    import re
-
-    base_query = re.sub(r"[（(][^）)]*[）)]", "", query_name).strip()
-    if not base_query:
-        base_query = query_name
-
+    """从 POI 搜索结果中按名称相似度选择最佳匹配。"""
     if not pois:
         return None
     best = pois[0]
-    best_score = _name_match_score(base_query, best.get("name", ""))
+    best_score = _name_match_score(query_name, best.get("name", ""))
     for p in pois[1:]:
-        score = _name_match_score(base_query, p.get("name", ""))
+        score = _name_match_score(query_name, p.get("name", ""))
         if score > best_score:
             best = p
             best_score = score
-    # 带城市上下文的 POI 搜索已经过滤到目标城市，允许较低匹配阈值
+    # 带城市/周边上下文的搜索已经过滤，允许较低匹配阈值
     return best if best_score >= 1 else None
 
 
 def _name_match_score(query: str, result: str) -> int:
     """简单名称匹配打分：2=完全/包含，1=单字重叠，0=不匹配。"""
-    import re
-
     q_clean = re.sub(r"[（）()\s]", "", query)
     r_clean = re.sub(r"[（）()\s]", "", result)
     if q_clean == r_clean:
