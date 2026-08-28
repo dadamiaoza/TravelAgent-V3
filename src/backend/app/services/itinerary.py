@@ -98,6 +98,7 @@ def _persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: dat
             trip_id=trip.id,
             day_index=day_idx,
             date=start_date + timedelta(days=day_idx - 1),
+            route_type=day_data.get("route_type") or "city",
         )
         db.add(day)
         db.flush()
@@ -125,6 +126,8 @@ def _persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: dat
                   amap_poi_id=item_data.get("amap_poi_id"),
                   poi_address=item_data.get("poi_address"),
                   poi_type=item_data.get("poi_type"),
+                  route_verified=item_data.get("route_verified"),
+                  travel_advice=item_data.get("travel_advice"),
             )
             db.add(item)
             accumulated_minutes = start_minutes + duration_m

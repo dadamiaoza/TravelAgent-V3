@@ -5,6 +5,9 @@ import { useUpdateItineraryItem } from "@/hooks/useItineraryMutations";
 // 把后端可能返回的英文交通方式转成中文 + 图标展示
 const TRANSPORT_LABELS: Record<string, string> = {
   walking: "🚶 步行",
+  hiking: "🥾 登山/步道",
+  shuttle: "🚐 景区接驳车",
+  cable_car: "🚡 索道/缆车",
   transit: "🚌 公交/地铁",
   driving: "🚗 驾车",
 };
@@ -96,6 +99,9 @@ export default function ItineraryItemCard({
             <div>
               <p className="text-sm font-medium text-gray-900">{item.poi_name}</p>
               <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
+              {item.travel_advice && (
+                <p className="mt-1 text-xs text-amber-700">提示：{item.travel_advice}</p>
+              )}
               {item.notes && (
                 <p className="mt-1 text-xs text-gray-600">备注：{item.notes}</p>
               )}

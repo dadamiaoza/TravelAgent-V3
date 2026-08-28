@@ -573,3 +573,93 @@ def _get_final_json(messages: list) -> str:
                     return content[start:end + 1]
             return content
     return ""
+
+
+# ── 城市/景区双模式路线测试 ──
+
+def test_scenic_mode_uses_walking_or_driving_never_transit():
+    """景区模式即使距离较远，也只调用步行/驾车，不调用公交/地铁。"""
+    with patch("app.agents.tools.route_optimizer.settings") as mock_settings, \
+         patch("app.agents.tools.route_optimizer._amap_direction_direct") as mock_direct:
+        mock_settings.amap_api_key = "fake-key"
+        captured_modes = []
+        def fake_direction(lng1, lat1, lng2, lat2, mode, city=""):
+            captured_modes.append(mode)
+            return {"minutes": 20, "mode": mode, "path": [[120.0, 30.0], [120.05, 30.05]]}
+        mock_direct.side_effect = fake_direction
+
+        input_json = json.dumps({
+            "city": "萍乡",
+            "days": [{
+                "day_index": 1,
+                "theme": "武功山景区",
+                "route_type": "scenic",
+                "items": [
+                    {"seq": 1, "poi_name": "石鼓寺", "duration_h": 1, "travel_minutes_from_prev": 0},
+                    {"seq": 2, "poi_name": "金顶", "duration_h": 2, "travel_minutes_from_prev": 0},
+                ],
+            }]
+        }, ensure_ascii=False)
+
+        result = json.loads(optimize_itinerary(input_json))
+        items = result["days"][0]["items"]
+
+        assert captured_modes, "should call Amap direction"
+        assert all(mode in ("walking", "driving") for mode in captured_modes)
+        assert "transit" not in captured_modes
+        assert items[1]["transport_mode"] in ("walking", "driving")
+
+
+def test_scenic_cable_car_fallback_marks_as_suggestion():
+    """景区索道没有高德真实路线，必须标注为参考建议并带上现场确认提示。"""
+    with patch("app.agents.tools.route_optimizer.settings") as mock_settings:
+        mock_settings.amap_api_key = ""
+
+        input_json = json.dumps({
+            "city": "萍乡",
+            "days": [{
+                "day_index": 1,
+                "theme": "武功山",
+                "route_type": "scenic",
+                "items": [
+                    {"seq": 1, "poi_name": "金顶索道下站", "duration_h": 1, "travel_minutes_from_prev": 0},
+                    {"seq": 2, "poi_name": "金顶", "duration_h": 2, "travel_minutes_from_prev": 0},
+                ],
+            }]
+        }, ensure_ascii=False)
+
+        result = json.loads(optimize_itinerary(input_json))
+        item = result["days"][0]["items"][1]
+
+        assert item["transport_mode"] == "cable_car"
+        assert item["route_polyline"] is None
+        assert item["route_verified"] is False
+        assert item["travel_advice"]
+        assert "现场" in item["travel_advice"] or "官方" in item["travel_advice"]
+
+
+def test_scenic_fallback_walking_has_generic_advice():
+    """景区内无法核实的步行段也应提示以现场指引为准。"""
+    with patch("app.agents.tools.route_optimizer.settings") as mock_settings:
+        mock_settings.amap_api_key = ""
+
+        input_json = json.dumps({
+            "city": "萍乡",
+            "days": [{
+                "day_index": 1,
+                "theme": "武功山",
+                "route_type": "scenic",
+                "items": [
+                    {"seq": 1, "poi_name": "中庵", "duration_h": 1, "travel_minutes_from_prev": 0},
+                    {"seq": 2, "poi_name": "观音宕", "duration_h": 2, "travel_minutes_from_prev": 0},
+                ],
+            }]
+        }, ensure_ascii=False)
+
+        result = json.loads(optimize_itinerary(input_json))
+        item = result["days"][0]["items"][1]
+
+        assert item["transport_mode"] in ("walking", "driving")
+        assert item["route_verified"] is False
+        assert item["travel_advice"]
+        assert "现场" in item["travel_advice"]
