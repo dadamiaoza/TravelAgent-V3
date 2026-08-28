@@ -13,11 +13,16 @@ class Trip(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     destination: Mapped[str] = mapped_column(String(128))
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     start_date: Mapped[date] = mapped_column(Date())
     end_date: Mapped[date] = mapped_column(Date())
     people_count: Mapped[int] = mapped_column(Integer(), default=1)
     budget_min: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     budget_max: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    user_prompt: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    must_visit: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
+
     status: Mapped[str] = mapped_column(String(32), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
@@ -57,6 +62,9 @@ class ItineraryItem(Base):
     # 从上一个节点到当前节点的真实道路坐标，格式 [[lng,lat], ...]
     route_polyline: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    amap_poi_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    poi_address: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    poi_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cost_estimate: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean(), default=False)
 

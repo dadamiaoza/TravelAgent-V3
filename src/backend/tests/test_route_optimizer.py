@@ -91,7 +91,7 @@ def test_optimize_itinerary_passes_city_to_geocode():
 
         result = json.loads(optimize_itinerary(input_json))
         assert result["days"][0]["items"][0]["lat"] == 27.0
-        mock_geocode.assert_any_call("玉湖湿地公园", city="萍乡", mock_fallback=False)
+        mock_geocode.assert_any_call("玉湖湿地公园", city="萍乡", mock_fallback=False, nearby=None)
 
 
 
@@ -101,7 +101,7 @@ def test_geocode_with_fallback_prefers_item_city():
         mock_geocode.return_value = {"lat": 27.0, "lng": 113.0, "city": "萍乡"}
         result = _geocode_with_fallback("玉湖湿地公园", "萍乡")
         assert result["lat"] == 27.0
-        mock_geocode.assert_called_once_with("玉湖湿地公园", city="萍乡", mock_fallback=False)
+        mock_geocode.assert_called_once_with("玉湖湿地公园", city="萍乡", mock_fallback=False, nearby=None)
 
 
 def test_geocode_with_fallback_falls_back_to_no_city():
@@ -117,6 +117,7 @@ def test_geocode_with_fallback_falls_back_to_no_city():
         assert mock_geocode.call_args_list[0].kwargs == {
             "city": "杭州",
             "mock_fallback": False,
+            "nearby": None,
         }
         assert mock_geocode.call_args_list[1].kwargs == {
             "city": "",

@@ -29,22 +29,31 @@ _WALK_DISTANCE_THRESHOLD = 1500
 # ── 公共接口 ──
 
 
-def _geocode_with_fallback(name: str, preferred_city: str) -> dict:
-    """POI 地理编码回退链：优先指定城市 → 无城市搜索 → mock 兜底。"""
-    # 1. 先按 POI 自己的城市/行程城市搜索，消除同名歧义
-    if preferred_city:
-        result = geocode_poi(name, city=preferred_city, mock_fallback=False)
+def _geocode_with_fallback(
+    name: str,
+    preferred_city: str,
+    nearby: tuple[float, float] | None = None,
+) -> dict:
+    """POI 地理编码回退链：周边搜索 → 指定城市 → 无城市 → mock。"""
+    # 1. 有上一节点坐标时，优先周边搜索，解决景区内同名地点错配
+    if nearby:
+        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby)
         if result is not None:
             return result
 
-    # 2. 找不到时放开城市限制，兼容跨城景点
+    # 2. 再按 POI 自己的城市/行程城市搜索，消除同名歧义
+    if preferred_city:
+        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby)
+        if result is not None:
+            return result
+
+    # 3. 找不到时放开城市限制，兼容跨城景点
     result = geocode_poi(name, city="", mock_fallback=False)
     if result is not None:
         return result
 
-    # 3. 仍找不到才使用 mock 兜底，保证行程始终有可展示坐标
+    # 4. 仍找不到才使用 mock 兜底，保证行程始终有可展示坐标
     return geocode_poi(name, city=preferred_city)
-
 
 def optimize_itinerary(itinerary_json: str) -> str:
     """对行程中的 POI 进行地理编码、路径优化排序和交通时间填充。
@@ -78,13 +87,18 @@ def optimize_itinerary(itinerary_json: str) -> str:
         if not items:
             continue
 
-        # 第一步：地理编码所有 POI（优先使用 POI 级城市）
+        # 第一步：地理编码所有 POI（优先使用 POI 级城市，并带上上一节点作为周边参考）
+        prev_center: tuple[float, float] | None = None
         for item in items:
             item_city = item.get("city") or fallback_city
-            result = _geocode_with_fallback(item["poi_name"], item_city)
+            result = _geocode_with_fallback(item["poi_name"], item_city, nearby=prev_center)
             item["lat"] = result["lat"]
             item["lng"] = result["lng"]
             item["city"] = result.get("city", "")
+            item["amap_poi_id"] = result.get("amap_poi_id")
+            item["poi_address"] = result.get("poi_address")
+            item["poi_type"] = result.get("poi_type")
+            prev_center = (item["lat"], item["lng"])
 
         # 第二步：尝试构建真实旅行时间矩阵
         matrix = None

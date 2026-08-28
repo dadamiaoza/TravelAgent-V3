@@ -37,3 +37,36 @@ export interface ItineraryItem {
   cost_estimate?: number | null;
   is_locked: boolean;
 }
+
+
+export interface SourceEntity {
+  id?: string;
+  poi_name: string;
+  day_index: number;
+  seq: number;
+  lat?: number | null;
+  lng?: number | null;
+  suggested_duration_h?: number | null;
+  best_time?: string | null;
+  cost_estimate?: string | null;
+}
+
+export interface SourceDocument {
+  id: string;
+  title: string;
+  url?: string | null;
+  content: string;
+  created_at?: string;
+  entities?: SourceEntity[];
+}
+
+export interface TripSuggestOut {
+  destination?: string | null;
+  city?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  people_count?: number;
+  optimized_prompt?: string;
+  must_visit?: string[];
+}
+

@@ -31,6 +31,12 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
     elif trip.budget_max:
         prompt += f"最高预算：{trip.budget_max}元。"
 
+    if trip.user_prompt:
+        prompt += f"\n用户补充需求：{trip.user_prompt}\n"
+    if trip.must_visit:
+        prompt += f"\n必须包含用户指定的地点：{', '.join(trip.must_visit)}\n"
+
+
     result = agent.invoke(
         {"messages": [{"role": "user", "content": prompt}]},
         config={"configurable": {"thread_id": f"trip-{trip.id}"}},
@@ -39,7 +45,7 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
     itinerary = _parse_agent_output(result["messages"])
 
     # 把目的地城市写入行程 JSON，让路线优化地理编码时消除同名 POI 歧义（如“玉湖湿地公园”）
-    itinerary["city"] = trip.destination
+    itinerary["city"] = trip.city or trip.destination
 
     itinerary = _run_route_optimizer(itinerary)
     _persist_itinerary(db, trip, itinerary, trip.start_date)
@@ -116,6 +122,9 @@ def _persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: dat
                 transport_mode=item_data.get("transport_mode"),
                 travel_minutes=travel_m,
                 route_polyline=item_data.get("route_polyline"),
+                  amap_poi_id=item_data.get("amap_poi_id"),
+                  poi_address=item_data.get("poi_address"),
+                  poi_type=item_data.get("poi_type"),
             )
             db.add(item)
             accumulated_minutes = start_minutes + duration_m

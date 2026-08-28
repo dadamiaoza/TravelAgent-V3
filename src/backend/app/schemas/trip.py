@@ -8,16 +8,46 @@ from pydantic import BaseModel, Field
 
 class TripCreate(BaseModel):
     destination: str = Field(..., min_length=1, max_length=128, examples=["北京"])
+    city: str | None = Field(default=None, max_length=128)
+
     start_date: date = Field(..., examples=["2026-06-01"])
     end_date: date = Field(..., examples=["2026-06-03"])
     people_count: int = Field(default=1, ge=1, le=20)
     budget_min: int | None = None
     budget_max: int | None = None
+    # 用户优化后的提示词，会传给 itinerary_gen 作为补充需求
+    user_prompt: str | None = None
+    # 用户明确指定的必去地点
+    must_visit: list[str] | None = None
 
 
 class TripGenerate(BaseModel):
     """Trigger itinerary generation for a trip."""
     pass  # No extra fields needed for MVP — reads trip constraints from DB later
+
+
+
+class TripUpdate(BaseModel):
+    """编辑行程标题（destination）。"""
+    destination: str | None = Field(default=None, max_length=128)
+
+
+class TripSuggestRequest(BaseModel):
+    """用户自由输入的自然语言行程需求。"""
+    text: str = Field(..., min_length=1)
+
+
+class TripSuggestOut(BaseModel):
+    """提示词优化结果：结构化参数 + 优化后的提示词。"""
+    destination: str | None = None
+    city: str | None = None
+
+    must_visit: list[str] = []
+    start_date: date | None = None
+    end_date: date | None = None
+    people_count: int = 1
+    optimized_prompt: str = ""
+
 
 
 class ItineraryItemUpdate(BaseModel):
@@ -40,6 +70,7 @@ class SourceParseRequest(BaseModel):
 
 
 class SourceEntityOut(BaseModel):
+    id: UUID | None = None
     poi_name: str
     day_index: int
     seq: int
@@ -49,9 +80,35 @@ class SourceEntityOut(BaseModel):
     best_time: str | None = None
     cost_estimate: str | None = None
 
+    model_config = {"from_attributes": True}
+
 
 class SourceParseOut(BaseModel):
     entities: list[SourceEntityOut]
+
+
+
+class SourceCreateRequest(BaseModel):
+    """保存一篇攻略原文，后续再触发解析。"""
+    title: str = Field(default="", max_length=256)
+    url: str | None = None
+    text: str = Field(..., min_length=1)
+
+
+class SourceDocumentOut(BaseModel):
+    id: UUID
+    title: str
+    url: str | None = None
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SourceDocumentDetailOut(SourceDocumentOut):
+    entities: list[SourceEntityOut] = []
+
+    model_config = {"from_attributes": True}
 
 
 # ── Merge schemas ──
@@ -59,6 +116,21 @@ class SourceParseOut(BaseModel):
 class MergeSourceIn(BaseModel):
     label: str = Field(..., min_length=1, examples=["攻略A"])
     entities: list[SourceEntityOut]
+
+
+
+
+class EntityImportRequest(BaseModel):
+    """将选中的攻略候选 POI 导入到指定行程。"""
+    entity_ids: list[UUID] = Field(..., min_length=1)
+
+
+class InferredTripOut(BaseModel):
+    """从攻略内容中推断出的新行程基本信息。"""
+    destination: str
+    city: str | None = None
+
+    day_count: int = Field(..., ge=1, le=30)
 
 
 class MergeRequest(BaseModel):
@@ -125,6 +197,9 @@ class ItineraryItemOut(BaseModel):
     travel_minutes: int | None = None
     route_polyline: list[list[float]] | None = None
     notes: str | None = None
+    amap_poi_id: str | None = None
+    poi_address: str | None = None
+    poi_type: str | None = None
     cost_estimate: int | None = None
     is_locked: bool
 
@@ -143,11 +218,15 @@ class ItineraryDayOut(BaseModel):
 class TripOut(BaseModel):
     id: UUID
     destination: str
+    city: str | None = None
+
     start_date: date
     end_date: date
     people_count: int
     budget_min: int | None = None
     budget_max: int | None = None
+    user_prompt: str | None = None
+    must_visit: list[str] | None = None
     status: str
     created_at: datetime
     updated_at: datetime

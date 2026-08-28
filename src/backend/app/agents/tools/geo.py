@@ -1,12 +1,15 @@
 """Geocoding tool — converts POI names to lat/lng coordinates.
 
-Primary: Amap Geocoding API (when AMAP_API_KEY is configured)
-Fallback: mock POI database (when no key or API fails)
+Primary: Amap Place Search + Nearby Search when a city/nearby context is provided.
+Fallback: Amap Geocoding API, then mock POI database.
 """
+import json
 import logging
+import re
 from typing import Dict
 
 import requests
+from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
 
@@ -37,28 +40,45 @@ _MOCK_POI: Dict[str, Dict[str, float]] = {
 }
 
 
+def _normalize_poi_search_name(name: str) -> str:
+    """去掉括号说明和常见日出/日落/云海等场景描述，保留核心 POI 名。"""
+    s = re.sub(r"[（(][^）)]*[）)]", "", name)
+    for token in ("观日出", "赏日落", "看日出", "看日落", "日出", "日落", "云海", "观景"):
+        s = s.replace(token, "")
+    return s.strip() or name
+
+
 def geocode_poi(
     name: str,
     city: str = "",
     mock_fallback: bool = True,
+    nearby: tuple[float, float] | None = None,
 ) -> dict | None:
     """Convert a POI name to geographic coordinates.
 
-    Tries Amap Geocoding API first. If ``mock_fallback`` is True, falls back
-    to the local mock database when the API is unavailable or returns nothing.
-    If ``mock_fallback`` is False, returns None instead, allowing callers to
-    implement their own fallback chain.
-
-    Args:
-        name: POI name in Chinese, e.g. "西湖", "故宫"
-        city: Optional city name for more precise results, e.g. "北京"
-        mock_fallback: Whether to fall back to mock coordinates when no result.
-
-    Returns:
-        Dict with keys: name (str), lat (float), lng (float), city (str),
-        or None if no real result was found and mock fallback is disabled.
+    With a nearby location, first searches Amap Around API because it can
+    disambiguate same-name places inside scenic areas (e.g. 金顶帐篷营地).
     """
     if settings.amap_api_key:
+        # 1. 有上下文坐标时，优先周边搜索
+        if nearby:
+            try:
+                result = _geocode_amap_around(name, nearby)
+                if result:
+                    return result
+            except Exception:
+                logger.warning("高德周边搜索失败，继续其他方式", exc_info=True)
+
+        # 2. 带城市时用 POI 搜索，避免景区子景点匹配到外地同名地点
+        if city:
+            try:
+                result = _geocode_amap_poi(name, city)
+                if result:
+                    return result
+            except Exception:
+                logger.warning("高德 POI 搜索失败，尝试地理编码", exc_info=True)
+
+        # 3. 再尝试传统 geocode
         try:
             result = _geocode_amap(name, city)
             if result:
@@ -74,6 +94,93 @@ def geocode_poi(
 # ── Amap API ──
 
 AMAP_GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo"
+AMAP_PLACE_TEXT_URL = "https://restapi.amap.com/v3/place/text"
+AMAP_PLACE_AROUND_URL = "https://restapi.amap.com/v3/place/around"
+
+
+def _geocode_amap_around(name: str, nearby: tuple[float, float]) -> dict | None:
+    """使用高德周边搜索，围绕已知坐标查找同名/相似 POI。"""
+    lat, lng = nearby
+    search_name = _normalize_poi_search_name(name)
+    params = {
+        "key": settings.amap_api_key,
+        "location": f"{lng},{lat}",
+        "radius": 3000,
+        "keywords": search_name,
+        "offset": 20,
+        "extensions": "all",
+        "sortrule": 1,
+    }
+    resp = requests.get(AMAP_PLACE_AROUND_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data.get("status") != "1" or int(data.get("count", 0)) == 0:
+        return None
+
+    pois = data.get("pois") or []
+    if not pois:
+        return None
+
+    best = _resolve_candidate(search_name, pois)
+    if best is None:
+        return None
+
+    location = best.get("location", "")
+    if not location:
+        return None
+    lng_str, lat_str = location.split(",")
+    return {
+        "name": best.get("name", name),
+        "lat": float(lat_str),
+        "lng": float(lng_str),
+        "city": best.get("cityname") or best.get("adname", ""),
+        "amap_poi_id": best.get("id"),
+        "poi_address": best.get("address"),
+        "poi_type": best.get("type"),
+    }
+
+
+def _geocode_amap_poi(name: str, city: str = "") -> dict | None:
+    """使用高德 POI 搜索获取更精确的景点坐标。"""
+    search_name = _normalize_poi_search_name(name)
+    params = {
+        "key": settings.amap_api_key,
+        "keywords": search_name,
+        "offset": 20,
+        "extensions": "all",
+    }
+    if city:
+        params["city"] = city
+
+    resp = requests.get(AMAP_PLACE_TEXT_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data.get("status") != "1" or int(data.get("count", 0)) == 0:
+        return None
+
+    pois = data.get("pois") or []
+    if not pois:
+        return None
+
+    best = _resolve_candidate(search_name, pois)
+    if best is None:
+        return None
+
+    location = best.get("location", "")
+    if not location:
+        return None
+    lng_str, lat_str = location.split(",")
+    return {
+        "name": best.get("name", name),
+        "lat": float(lat_str),
+        "lng": float(lng_str),
+        "city": best.get("cityname") or best.get("adname", ""),
+        "amap_poi_id": best.get("id"),
+        "poi_address": best.get("address"),
+        "poi_type": best.get("type"),
+    }
 
 
 def _geocode_amap(name: str, city: str = "") -> dict | None:
@@ -92,7 +199,6 @@ def _geocode_amap(name: str, city: str = "") -> dict | None:
     if data.get("status") != "1" or int(data.get("count", 0)) == 0:
         return None
 
-    # Amap returns "lng,lat" — split and convert
     geocode = data["geocodes"][0]
     location = geocode["location"]
     lng_str, lat_str = location.split(",")
@@ -102,6 +208,98 @@ def _geocode_amap(name: str, city: str = "") -> dict | None:
         "lng": float(lng_str),
         "city": geocode.get("city", ""),
     }
+
+
+
+def _resolve_candidate(query_name: str, pois: list) -> dict | None:
+    """先确定性匹配；如果名称较弱且候选较多，则用 LLM 做消歧。"""
+    best, best_score = _best_match_poi_scored(query_name, pois)
+    if best is None:
+        return None
+
+    if len(pois) > 1 and best_score < 2:
+        llm_best = _disambiguate_with_llm(query_name, pois)
+        if llm_best is not None:
+            return llm_best
+
+    return best
+
+
+def _best_match_poi_scored(query_name: str, pois: list) -> tuple[dict | None, int]:
+    """返回最佳 POI 及其名称匹配分。"""
+    if not pois:
+        return None, 0
+    best = pois[0]
+    best_score = _name_match_score(query_name, best.get("name", ""))
+    for p in pois[1:]:
+        score = _name_match_score(query_name, p.get("name", ""))
+        if score > best_score:
+            best = p
+            best_score = score
+    return (best, best_score) if best_score >= 1 else (None, best_score)
+
+
+def _disambiguate_with_llm(query_name: str, pois: list) -> dict | None:
+    """当多个候选相似时，让 LLM 根据名称/地址/类型/距离选择最合理的一个。"""
+    model = ChatOpenAI(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+    )
+
+    lines = []
+    for idx, p in enumerate(pois[:10]):
+        lines.append(
+            f"{idx}. {p.get('name', '')} | 地址: {p.get('address', '')} | "
+            f"类型: {p.get('type', '')} | 坐标: {p.get('location', '')}"
+        )
+
+    prompt = (
+        "你是旅行目的地消歧助手。以下是从高德搜索到的候选地点，"
+        f"请根据用户要找的“{query_name}”选择最匹配的一个。\n"
+        "只输出 JSON：{\"index\": 数字}\n\n"
+        f"候选列表：\n" + "\n".join(lines)
+    )
+    try:
+        response = model.invoke(prompt)
+        content = response.content.strip()
+        start = content.find("{")
+        end = content.rfind("}")
+        data = json.loads(content[start:end + 1])
+        index = int(data.get("index", 0))
+        if 0 <= index < len(pois):
+            return pois[index]
+    except Exception:
+        logger.warning("LLM POI 消歧失败，回退到名称匹配", exc_info=True)
+    return None
+
+
+def _best_match_poi(query_name: str, pois: list) -> dict | None:
+    """从 POI 搜索结果中按名称相似度选择最佳匹配。"""
+    if not pois:
+        return None
+    best = pois[0]
+    best_score = _name_match_score(query_name, best.get("name", ""))
+    for p in pois[1:]:
+        score = _name_match_score(query_name, p.get("name", ""))
+        if score > best_score:
+            best = p
+            best_score = score
+    # 带城市/周边上下文的搜索已经过滤，允许较低匹配阈值
+    return best if best_score >= 1 else None
+
+
+def _name_match_score(query: str, result: str) -> int:
+    """简单名称匹配打分：2=完全/包含，1=单字重叠，0=不匹配。"""
+    q_clean = re.sub(r"[（）()\s]", "", query)
+    r_clean = re.sub(r"[（）()\s]", "", result)
+    if q_clean == r_clean:
+        return 2
+    if q_clean in r_clean or r_clean in q_clean:
+        return 2
+    if any(ch in r_clean for ch in q_clean):
+        return 1
+    return 0
 
 
 # ── Mock fallback ──

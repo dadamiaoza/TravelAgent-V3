@@ -10,6 +10,8 @@ import {
 } from "@/lib/amap";
 
 interface TripMapProps {
+  selectedDayIndex: number;
+  onSelectDay: (index: number) => void;
   days: DayView[];
 }
 
@@ -54,12 +56,11 @@ function buildPopupContent(item: ItineraryItem): string {
   `;
 }
 
-export default function TripMap({ days }: TripMapProps) {
+export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlaysRef = useRef<AMapOverlay[]>([]);
   const infoWindowRef = useRef<AMapInfoWindow | null>(null);
 
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const [amap, setAmap] = useState<AMapNamespace | null>(null);
   const [map, setMap] = useState<AMapMap | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -164,13 +165,13 @@ export default function TripMap({ days }: TripMapProps) {
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {days.map((day) => (
+        {days.map((day, index) => (
           <button
             key={day.id}
             type="button"
-            onClick={() => setSelectedDayIndex(days.indexOf(day))}
+              onClick={() => onSelectDay(index)}
             className={`rounded-md px-3 py-1 text-sm ${
-              selectedDayIndex === days.indexOf(day)
+              selectedDayIndex === index
                 ? "bg-blue-600 text-white"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
             }`}
