@@ -298,6 +298,8 @@ Nginx 返回给浏览器
 
 ## 8. 城市模式 / 景区模式路线规划
 
+> 详细问题、权衡和解决过程见：[scenic-routes-retrospective.md](./scenic-routes-retrospective.md)
+
 ### 背景
 - 高德 Web服务路径规划不支持景区内部路线、索道、景区接驳车等内部交通。
 - 不能调用或虚构“景区路线 API”，也不能假装能拿到索道/接驳车真实轨迹。
