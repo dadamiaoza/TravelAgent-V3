@@ -294,3 +294,26 @@ Nginx 返回给浏览器
 - 进度可见性
 - 缓存
 - 可观测性
+
+
+## 8. 城市模式 / 景区模式路线规划
+
+### 背景
+- 高德 Web服务路径规划不支持景区内部路线、索道、景区接驳车等内部交通。
+- 不能调用或虚构“景区路线 API”，也不能假装能拿到索道/接驳车真实轨迹。
+
+### 方案
+- 行程按天区分 `route_type`：
+  - `city`：城市常规路线，沿用高德步行/公交。
+  - `scenic`：景区内部，只用高德步行/驾车连接已定位 POI/站点。
+- 索道、接驳车、登山步道等作为**业务层标注**：
+  - `transport_mode = cable_car / shuttle / hiking`
+  - `route_polyline = null`（不画成高德真实道路）
+  - `route_verified = false`
+  - `travel_advice` 提示“以景区现场指引/官方班次为准”
+- 前端景区模式用虚线/特殊颜色表示参考路线，不冒充真实道路。
+
+### 实现位置
+- `route_optimizer.py`：按 `route_type` 选择矩阵交通方式，回填景区交通建议。
+- `itinerary_days.route_type` + `itinerary_items.route_verified/travel_advice`。
+- 前端 `TripMap` / `ItineraryItemCard` 展示模式标识和提示。

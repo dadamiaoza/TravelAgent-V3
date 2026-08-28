@@ -37,10 +37,12 @@ def create_itinerary_gen():
             "4. 确保：每天 3-5 个景点、类型多样化、节奏合理（总时长含交通 < 10h）\n"
             "5. 多轮对话时，查看历史记录避免与已规划天重复使用景点\n\n"
             "输出 JSON 格式（不要包含其他文字）：\n"
-            '{"days": [{"day_index": 1, "theme": "主题概括", "items": ['
+            '{"days": [{"day_index": 1, "theme": "主题概括", "route_type": "city", "items": ['
             '{"seq": 1, "poi_name": "...", "city": "所在城市", "duration_h": 0, "travel_minutes_from_prev": 0}, ...]}]}\n\n'
             "规则：\n"
             "- theme 用简短中文概括当天主题（如「西湖经典一日」「皇城文化深度」）\n"
+            "- route_type 只能是 city 或 scenic：city = 城市常规景点，按城市道路/公交可达；scenic = 景区内部（如山地景区、森林公园），内部需要步道/索道/接驳车往返\n"
+            "- 如果某天主要活动都在同一个景区内（如武功山、黄山、张家界），必须标记为 scenic，不能标成 city\n"
             "- city 填写该景点实际所在城市；与行程目的地相同可省略，跨城景点必须填写\n"
             "- travel_minutes_from_prev 是到上一个景点的交通时间，第一个景点为 0\n"
             "- 如果用户分多次规划（多轮对话），务必检查历史消息已分配的景点，不要重复"

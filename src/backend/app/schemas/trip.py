@@ -201,6 +201,8 @@ class ItineraryItemOut(BaseModel):
     poi_address: str | None = None
     poi_type: str | None = None
     cost_estimate: int | None = None
+    route_verified: bool | None = None
+    travel_advice: str | None = None
     is_locked: bool
 
     model_config = {"from_attributes": True}
@@ -210,6 +212,7 @@ class ItineraryDayOut(BaseModel):
     id: UUID
     day_index: int
     date: date
+    route_type: str = "city"
     items: list[ItineraryItemOut] = []
 
     model_config = {"from_attributes": True}

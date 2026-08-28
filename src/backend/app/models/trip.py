@@ -39,6 +39,8 @@ class ItineraryDay(Base):
     trip_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"))
     day_index: Mapped[int] = mapped_column(Integer())
     date: Mapped[date] = mapped_column(Date())
+    # 当天路线类型：city=城市常规路线，scenic=景区内部（步道/索道/接驳车）
+    route_type: Mapped[str] = mapped_column(String(16), default="city", server_default="city")
 
     trip: Mapped["Trip"] = relationship(back_populates="days")
     items: Mapped[list["ItineraryItem"]] = relationship(
@@ -66,6 +68,10 @@ class ItineraryItem(Base):
     poi_address: Mapped[str | None] = mapped_column(Text(), nullable=True)
     poi_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cost_estimate: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    # 该段路线是否来自高德真实路径；景区索道/接驳车等属于建议，不标记为已核实
+    route_verified: Mapped[bool | None] = mapped_column(Boolean(), nullable=True)
+    # 无法核实的景区交通建议文案（如“以景区现场指引/官方班次为准”）
+    travel_advice: Mapped[str | None] = mapped_column(Text(), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean(), default=False)
 
     day: Mapped["ItineraryDay"] = relationship(back_populates="items")

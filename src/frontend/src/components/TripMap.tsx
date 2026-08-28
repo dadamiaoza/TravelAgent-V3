@@ -31,6 +31,9 @@ function escapeHtml(value: string): string {
 
 const TRANSPORT_LABELS: Record<string, string> = {
   walking: "🚶 步行",
+  hiking: "🥾 登山/步道",
+  shuttle: "🚐 景区接驳车",
+  cable_car: "🚡 索道/缆车",
   transit: "🚌 公交/地铁",
   driving: "🚗 驾车",
 };
@@ -46,6 +49,7 @@ function buildPopupContent(item: ItineraryItem): string {
   }
   if (item.travel_minutes != null) briefParts.push(`${item.travel_minutes} 分钟`);
   if (item.cost_estimate != null) briefParts.push(`预计花费 ¥${item.cost_estimate}`);
+  if (item.travel_advice) briefParts.push(escapeHtml(item.travel_advice));
 
   return `
     <div style="min-width: 180px; padding: 4px 2px;">
@@ -134,19 +138,30 @@ export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMap
     });
 
     // 每段路线：优先画后端返回的真实道路坐标；没有则回退为直线
+    // 景区模式中未核实的索道/接驳车/步道用虚线示意，提示以现场指引为准
+    const isScenic = day.route_type === "scenic";
     for (let i = 1; i < validItems.length; i++) {
       const prev = validItems[i - 1];
       const curr = validItems[i];
       const realPath = curr.route_polyline && curr.route_polyline.length > 0
         ? curr.route_polyline
         : [[prev.lng!, prev.lat!], [curr.lng!, curr.lat!]];
-      const strokeColor = curr.transport_mode === "transit" ? "#16a34a" : "#2563eb";
+      const isUnverified = isScenic && !curr.route_verified;
+      const strokeColor =
+        curr.transport_mode === "transit"
+          ? "#16a34a"
+          : curr.transport_mode === "cable_car"
+            ? "#ea580c"
+            : curr.transport_mode === "shuttle"
+              ? "#9333ea"
+              : "#2563eb";
 
       const legLine = new amap.Polyline({
         path: realPath,
         strokeColor,
         strokeWeight: 4,
-        strokeOpacity: 0.85,
+        strokeOpacity: isUnverified ? 0.6 : 0.85,
+        strokeStyle: isUnverified ? "dashed" : "solid",
       });
       legLine.setMap(map);
       overlaysRef.current.push(legLine);

@@ -19,6 +19,7 @@ export interface DayView {
   trip_id: string;
   day_index: number;
   date: string;
+  route_type?: string;
   items: ItineraryItem[];
 }
 
@@ -33,6 +34,8 @@ export interface ItineraryItem {
   transport_mode?: string | null;
   travel_minutes?: number | null;
   route_polyline?: number[][] | null;
+  route_verified?: boolean | null;
+  travel_advice?: string | null;
   notes?: string | null;
   cost_estimate?: number | null;
   is_locked: boolean;
