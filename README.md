@@ -59,8 +59,17 @@
 ```text
 TravelAgent-V3/
 ├── docs/
-│   ├── development-notes.md          # 开发问题与解决方案复盘
-│   └── factcheck-retrospective.md    # Fact Check 模块复盘
+│   ├── README.md                     # 文档索引
+│   ├── plans/                        # 方案、设计与规划
+│   │   ├── next-phase-design.md
+│   │   ├── ai-chat-collaboration-design.md
+│   │   └── decisions.md
+│   ├── retrospectives/               # 开发复盘
+│   │   ├── development-notes.md
+│   │   ├── factcheck-retrospective.md
+│   │   └── scenic-routes-retrospective.md
+│   ├── adr/                          # 架构决策
+│   └── agents/                       # Agent 协作约定
 ├── src/
 │   ├── backend/
 │   │   ├── app/
@@ -248,8 +257,12 @@ http://backend:8080
 
 ## 📄 文档
 
-- [开发问题与解决方案](docs/development-notes.md)
-- [Fact Check 模块复盘](docs/factcheck-retrospective.md)
+- [文档索引](docs/README.md)
+- [下一阶段产品与技术架构](docs/plans/next-phase-design.md)
+- [常驻AI对话与地图联动方案](docs/plans/ai-chat-collaboration-design.md)
+- [开发问题与解决方案](docs/retrospectives/development-notes.md)
+- [Fact Check 模块复盘](docs/retrospectives/factcheck-retrospective.md)
+- [城市/景区双模式路线规划复盘](docs/retrospectives/scenic-routes-retrospective.md)
 
 ---
 
