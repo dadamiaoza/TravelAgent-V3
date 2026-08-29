@@ -207,6 +207,12 @@ interface TripStore {
 - 排序后序号、连线、交通时间同步刷新
 - 用户手动修改和 AI 修改都会进入同一份 store，列表和地图始终一致
 
+### 4.5 服务层收敛（防膨胀）
+
+- 行程节点的新增/删除/更新/排序/重算路线集中到 `app/services/trip_editor.py`。
+- `trips.py` 只保留 HTTP 入口。
+- `recalculate_day_schedule` 统一负责时间重算，避免每个页面/接口各算一套。
+
 ---
 
 ## 5. Phase C：常驻 AI 对话面板

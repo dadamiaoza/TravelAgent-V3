@@ -14,6 +14,33 @@ from app.agents.route_optimizer import create_route_optimizer
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 
 
+def _item_duration_minutes(item, default_h: float = 1.5) -> int:
+    """从已有 start/end 推导游玩时长；没有时间则用默认时长。"""
+    if item.start_time and item.end_time:
+        start_min = item.start_time.hour * 60 + item.start_time.minute
+        end_min = item.end_time.hour * 60 + item.end_time.minute
+        if end_min > start_min:
+            return end_min - start_min
+    return int(default_h * 60)
+
+
+def recalculate_day_schedule(day, start_minute: int = 9 * 60):
+    """按节点顺序+交通时间重新计算当天的 start_time/end_time。"""
+    items = sorted(day.items, key=lambda it: it.seq)
+    current_minute = start_minute
+
+    for idx, item in enumerate(items):
+        if idx > 0:
+            current_minute += item.travel_minutes or 0
+        duration_min = _item_duration_minutes(item)
+        end_minute = current_minute + duration_min
+        item.start_time = time(current_minute // 60 % 24, current_minute % 60)
+        item.end_time = time(end_minute // 60 % 24, end_minute % 60)
+        current_minute = end_minute
+
+    return day
+
+
 def generate_itinerary(db: Session, trip: Trip) -> Trip:
     """Generate an itinerary using the LangChain agent, then persist to DB."""
     agent = create_itinerary_gen()
