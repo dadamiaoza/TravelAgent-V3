@@ -341,3 +341,31 @@ Nginx 返回给浏览器
 - 列表内部独立滚动，不再拖动整个页面。
 - `scrollIntoView` 改为 `block: "nearest"`，只做最小必要滚动。
 - 桌面端地图增加 `lg:sticky lg:top-4`，保证即使页面有其他滚动，地图仍然可见。
+
+
+## 10. 用户反馈：萍乡博物馆坐标错误
+
+### 现象
+- 行程 `9b2792e6-c42d-44a3-8eb2-f28f0daa4455` 的 Day2 中，“萍乡博物馆”显示的不是萍乡博物馆。
+- 实际保存坐标指向“萍乡革命烈士纪念馆”（安源南大道1号）。
+
+### 根因
+- `_geocode_with_fallback` 无论城市还是景区，都优先把上一节点坐标作为 `nearby` 做高德周边搜索。
+- Day2 是城市模式，前一站是“安源路矿工人运动纪念馆”。
+- 用“安源”附近的周边搜索找“萍乡博物馆”时，高德返回了附近的“萍乡革命烈士纪念馆”，被当成最佳匹配。
+- 正确结果应该是城市 POI 搜索返回的“萍乡博物馆”（滨河东路376号）。
+
+### 修复
+- `_geocode_with_fallback` 增加 `route_type` 参数。
+- `scenic`：继续使用上一节点周边搜索。
+- `city`：忽略 `nearby`，使用指定城市 POI 搜索，避免误匹配到上一站附近同名/相似场馆。
+- `optimize_itinerary` 传递当天 `route_type`。
+
+### 回归测试
+- `test_geocode_with_fallback_city_ignores_nearby`
+- `test_geocode_with_fallback_scenic_uses_nearby`
+- 全部 route optimizer 测试通过：31 passed。
+
+### 数据修复
+- 已修复本地数据库中该行程的“萍乡博物馆”坐标和 POI 信息。
+- 其他已生成的旧行程如果有同类问题，需要重新生成或调用编辑后重新地理编码。

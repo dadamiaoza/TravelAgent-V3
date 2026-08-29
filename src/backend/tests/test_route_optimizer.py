@@ -689,3 +689,32 @@ def test_optimize_itinerary_reorder_false_preserves_order():
         items = result["days"][0]["items"]
         assert [it["poi_name"] for it in items] == ["A", "B", "C"]
         assert items[1]["travel_minutes_from_prev"] == 5
+
+
+def test_geocode_with_fallback_city_ignores_nearby():
+    """城市模式不能用上一景点坐标做周边搜索，避免误匹配到附近同名场馆。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.side_effect = [
+            {"lat": 27.640123, "lng": 113.859854, "city": "萍乡市"},
+        ]
+        result = _geocode_with_fallback(
+            "萍乡博物馆", "萍乡", nearby=(27.603845, 113.896271), route_type="city"
+        )
+        assert result["lat"] == 27.640123
+        first_call = mock_geocode.call_args_list[0]
+        assert first_call.kwargs.get("nearby") is None
+        assert first_call.kwargs.get("city") == "萍乡"
+
+
+def test_geocode_with_fallback_scenic_uses_nearby():
+    """景区模式继续使用上一节点周边搜索，解决景区内同名地点错配。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.side_effect = [
+            {"lat": 27.458251, "lng": 114.170622, "city": "萍乡"},
+        ]
+        result = _geocode_with_fallback(
+            "金顶", "萍乡", nearby=(27.504525, 114.142135), route_type="scenic"
+        )
+        assert result["lat"] == 27.458251
+        first_call = mock_geocode.call_args_list[0]
+        assert first_call.kwargs.get("nearby") == (27.504525, 114.142135)
