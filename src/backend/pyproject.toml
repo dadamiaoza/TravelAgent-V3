@@ -38,6 +38,13 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "-m 'not agent'"
+markers = [
+    "unit: pure logic, no DB or LLM",
+    "integration: real database (transaction rollback)",
+    "agent: real LLM/agent tests, slow and external",
+    "slow: marked slow tests",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

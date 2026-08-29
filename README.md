@@ -194,6 +194,10 @@ VITE_AMAP_SECURITY_CODE
 
 ```bash
 cd src/backend
+# 默认快速测试：排除真实 LLM/Agent 用例
+.venv\Scripts\python -m pytest -m "not agent" -q
+
+# 运行所有测试（含 Agent/LLM）
 .venv\Scripts\python -m pytest -q
 ```
 

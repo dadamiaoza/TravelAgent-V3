@@ -1,8 +1,11 @@
 """Trip CRUD integration tests — DB + API via TestClient."""
+import pytest
+
 from app.models.trip import Trip
 from app.services.itinerary import generate_itinerary
 
 
+@pytest.mark.agent
 def test_create_trip_db(db):
     """Direct DB: create a trip with itinerary."""
     trip = Trip(
@@ -23,6 +26,7 @@ def test_create_trip_db(db):
     assert len(trip.days) == 2
 
 
+@pytest.mark.agent
 def test_create_trip_api(client):
     """POST /trips via TestClient."""
     r = client.post("/api/v1/trips", json={
@@ -38,6 +42,7 @@ def test_create_trip_api(client):
     assert len(data["days"]) == 2
 
 
+@pytest.mark.agent
 def test_get_trip(client):
     """POST → GET /trips/{id} round-trip."""
     r = client.post("/api/v1/trips", json={
@@ -60,6 +65,7 @@ def test_list_trips(client):
     assert isinstance(r.json(), list)
 
 
+@pytest.mark.agent
 def test_read_trip(db):
     """Direct DB: query back a trip with its days and items."""
     trip = Trip(
