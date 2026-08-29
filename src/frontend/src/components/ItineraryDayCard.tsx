@@ -30,7 +30,15 @@ export default function ItineraryDayCard({
 
     const nextIds = items.map((item) => item.id);
     [nextIds[index], nextIds[target]] = [nextIds[target], nextIds[index]];
-    reorder.mutate({ dayId: day.id, itemIds: nextIds });
+    reorder.mutate(
+      { dayId: day.id, itemIds: nextIds },
+      {
+        onSuccess: () => {
+          // 排序成功后自动重算交通时间，保持地图/时间线一致
+          reoptimize.mutate(day.id);
+        },
+      },
+    );
   }
 
   return (
