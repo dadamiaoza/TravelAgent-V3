@@ -3,8 +3,10 @@
 API endpoints stay thin; all add/update/delete/reorder/reoptimize business
 logic lives here so future features (AI delta, chat, snapshots) reuse one
 service layer instead of adding more ad-hoc API code.
+
+Dependencies follow ports & adapters: the service depends on the protocols
+in app.domain.interfaces, not on Agent/Tool internals directly.
 """
-import json
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -16,9 +18,14 @@ from app.schemas.trip import (
     ItineraryItemUpdate,
     ItineraryDayReorder,
 )
-from app.agents.tools.geo import geocode_poi
-from app.agents.tools.route_optimizer import optimize_itinerary
-from app.services.itinerary import recalculate_day_schedule
+from app.domain.interfaces import Geocoder, RouteReplanner, TimeScheduler
+from app.infrastructure.geocoder import AmapGeocoder
+from app.infrastructure.route_replanner import AmapRouteReplanner
+from app.infrastructure.itinerary_scheduler import ItineraryTimeScheduler
+
+_geocoder: Geocoder = AmapGeocoder()
+_replanner: RouteReplanner = AmapRouteReplanner()
+_scheduler: TimeScheduler = ItineraryTimeScheduler()
 
 
 def _get_trip(db: Session, trip_id: UUID) -> Trip:
@@ -57,13 +64,6 @@ def _get_item(db: Session, trip_id: UUID, item_id: UUID) -> ItineraryItem:
     return item
 
 
-def _geocode_name(name: str, city: str) -> dict | None:
-    try:
-        return geocode_poi(name, city=city or "", mock_fallback=True)
-    except Exception:
-        return None
-
-
 def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
     trip = _get_trip(db, trip_id)
     day = _get_day(db, trip_id, body.day_id)
@@ -82,7 +82,7 @@ def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
 
     if item.lat is None or item.lng is None:
         city = trip.city or trip.destination or ""
-        geo = _geocode_name(body.poi_name, city)
+        geo = _geocoder.geocode(body.poi_name, city)
         if geo:
             item.lat = geo.get("lat")
             item.lng = geo.get("lng")
@@ -92,7 +92,7 @@ def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
 
     db.add(item)
     db.flush()
-    recalculate_day_schedule(day)
+    _scheduler.recalculate(day)
     db.commit()
     db.refresh(trip)
     return trip
@@ -110,7 +110,7 @@ def update_item(
     if poi_name_changed:
         trip = _get_trip(db, trip_id)
         city = trip.city or trip.destination or ""
-        geo = _geocode_name(body.poi_name or "", city)
+        geo = _geocoder.geocode(body.poi_name or "", city)
         if geo:
             item.lat = geo.get("lat", item.lat)
             item.lng = geo.get("lng", item.lng)
@@ -129,7 +129,7 @@ def delete_item(db: Session, trip_id: UUID, item_id: UUID) -> dict:
     db.delete(item)
     db.flush()
     day = _get_day(db, trip_id, day_id)
-    recalculate_day_schedule(day)
+    _scheduler.recalculate(day)
     db.commit()
     return {"ok": True}
 
@@ -149,43 +149,46 @@ def reorder_day(
     for seq, item_id in enumerate(body.item_ids, start=1):
         by_id[item_id].seq = seq
 
-    recalculate_day_schedule(day)
+    _scheduler.recalculate(day)
     db.commit()
     db.refresh(day)
     return day
 
 
-def reoptimize_day(db: Session, trip_id: UUID, day_id: UUID) -> Trip:
+def reoptimize_day(
+    db: Session,
+    trip_id: UUID,
+    day_id: UUID,
+    replanner: RouteReplanner | None = None,
+    scheduler: TimeScheduler | None = None,
+) -> Trip:
+    replanner = replanner or _replanner
+    scheduler = scheduler or _scheduler
+
     trip = _get_trip(db, trip_id)
     day = _get_day(db, trip_id, day_id)
-
     city = trip.city or trip.destination or ""
-    day_json = {
-        "day_index": day.day_index,
-        "route_type": day.route_type or "city",
-        "items": [
-            {
-                "seq": item.seq,
-                "poi_name": item.poi_name,
-                "duration_h": 1.5,
-                "travel_minutes_from_prev": item.travel_minutes or 0,
-            }
-            for item in sorted(day.items, key=lambda it: it.seq)
-        ],
-    }
+
+    items = [
+        {
+            "seq": item.seq,
+            "poi_name": item.poi_name,
+            "duration_h": 1.5,
+            "travel_minutes_from_prev": item.travel_minutes or 0,
+        }
+        for item in sorted(day.items, key=lambda it: it.seq)
+    ]
 
     try:
-        result = json.loads(
-            optimize_itinerary(
-                json.dumps({"city": city, "days": [day_json]}, ensure_ascii=False),
-                reorder=False,
-            )
+        updated_items = replanner.reoptimize(
+            city=city,
+            route_type=day.route_type or "city",
+            items=items,
         )
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Reoptimize failed")
 
-    updated_items = (result.get("days") or [{}])[0].get("items") or []
     for item, updated in zip(sorted(day.items, key=lambda it: it.seq), updated_items):
         item.lat = updated.get("lat", item.lat)
         item.lng = updated.get("lng", item.lng)
@@ -198,7 +201,7 @@ def reoptimize_day(db: Session, trip_id: UUID, day_id: UUID) -> Trip:
         item.poi_address = updated.get("poi_address", item.poi_address)
         item.poi_type = updated.get("poi_type", item.poi_type)
 
-    recalculate_day_schedule(day)
+    scheduler.recalculate(day)
 
     db.commit()
     db.refresh(trip)

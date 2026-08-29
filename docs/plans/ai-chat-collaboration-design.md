@@ -213,6 +213,19 @@ interface TripStore {
 - `trips.py` 只保留 HTTP 入口。
 - `recalculate_day_schedule` 统一负责时间重算，避免每个页面/接口各算一套。
 
+### 4.6 依赖倒置落地（Ports & Adapters）
+
+- `app/domain/interfaces.py`：
+  - `RouteReplanner`
+  - `TimeScheduler`
+  - `Geocoder`
+- `app/infrastructure/`：
+  - `AmapRouteReplanner`
+  - `ItineraryTimeScheduler`
+  - `AmapGeocoder`
+- `trip_editor.py` 不再直接 import Agent/Tool 内部函数，改为依赖 Port。
+- 后续命令模式/事件溯源可在同一 Service 层切换实现，不改业务逻辑。
+
 ---
 
 ## 5. Phase C：常驻 AI 对话面板
