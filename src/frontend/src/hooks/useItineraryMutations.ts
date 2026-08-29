@@ -1,45 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { ItineraryItem, DayView, Trip } from "@/lib/types";
+import type { Trip } from "@/lib/types";
+import { useTripStore } from "@/stores/tripStore";
 
-export function useUpdateItineraryItem(tripId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({
-      itemId,
-      payload,
-    }: {
-      itemId: string;
-      payload: {
-        poi_name?: string;
-        start_time?: string | null;
-        end_time?: string | null;
-        notes?: string | null;
-      };
-    }) =>
-      api.patch<ItineraryItem>(`/trips/${tripId}/items/${itemId}`, payload),
-    onSuccess: () => {
-      // 更新成功后刷新整个行程，保证卡片和地图同步
-      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
-    },
-  });
+function applyTripResult(
+  queryClient: ReturnType<typeof useQueryClient>,
+  tripId: string,
+  data: Trip,
+) {
+  queryClient.setQueryData(["trip", tripId], data);
+  useTripStore.getState().applyServerTrip(data);
 }
-
-export function useReorderItineraryDay(tripId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ dayId, itemIds }: { dayId: string; itemIds: string[] }) =>
-      api.post<DayView>(`/trips/${tripId}/days/${dayId}/reorder`, {
-        item_ids: itemIds,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
-    },
-  });
-}
-
 
 export function useCreateItineraryItem(tripId: string) {
   const queryClient = useQueryClient();
@@ -55,8 +26,8 @@ export function useCreateItineraryItem(tripId: string) {
       lng?: number | null;
     }) =>
       api.post<Trip>(`/trips/${tripId}/items`, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
     },
   });
 }
@@ -66,9 +37,9 @@ export function useDeleteItineraryItem(tripId: string) {
 
   return useMutation({
     mutationFn: (itemId: string) =>
-      api.delete<{ ok: boolean }>(`/trips/${tripId}/items/${itemId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
+      api.delete<Trip>(`/trips/${tripId}/items/${itemId}`),
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
     },
   });
 }
@@ -79,12 +50,11 @@ export function useReoptimizeItineraryDay(tripId: string) {
   return useMutation({
     mutationFn: (dayId: string) =>
       api.post<Trip>(`/trips/${tripId}/days/${dayId}/reoptimize`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
     },
   });
 }
-
 
 export function useRegenerateItineraryDay(tripId: string) {
   const queryClient = useQueryClient();
@@ -92,8 +62,8 @@ export function useRegenerateItineraryDay(tripId: string) {
   return useMutation({
     mutationFn: (dayId: string) =>
       api.post<Trip>(`/trips/${tripId}/days/${dayId}/regenerate`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
     },
   });
 }

@@ -40,11 +40,11 @@ export default function GuideImportPanel({ tripId }: { tripId: string }) {
         return;
       }
 
-      await api.post<Trip>(`/trips/${tripId}/entities/import`, {
+      const updatedTrip = await api.post<Trip>(`/trips/${tripId}/entities/import`, {
         entity_ids: entityIds,
       });
 
-      await queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
+      queryClient.setQueryData(["trip", tripId], updatedTrip);
 
       setMessage(`已追加 ${entityIds.length} 个地点到当前行程`);
       setText("");

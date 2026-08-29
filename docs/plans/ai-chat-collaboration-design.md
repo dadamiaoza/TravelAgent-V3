@@ -10,7 +10,7 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | A：点位编号 + 列表/地图双向聚焦 | ✅ 已合并 | 已完成并合并 |
-| B：Zustand 统一数据源 + 编辑/排序实时联动 | 🚧 后端已完成 | 后端增删/geocode/reoptimize/regenerate、服务层/Ports/编排器已完成；前端 store 仅完成基础态，尚缺完整编辑快照/乐观更新 |
+| B：Zustand 统一数据源 + 编辑/排序实时联动 | ✅ 核心已完成 | 后端增删/geocode/reoptimize/regenerate/sync + 服务层/Ports/编排器；前端 dirtyTrip 编辑快照 + 防抖最终一致性已落地 |
 | C1：常驻对话面板 + 建议卡片 | ⬜ 未开始 | 依赖 B 的数据流 |
 | C2：SSE 流式回复 | ⬜ 未开始 | |
 | D：长短期记忆 + 上下文摘要 | ⬜ 未开始 | |
@@ -227,6 +227,26 @@ interface TripStore {
   - `LangGraphTripGenerator`
 - `trip_editor.py` 不再直接 import Agent/Tool 内部函数，改为依赖 Port。
 - 后续命令模式/事件溯源可在同一 Service 层切换实现，不改业务逻辑。
+
+### 4.8 前端最终一致性编辑快照
+
+- `tripStore` 新增：
+  - `dirtyTrip`：当前正在编辑的完整行程副本
+  - `isDirty`：是否有未同步修改
+  - `updateTripLocally()`：只改本地 dirtyTrip，不发请求
+  - `applyServerTrip()`：服务器回写后覆盖快照并清除脏标记
+- `useTripDraftSync`：
+  - React Query 数据到达时初始化 dirtyTrip
+  - 轻量操作（改名/排序）只改本地
+  - 停止操作 1.5s 后防抖调用 `POST /trips/{id}/sync`
+  - 成功用 `setQueryData` + `applyServerTrip` 静默更新
+  - 失败保留 isDirty，UI 显示“未保存”
+  - 页面离开 flush，尽量减少丢失
+- 重量操作（新增/删除/重算/重生成）成功后：
+  - `setQueryData`
+  - `applyServerTrip`
+  - 清空防抖队列
+- 已移除组件内所有 `invalidateQueries`，统一走 `setQueryData`。
 
 ### 4.7 应用编排器收敛
 

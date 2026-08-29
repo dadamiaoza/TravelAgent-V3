@@ -23,6 +23,7 @@ from app.schemas.trip import (
     ItineraryItemUpdate,
     ItineraryItemCreate,
     ItineraryDayReorder,
+    TripSyncRequest,
     EntityImportRequest,
 )
 from app.services.trip_editor import (
@@ -33,6 +34,7 @@ from app.services.trip_editor import (
     reorder_day,
     reoptimize_day,
     regenerate_segment,
+    sync_trip,
 )
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -112,14 +114,24 @@ def create_itinerary_item(
     return create_item(db, trip_id, body)
 
 
-@router.delete("/{trip_id}/items/{item_id}")
+@router.delete("/{trip_id}/items/{item_id}", response_model=TripOut)
 def delete_itinerary_item(
     trip_id: UUID,
     item_id: UUID,
     db: Session = Depends(get_db),
 ):
-    """删除单个行程节点。"""
+    """删除单个行程节点，返回最新完整行程。"""
     return delete_item(db, trip_id, item_id)
+
+
+@router.post("/{trip_id}/sync", response_model=TripOut)
+def sync_trip_endpoint(
+    trip_id: UUID,
+    body: TripSyncRequest,
+    db: Session = Depends(get_db),
+):
+    """轻量最终一致性同步：批量保存排序和名称修改。"""
+    return sync_trip(db, trip_id, body)
 
 
 @router.post("/{trip_id}/days/{day_id}/regenerate", response_model=TripOut)

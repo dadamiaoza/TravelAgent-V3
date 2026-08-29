@@ -18,6 +18,7 @@ from app.schemas.trip import (
     ItineraryItemCreate,
     ItineraryItemUpdate,
     ItineraryDayReorder,
+    TripSyncRequest,
 )
 from app.domain.interfaces import (
     Geocoder,
@@ -142,6 +143,43 @@ def regenerate_segment(
     return trip
 
 
+def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
+    """Apply lightweight field/order changes in one atomic sync."""
+    trip = _get_trip(db, trip_id)
+
+    # 1. Name patches (geocode if changed)
+    for patch in body.items:
+        item = _get_item(db, trip_id, patch.item_id)
+        if patch.poi_name is not None and patch.poi_name != item.poi_name:
+            item.poi_name = patch.poi_name
+            city = trip.city or trip.destination or ""
+            geo = _geocoder.geocode(patch.poi_name, city)
+            if geo:
+                item.lat = geo.get("lat", item.lat)
+                item.lng = geo.get("lng", item.lng)
+                item.amap_poi_id = geo.get("amap_poi_id", item.amap_poi_id)
+                item.poi_address = geo.get("poi_address", item.poi_address)
+                item.poi_type = geo.get("poi_type", item.poi_type)
+
+    # 2. Order patches
+    for day_sync in body.days:
+        day = _get_day(db, trip_id, day_sync.day_id)
+        existing_ids = {item.id for item in day.items}
+        if set(day_sync.item_ids) != existing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="sync item_ids must contain exactly all items in this day",
+            )
+        by_id = {item.id: item for item in day.items}
+        for seq, item_id in enumerate(day_sync.item_ids, start=1):
+            by_id[item_id].seq = seq
+        _scheduler.recalculate(day)
+
+    db.commit()
+    db.refresh(trip)
+    return trip
+
+
 def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
     trip = _get_trip(db, trip_id)
     day = _get_day(db, trip_id, body.day_id)
@@ -201,7 +239,8 @@ def update_item(
     return item
 
 
-def delete_item(db: Session, trip_id: UUID, item_id: UUID) -> dict:
+def delete_item(db: Session, trip_id: UUID, item_id: UUID) -> Trip:
+    trip = _get_trip(db, trip_id)
     item = _get_item(db, trip_id, item_id)
     day_id = item.day_id
     db.delete(item)
@@ -209,7 +248,8 @@ def delete_item(db: Session, trip_id: UUID, item_id: UUID) -> dict:
     day = _get_day(db, trip_id, day_id)
     _scheduler.recalculate(day)
     db.commit()
-    return {"ok": True}
+    db.refresh(trip)
+    return trip
 
 
 def reorder_day(

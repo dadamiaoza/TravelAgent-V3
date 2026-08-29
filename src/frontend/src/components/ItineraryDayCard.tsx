@@ -1,11 +1,11 @@
 import type { DayView } from "@/lib/types";
 import ItineraryItemCard from "@/components/ItineraryItemCard";
 import {
-  useReorderItineraryDay,
   useReoptimizeItineraryDay,
   useRegenerateItineraryDay,
   useCreateItineraryItem,
 } from "@/hooks/useItineraryMutations";
+import { useTripStore } from "@/stores/tripStore";
 
 export default function ItineraryDayCard({
   day,
@@ -18,7 +18,7 @@ export default function ItineraryDayCard({
   focusedItemId?: string | null;
   onSelectItem?: (itemId: string) => void;
 }) {
-  const reorder = useReorderItineraryDay(tripId);
+  const updateTripLocally = useTripStore((s) => s.updateTripLocally);
   const reoptimize = useReoptimizeItineraryDay(tripId);
   const regenerate = useRegenerateItineraryDay(tripId);
   const createItem = useCreateItineraryItem(tripId);
@@ -28,17 +28,18 @@ export default function ItineraryDayCard({
     const target = index + direction;
     if (target < 0 || target >= items.length) return;
 
-    const nextIds = items.map((item) => item.id);
-    [nextIds[index], nextIds[target]] = [nextIds[target], nextIds[index]];
-    reorder.mutate(
-      { dayId: day.id, itemIds: nextIds },
-      {
-        onSuccess: () => {
-          // 排序成功后自动重算交通时间，保持地图/时间线一致
-          reoptimize.mutate(day.id);
-        },
-      },
-    );
+    const nextItems = [...items];
+    [nextItems[index], nextItems[target]] = [nextItems[target], nextItems[index]];
+    const renumberedItems = nextItems.map((it, idx) => ({ ...it, seq: idx + 1 }));
+    updateTripLocally((trip) => {
+      if (!trip?.days) return trip;
+      return {
+        ...trip,
+        days: trip.days.map((d) =>
+          d.id === day.id ? { ...d, items: renumberedItems } : d,
+        ),
+      };
+    });
   }
 
   return (
@@ -102,7 +103,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, -1)}
-                  disabled={index === 0 || reorder.isPending}
+                  disabled={index === 0 || reoptimize.isPending || regenerate.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="上移"
                 >
@@ -111,7 +112,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, 1)}
-                  disabled={index === items.length - 1 || reorder.isPending}
+                  disabled={index === items.length - 1 || reoptimize.isPending || regenerate.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="下移"
                 >
