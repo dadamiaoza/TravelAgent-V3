@@ -5,6 +5,7 @@ import {
   loadAMap,
   type AMapInfoWindow,
   type AMapMap,
+  type AMapMarker,
   type AMapNamespace,
   type AMapOverlay,
 } from "@/lib/amap";
@@ -13,6 +14,8 @@ interface TripMapProps {
   selectedDayIndex: number;
   onSelectDay: (index: number) => void;
   days: DayView[];
+  focusItemId?: string | null;
+  onSelectItem?: (itemId: string) => void;
 }
 
 function escapeHtml(value: string): string {
@@ -60,9 +63,17 @@ function buildPopupContent(item: ItineraryItem): string {
   `;
 }
 
-export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMapProps) {
+export default function TripMap({
+  days,
+  selectedDayIndex,
+  onSelectDay,
+  focusItemId,
+  onSelectItem,
+}: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlaysRef = useRef<AMapOverlay[]>([]);
+  const markersRef = useRef<Map<string, AMapMarker>>(new Map());
+  const highlightTimerRef = useRef<number | null>(null);
   const infoWindowRef = useRef<AMapInfoWindow | null>(null);
 
   const [amap, setAmap] = useState<AMapNamespace | null>(null);
@@ -70,6 +81,50 @@ export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMap
   const [error, setError] = useState<string | null>(null);
 
   const { key, securityCode } = getAmapConfig();
+
+  function markerContent(seq: number, focused: boolean): string {
+    return `<div style="
+      width: ${focused ? 34 : 26}px;
+      height: ${focused ? 34 : 26}px;
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: ${focused ? 14 : 12}px;
+      font-weight: 700;
+      color: #fff;
+      background: ${focused ? "#ea580c" : "#2563eb"};
+      border: 2px solid #fff;
+      box-shadow: ${focused ? "0 4px 12px rgba(0,0,0,0.35)" : "0 1px 4px rgba(0,0,0,0.25)"};
+      cursor: pointer;
+    ">${seq}</div>`;
+  }
+
+  function resetMarkerHighlights() {
+    markersRef.current.forEach((marker, itemId) => {
+      const day = days[selectedDayIndex];
+      const item = day?.items.find((it) => it.id === itemId);
+      if (item) marker.setContent(markerContent(item.seq, false));
+    });
+  }
+
+  function focusMarker(itemId: string) {
+    if (!map) return;
+    const day = days[selectedDayIndex];
+    const item = day?.items.find((it) => it.id === itemId);
+    const marker = markersRef.current.get(itemId);
+    if (!item || !marker) return;
+
+    resetMarkerHighlights();
+    marker.setContent(markerContent(item.seq, true));
+    map.setZoomAndCenter(16, [item.lng!, item.lat!]);
+
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      marker.setContent(markerContent(item.seq, false));
+      highlightTimerRef.current = null;
+    }, 2500);
+  }
 
   // 初始化地图：只创建一次
   useEffect(() => {
@@ -109,6 +164,7 @@ export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMap
     infoWindowRef.current = null;
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
     overlaysRef.current = [];
+    markersRef.current.clear();
 
     const validItems = day.items.filter(
       (item) => item.lat != null && item.lng != null,
@@ -128,12 +184,15 @@ export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMap
       const marker = new amap.Marker({
         position: [item.lng!, item.lat!],
         title: item.poi_name,
+        content: markerContent(item.seq, focusItemId === item.id),
       });
       marker.on("click", () => {
         infoWindow.setContent(buildPopupContent(item));
         infoWindow.open(map, marker.getPosition());
+        onSelectItem?.(item.id);
       });
       marker.setMap(map);
+      markersRef.current.set(item.id, marker);
       overlaysRef.current.push(marker);
     });
 
@@ -170,9 +229,16 @@ export default function TripMap({ days, selectedDayIndex, onSelectDay }: TripMap
     map.setFitView(overlaysRef.current);
   }, [amap, map, selectedDayIndex, days]);
 
+  // 点击列表/外部请求聚焦某个点位时：高亮 Marker 并放大地图
+  useEffect(() => {
+    if (!map || !focusItemId) return;
+    focusMarker(focusItemId);
+  }, [focusItemId, map, selectedDayIndex, days]);
+
   // 组件卸载时销毁地图，避免内存泄漏
   useEffect(() => {
     return () => {
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
       map?.destroy();
     };
   }, [map]);

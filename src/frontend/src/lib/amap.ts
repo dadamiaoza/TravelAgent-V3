@@ -9,6 +9,7 @@ export interface AMapOverlay {
 export interface AMapMarker extends AMapOverlay {
   on(event: string, handler: () => void): void;
   getPosition(): { lng: number; lat: number };
+  setContent(content: string): void;
 }
 
 export type AMapPolyline = AMapOverlay;
@@ -16,6 +17,7 @@ export type AMapPolyline = AMapOverlay;
 export interface AMapMap {
   destroy(): void;
   setFitView(overlays?: AMapOverlay[]): void;
+  setZoomAndCenter(zoom: number, center: [number, number]): void;
 }
 
 export interface AMapInfoWindow {
