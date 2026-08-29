@@ -244,7 +244,7 @@ export default function TripMap({
   }, [map]);
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm lg:sticky lg:top-4 z-10">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {days.map((day, index) => (
           <button

@@ -29,7 +29,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
     requestAnimationFrame(() => {
       document
         .getElementById(`itinerary-item-${itemId}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }
 
@@ -115,13 +115,15 @@ export default function TripDetail({ trip }: { trip: Trip }) {
       )}
 
       {currentDay ? (
-        <ItineraryDayCard
-          key={currentDay.id}
-          day={currentDay}
-          tripId={trip.id}
-          focusedItemId={focusItemId}
-          onSelectItem={handleSelectItem}
-        />
+        <div className="max-h-[60vh] overflow-y-auto overscroll-contain rounded-lg pr-1">
+          <ItineraryDayCard
+            key={currentDay.id}
+            day={currentDay}
+            tripId={trip.id}
+            focusedItemId={focusItemId}
+            onSelectItem={handleSelectItem}
+          />
+        </div>
       ) : (
         <p className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center text-gray-500">
           该行程暂无内容
