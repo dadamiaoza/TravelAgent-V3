@@ -3,6 +3,7 @@ import ItineraryItemCard from "@/components/ItineraryItemCard";
 import {
   useReorderItineraryDay,
   useReoptimizeItineraryDay,
+  useRegenerateItineraryDay,
   useCreateItineraryItem,
 } from "@/hooks/useItineraryMutations";
 
@@ -19,6 +20,7 @@ export default function ItineraryDayCard({
 }) {
   const reorder = useReorderItineraryDay(tripId);
   const reoptimize = useReoptimizeItineraryDay(tripId);
+  const regenerate = useRegenerateItineraryDay(tripId);
   const createItem = useCreateItineraryItem(tripId);
   const items = day.items ?? [];
 
@@ -64,6 +66,18 @@ export default function ItineraryDayCard({
             className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
           >
             {reoptimize.isPending ? "重算中…" : "重新计算路线"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`确定重新生成 Day${day.day_index} 吗？`)) {
+                regenerate.mutate(day.id);
+              }
+            }}
+            disabled={regenerate.isPending}
+            className="rounded border border-orange-300 px-2 py-1 text-xs text-orange-600 hover:bg-orange-50 disabled:opacity-50"
+          >
+            {regenerate.isPending ? "生成中…" : "重新生成这天"}
           </button>
         </div>
       </div>

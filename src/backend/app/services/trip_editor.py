@@ -29,7 +29,7 @@ from app.infrastructure.geocoder import AmapGeocoder
 from app.infrastructure.route_replanner import AmapRouteReplanner
 from app.infrastructure.itinerary_scheduler import ItineraryTimeScheduler
 from app.infrastructure.itinerary_generator import LangGraphTripGenerator
-from app.services.itinerary_persistence import persist_itinerary
+from app.services.itinerary_persistence import persist_itinerary, replace_day
 
 _geocoder: Geocoder = AmapGeocoder()
 _replanner: RouteReplanner = AmapRouteReplanner()
@@ -111,6 +111,34 @@ def regenerate_trip(
         thread_id=f"trip-{trip.id}",
     )
     persist_itinerary(db, trip, draft, trip.start_date)
+    return trip
+
+
+def regenerate_segment(
+    db: Session,
+    trip: Trip,
+    day_index: int,
+    generator: TripGenerator | None = None,
+) -> Trip:
+    """Atomically regenerate and replace a single day."""
+    generator = generator or _generator
+    day_data = generator.generate_day(
+        destination=trip.destination,
+        city=trip.city or "",
+        start_date=trip.start_date,
+        end_date=trip.end_date,
+        people_count=trip.people_count,
+        budget_min=trip.budget_min,
+        budget_max=trip.budget_max,
+        user_prompt=trip.user_prompt,
+        must_visit=trip.must_visit,
+        thread_id=f"trip-{trip.id}-day{day_index}",
+        day_index=day_index,
+    )
+    replace_day(db, trip, day_index, day_data, trip.start_date)
+    trip.status = "generated"
+    db.commit()
+    db.refresh(trip)
     return trip
 
 

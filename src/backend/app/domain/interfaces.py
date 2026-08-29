@@ -40,7 +40,12 @@ class Geocoder(Protocol):
 
 @runtime_checkable
 class TripGenerator(Protocol):
-    """Generate an itinerary draft (no persistence side effects)."""
+    """Generate itinerary drafts (no persistence side effects)."""
 
     def generate(self, **kwargs) -> dict:
+        """Generate a full itinerary draft."""
+        ...
+
+    def generate_day(self, **kwargs) -> dict:
+        """Generate a single day draft (day_index passed via kwargs)."""
         ...

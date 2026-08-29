@@ -84,3 +84,16 @@ export function useReoptimizeItineraryDay(tripId: string) {
     },
   });
 }
+
+
+export function useRegenerateItineraryDay(tripId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (dayId: string) =>
+      api.post<Trip>(`/trips/${tripId}/days/${dayId}/regenerate`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
+    },
+  });
+}

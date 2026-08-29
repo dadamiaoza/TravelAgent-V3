@@ -238,8 +238,9 @@ interface TripStore {
 - `trip_editor.py` 成为应用唯一入口：
   - `create_trip_with_itinerary(db, body)`
   - `regenerate_trip(db, trip, generator=None)`
-  - 后续可继续扩展 `regenerate_segment()`
+  - `regenerate_segment(db, trip, day_index, generator=None)`
 - `POST /trips` 已改为只调用 `trip_editor.create_trip_with_itinerary()`。
+- `POST /trips/{id}/days/{day_id}/regenerate` 已提供“原子重生成单天”能力。
 - 未来 Agent / AI Delta / 快照回滚都统一走 `trip_editor`。
 
 ---
