@@ -663,3 +663,29 @@ def test_scenic_fallback_walking_has_generic_advice():
         assert item["route_verified"] is False
         assert item["travel_advice"]
         assert "现场" in item["travel_advice"]
+
+
+def test_optimize_itinerary_reorder_false_preserves_order():
+    """reorder=False 时即使矩阵倾向重排，也必须保持原始顺序并填充时间。"""
+    with patch("app.agents.tools.route_optimizer.settings") as mock_settings, \
+         patch("app.agents.tools.route_optimizer._amap_direction_direct") as mock_direct:
+        mock_settings.amap_api_key = "fake-key"
+        mock_direct.return_value = {"minutes": 5, "mode": "walking", "path": [[120.0, 30.0]]}
+
+        input_json = json.dumps({
+            "city": "杭州",
+            "days": [{
+                "day_index": 1,
+                "theme": "测试",
+                "items": [
+                    {"seq": 1, "poi_name": "A", "duration_h": 1, "travel_minutes_from_prev": 0},
+                    {"seq": 2, "poi_name": "B", "duration_h": 1, "travel_minutes_from_prev": 0},
+                    {"seq": 3, "poi_name": "C", "duration_h": 1, "travel_minutes_from_prev": 0},
+                ],
+            }]
+        }, ensure_ascii=False)
+
+        result = json.loads(optimize_itinerary(input_json, reorder=False))
+        items = result["days"][0]["items"]
+        assert [it["poi_name"] for it in items] == ["A", "B", "C"]
+        assert items[1]["travel_minutes_from_prev"] == 5

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Trip } from "@/lib/types";
 import { api } from "@/lib/api";
+import { useTripStore } from "@/stores/tripStore";
 import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
 import GuideImportPanel from "@/components/GuideImportPanel";
@@ -10,8 +11,10 @@ import GuideImportPanel from "@/components/GuideImportPanel";
 export default function TripDetail({ trip }: { trip: Trip }) {
   const days = trip.days ?? [];
   const queryClient = useQueryClient();
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
-  const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
+  const focusItemId = useTripStore((s) => s.focusItemId);
+  const setSelectedDayIndex = useTripStore((s) => s.setSelectedDayIndex);
+  const setFocusItem = useTripStore((s) => s.setFocusItem);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(trip.destination);
 
@@ -25,7 +28,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
   });
 
   function handleSelectItem(itemId: string) {
-    setFocusItemId(itemId);
+    setFocusItem(itemId);
     requestAnimationFrame(() => {
       document
         .getElementById(`itinerary-item-${itemId}`)
@@ -35,7 +38,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
 
   function handleSelectDay(index: number) {
     setSelectedDayIndex(index);
-    setFocusItemId(null);
+    setFocusItem(null);
   }
 
   function handleSaveTitle() {

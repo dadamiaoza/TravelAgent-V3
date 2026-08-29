@@ -64,7 +64,7 @@ def _geocode_with_fallback(
     # 4. 仍找不到才使用 mock 兜底，保证行程始终有可展示坐标
     return geocode_poi(name, city=preferred_city)
 
-def optimize_itinerary(itinerary_json: str) -> str:
+def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
     """对行程中的 POI 进行地理编码、路径优化排序和交通时间填充。
 
     流程：
@@ -122,7 +122,10 @@ def optimize_itinerary(itinerary_json: str) -> str:
 
         # 第三步：排序 + 填充交通时间
         if matrix is not None:
-            index_map = _reorder_by_nearest_neighbor(items, matrix)
+            if reorder:
+                index_map = _reorder_by_nearest_neighbor(items, matrix)
+            else:
+                index_map = list(range(len(items)))
             _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
         else:
             _fill_travel_times_fallback(items, route_type=route_type)

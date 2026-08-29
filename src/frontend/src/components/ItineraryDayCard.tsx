@@ -1,6 +1,10 @@
 import type { DayView } from "@/lib/types";
 import ItineraryItemCard from "@/components/ItineraryItemCard";
-import { useReorderItineraryDay } from "@/hooks/useItineraryMutations";
+import {
+  useReorderItineraryDay,
+  useReoptimizeItineraryDay,
+  useCreateItineraryItem,
+} from "@/hooks/useItineraryMutations";
 
 export default function ItineraryDayCard({
   day,
@@ -14,6 +18,8 @@ export default function ItineraryDayCard({
   onSelectItem?: (itemId: string) => void;
 }) {
   const reorder = useReorderItineraryDay(tripId);
+  const reoptimize = useReoptimizeItineraryDay(tripId);
+  const createItem = useCreateItineraryItem(tripId);
   const items = day.items ?? [];
 
   function moveItem(index: number, direction: -1 | 1) {
@@ -36,7 +42,30 @@ export default function ItineraryDayCard({
             </span>
           )}
         </div>
-        <span className="text-sm text-gray-500">{day.date}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">{day.date}</span>
+          <button
+            type="button"
+            onClick={() => {
+              const name = window.prompt("新增地点名称");
+              if (name?.trim()) {
+                createItem.mutate({ day_id: day.id, poi_name: name.trim() });
+              }
+            }}
+            disabled={createItem.isPending}
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            新增地点
+          </button>
+          <button
+            type="button"
+            onClick={() => reoptimize.mutate(day.id)}
+            disabled={reoptimize.isPending || items.length < 2}
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {reoptimize.isPending ? "重算中…" : "重新计算路线"}
+          </button>
+        </div>
       </div>
 
       {items.length > 0 ? (

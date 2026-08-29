@@ -58,6 +58,17 @@ class ItineraryItemUpdate(BaseModel):
     notes: str | None = None
 
 
+class ItineraryItemCreate(BaseModel):
+    """新增单个行程节点。"""
+    day_id: UUID
+    poi_name: str = Field(..., min_length=1, max_length=256)
+    start_time: time | None = None
+    end_time: time | None = None
+    notes: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+
+
 class ItineraryDayReorder(BaseModel):
     """同一天内的节点排序：item_ids 即新顺序。"""
     item_ids: list[UUID] = Field(..., min_length=1)

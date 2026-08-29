@@ -107,8 +107,11 @@ TravelAgent-V3/
 | POST | `/api/v1/trips` | 创建并生成行程 |
 | GET | `/api/v1/trips` | 行程列表 |
 | GET | `/api/v1/trips/{trip_id}` | 行程详情 |
-| PATCH | `/api/v1/trips/{trip_id}/items/{item_id}` | 编辑节点 |
+| PATCH | `/api/v1/trips/{trip_id}/items/{item_id}` | 编辑节点（改名称自动重新地理编码） |
+| POST | `/api/v1/trips/{trip_id}/items` | 新增单个节点 |
+| DELETE | `/api/v1/trips/{trip_id}/items/{item_id}` | 删除单个节点 |
 | POST | `/api/v1/trips/{trip_id}/days/{day_id}/reorder` | 同天排序 |
+| POST | `/api/v1/trips/{trip_id}/days/{day_id}/reoptimize` | 重算当天交通时间/路线 |
 | POST | `/api/v1/sources/parse` | 攻略解析 |
 | POST | `/api/v1/sources/merge` | 多源合并去重 |
 | POST | `/api/v1/facts/check` | 时效风险校验 |

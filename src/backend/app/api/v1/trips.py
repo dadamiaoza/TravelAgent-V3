@@ -21,9 +21,12 @@ from app.schemas.trip import (
     ItineraryItemOut,
     ItineraryDayOut,
     ItineraryItemUpdate,
+    ItineraryItemCreate,
     ItineraryDayReorder,
     EntityImportRequest,
 )
+from app.agents.tools.geo import geocode_poi
+from app.agents.tools.route_optimizer import optimize_itinerary
 from app.services.itinerary import generate_itinerary
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -119,13 +122,176 @@ def update_itinerary_item(
     if not item:
         raise HTTPException(status_code=404, detail="Itinerary item not found")
 
+    poi_name_changed = body.poi_name is not None and body.poi_name != item.poi_name
+
     # 只更新请求中实际传入的字段
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(item, field, value)
 
+    # 如果修改了地点名称，自动重新地理编码，保证地图点位同步移动
+    if poi_name_changed:
+        trip = db.query(Trip).filter(Trip.id == trip_id).first()
+        city = (trip.city if trip else None) or (trip.destination if trip else "")
+        try:
+            geo = geocode_poi(body.poi_name, city=city or "", mock_fallback=True)
+            if geo:
+                item.lat = geo.get("lat", item.lat)
+                item.lng = geo.get("lng", item.lng)
+                item.amap_poi_id = geo.get("amap_poi_id", item.amap_poi_id)
+                item.poi_address = geo.get("poi_address", item.poi_address)
+                item.poi_type = geo.get("poi_type", item.poi_type)
+        except Exception:
+            # 地理编码失败不阻断保存，保留旧坐标
+            pass
+
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.post("/{trip_id}/items", response_model=TripOut, status_code=201)
+def create_itinerary_item(
+    trip_id: UUID,
+    body: ItineraryItemCreate,
+    db: Session = Depends(get_db),
+):
+    """新增单个行程节点，并按需地理编码。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    day = (
+        db.query(ItineraryDay)
+        .filter(
+            ItineraryDay.id == body.day_id,
+            ItineraryDay.trip_id == trip_id,
+        )
+        .first()
+    )
+    if not day:
+        raise HTTPException(status_code=404, detail="Itinerary day not found")
+
+    next_seq = max((item.seq for item in day.items), default=0) + 1
+    item = ItineraryItem(
+        day_id=day.id,
+        seq=next_seq,
+        poi_name=body.poi_name,
+        start_time=body.start_time,
+        end_time=body.end_time,
+        notes=body.notes,
+        lat=body.lat,
+        lng=body.lng,
+    )
+
+    if item.lat is None or item.lng is None:
+        try:
+            city = trip.city or trip.destination or ""
+            geo = geocode_poi(body.poi_name, city=city, mock_fallback=True)
+            if geo:
+                item.lat = geo.get("lat")
+                item.lng = geo.get("lng")
+                item.amap_poi_id = geo.get("amap_poi_id")
+                item.poi_address = geo.get("poi_address")
+                item.poi_type = geo.get("poi_type")
+        except Exception:
+            pass
+
+    db.add(item)
+    db.commit()
+    db.refresh(trip)
+    return trip
+
+
+@router.delete("/{trip_id}/items/{item_id}")
+def delete_itinerary_item(
+    trip_id: UUID,
+    item_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """删除单个行程节点。"""
+    item = (
+        db.query(ItineraryItem)
+        .join(ItineraryDay, ItineraryItem.day_id == ItineraryDay.id)
+        .filter(
+            ItineraryItem.id == item_id,
+            ItineraryDay.trip_id == trip_id,
+        )
+        .first()
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Itinerary item not found")
+
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{trip_id}/days/{day_id}/reoptimize", response_model=TripOut)
+def reoptimize_day(
+    trip_id: UUID,
+    day_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """重新计算某一天相邻节点之间的交通时间/路线，保持现有顺序。"""
+    import json
+
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    day = (
+        db.query(ItineraryDay)
+        .filter(
+            ItineraryDay.id == day_id,
+            ItineraryDay.trip_id == trip_id,
+        )
+        .first()
+    )
+    if not day:
+        raise HTTPException(status_code=404, detail="Itinerary day not found")
+
+    city = trip.city or trip.destination or ""
+    day_json = {
+        "day_index": day.day_index,
+        "route_type": day.route_type or "city",
+        "items": [
+            {
+                "seq": item.seq,
+                "poi_name": item.poi_name,
+                "duration_h": 1.5,
+                "travel_minutes_from_prev": item.travel_minutes or 0,
+            }
+            for item in sorted(day.items, key=lambda it: it.seq)
+        ],
+    }
+
+    try:
+        result = json.loads(
+            optimize_itinerary(
+                json.dumps({"city": city, "days": [day_json]}, ensure_ascii=False),
+                reorder=False,
+            )
+        )
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Reoptimize failed")
+
+    updated_items = (result.get("days") or [{}])[0].get("items") or []
+    for item, updated in zip(sorted(day.items, key=lambda it: it.seq), updated_items):
+        item.lat = updated.get("lat", item.lat)
+        item.lng = updated.get("lng", item.lng)
+        item.transport_mode = updated.get("transport_mode", item.transport_mode)
+        item.travel_minutes = updated.get("travel_minutes_from_prev", item.travel_minutes)
+        item.route_polyline = updated.get("route_polyline", item.route_polyline)
+        item.route_verified = updated.get("route_verified", item.route_verified)
+        item.travel_advice = updated.get("travel_advice", item.travel_advice)
+        item.amap_poi_id = updated.get("amap_poi_id", item.amap_poi_id)
+        item.poi_address = updated.get("poi_address", item.poi_address)
+        item.poi_type = updated.get("poi_type", item.poi_type)
+
+    db.commit()
+    db.refresh(trip)
+    return trip
 
 
 @router.post("/{trip_id}/days/{day_id}/reorder", response_model=ItineraryDayOut)
