@@ -43,9 +43,15 @@ function buildBrief(item: ItineraryItem): string {
 export default function ItineraryItemCard({
   item,
   tripId,
+  sequence,
+  selected,
+  onSelect,
 }: {
   item: ItineraryItem;
   tripId: string;
+  sequence?: number;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   const updateItem = useUpdateItineraryItem(tripId);
 
@@ -92,19 +98,35 @@ export default function ItineraryItemCard({
     "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
-    <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+    <div
+      className={`rounded-md border p-3 transition ${
+        selected
+          ? "border-blue-500 bg-blue-50 shadow-sm"
+          : "border-gray-200 bg-gray-50"
+      } ${isEditing ? "" : "cursor-pointer hover:border-blue-300"}`}
+      onClick={() => {
+        if (!isEditing) onSelect?.();
+      }}
+    >
       {!isEditing ? (
         <>
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-gray-900">{item.poi_name}</p>
-              <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
+            <div className="flex items-start gap-2">
+              {sequence != null && (
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
+                  {sequence}
+                </span>
+              )}
+              <div>
+                <p className="text-sm font-medium text-gray-900">{item.poi_name}</p>
+                <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
               {item.travel_advice && (
                 <p className="mt-1 text-xs text-amber-700">提示：{item.travel_advice}</p>
               )}
-              {item.notes && (
-                <p className="mt-1 text-xs text-gray-600">备注：{item.notes}</p>
-              )}
+                {item.notes && (
+                  <p className="mt-1 text-xs text-gray-600">备注：{item.notes}</p>
+                )}
+              </div>
             </div>
             <span className="shrink-0 text-xs tabular-nums text-gray-500">
               {timeText}
@@ -112,7 +134,10 @@ export default function ItineraryItemCard({
           </div>
           <button
             type="button"
-            onClick={() => setIsEditing(true)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsEditing(true);
+            }}
             className="mt-2 text-xs text-blue-600 hover:underline"
           >
             编辑

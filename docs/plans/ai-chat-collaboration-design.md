@@ -5,6 +5,18 @@
 
 ---
 
+## 开发进度（实时更新）
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| A：点位编号 + 列表/地图双向聚焦 | 🚧 核心代码已完成 | 分支 `feat/map-list-focus`，等待 TS 验证和人工验收 |
+| B：Zustand 统一数据源 + 编辑/排序实时联动 | ⬜ 未开始 | 依赖 A 的聚焦状态，可抽取到 store |
+| C1：常驻对话面板 + 建议卡片 | ⬜ 未开始 | 依赖 B 的数据流 |
+| C2：SSE 流式回复 | ⬜ 未开始 | |
+| D：长短期记忆 + 上下文摘要 | ⬜ 未开始 | |
+
+---
+
 ## 1. 当前项目实际情况校验
 
 ### 1.1 已经具备的能力
@@ -126,6 +138,7 @@ src/frontend/src/components/TripMap.tsx
 src/frontend/src/components/ItineraryDayCard.tsx
 src/frontend/src/components/ItineraryItemCard.tsx
 src/frontend/src/components/TripDetail.tsx
+src/frontend/src/lib/amap.ts
 src/frontend/src/lib/types.ts
 ```
 

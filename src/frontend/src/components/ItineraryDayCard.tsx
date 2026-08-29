@@ -5,9 +5,13 @@ import { useReorderItineraryDay } from "@/hooks/useItineraryMutations";
 export default function ItineraryDayCard({
   day,
   tripId,
+  focusedItemId,
+  onSelectItem,
 }: {
   day: DayView;
   tripId: string;
+  focusedItemId?: string | null;
+  onSelectItem?: (itemId: string) => void;
 }) {
   const reorder = useReorderItineraryDay(tripId);
   const items = day.items ?? [];
@@ -38,7 +42,11 @@ export default function ItineraryDayCard({
       {items.length > 0 ? (
         <div className="space-y-2">
           {items.map((item, index) => (
-            <div key={item.id} className="flex items-start gap-1">
+            <div
+              key={item.id}
+              id={`itinerary-item-${item.id}`}
+              className="flex items-start gap-1"
+            >
               <div className="flex flex-col items-center gap-1 pt-2">
                 <button
                   type="button"
@@ -60,7 +68,13 @@ export default function ItineraryDayCard({
                 </button>
               </div>
               <div className="flex-1">
-                <ItineraryItemCard item={item} tripId={tripId} />
+                <ItineraryItemCard
+                  item={item}
+                  tripId={tripId}
+                  sequence={index + 1}
+                  selected={focusedItemId === item.id}
+                  onSelect={() => onSelectItem?.(item.id)}
+                />
               </div>
             </div>
           ))}

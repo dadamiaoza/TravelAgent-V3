@@ -1,6 +1,8 @@
 # 开发问题与解决方案记录
 
 > 本文档用于复盘实际开发中遇到的问题、定位过程与最终方案，方便后续继续开发时快速回忆上下文。
+>
+> 复盘原则：只记录用户发现/反馈的问题；开发过程中自己完成的小问题不写复盘，除非影响产品决策或后续维护。
 
 ## 1. P0-1：前端最小可用闭环
 
@@ -319,3 +321,23 @@ Nginx 返回给浏览器
 - `route_optimizer.py`：按 `route_type` 选择矩阵交通方式，回填景区交通建议。
 - `itinerary_days.route_type` + `itinerary_items.route_verified/travel_advice`。
 - 前端 `TripMap` / `ItineraryItemCard` 展示模式标识和提示。
+
+
+## 9. Phase A 用户反馈：地图和列表不能同时看到
+
+### 现象
+- 当天行程点很多时，点击地图上靠后的 Marker。
+- 页面会自动滚动到列表对应卡片，导致地图滚出视口，地图和列表无法同时看到。
+
+### 原因
+- 原实现使用 `scrollIntoView({ block: "center" })`，滚动的是整个页面。
+- 行程点一多，列表很长，滚动的距离就会很大。
+
+### 解决
+- 当天行程列表放入固定高度容器：
+  ```text
+  max-h-[60vh] overflow-y-auto
+  ```
+- 列表内部独立滚动，不再拖动整个页面。
+- `scrollIntoView` 改为 `block: "nearest"`，只做最小必要滚动。
+- 桌面端地图增加 `lg:sticky lg:top-4`，保证即使页面有其他滚动，地图仍然可见。

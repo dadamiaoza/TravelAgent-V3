@@ -11,6 +11,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
   const days = trip.days ?? [];
   const queryClient = useQueryClient();
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(trip.destination);
 
@@ -22,6 +23,20 @@ export default function TripDetail({ trip }: { trip: Trip }) {
       setEditingTitle(false);
     },
   });
+
+  function handleSelectItem(itemId: string) {
+    setFocusItemId(itemId);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`itinerary-item-${itemId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
+  function handleSelectDay(index: number) {
+    setSelectedDayIndex(index);
+    setFocusItemId(null);
+  }
 
   function handleSaveTitle() {
     const value = titleDraft.trim();
@@ -93,12 +108,22 @@ export default function TripDetail({ trip }: { trip: Trip }) {
         <TripMap
           days={days}
           selectedDayIndex={selectedDayIndex}
-          onSelectDay={setSelectedDayIndex}
+          onSelectDay={handleSelectDay}
+          focusItemId={focusItemId}
+          onSelectItem={handleSelectItem}
         />
       )}
 
       {currentDay ? (
-        <ItineraryDayCard key={currentDay.id} day={currentDay} tripId={trip.id} />
+        <div className="max-h-[60vh] overflow-y-auto overscroll-contain rounded-lg pr-1">
+          <ItineraryDayCard
+            key={currentDay.id}
+            day={currentDay}
+            tripId={trip.id}
+            focusedItemId={focusItemId}
+            onSelectItem={handleSelectItem}
+          />
+        </div>
       ) : (
         <p className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center text-gray-500">
           该行程暂无内容
