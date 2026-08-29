@@ -25,8 +25,8 @@ from app.schemas.trip import (
     ItineraryDayReorder,
     EntityImportRequest,
 )
-from app.services.itinerary import generate_itinerary
 from app.services.trip_editor import (
+    create_trip_with_itinerary,
     create_item,
     update_item,
     delete_item,
@@ -78,24 +78,7 @@ def suggest_trip(body: TripSuggestRequest):
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(body: TripCreate, db: Session = Depends(get_db)):
     """Create a new trip and auto-generate a template itinerary."""
-    trip = Trip(
-        destination=body.destination,
-          city=body.city,
-        start_date=body.start_date,
-        end_date=body.end_date,
-        people_count=body.people_count,
-        budget_min=body.budget_min,
-        budget_max=body.budget_max,
-          user_prompt=body.user_prompt,
-          must_visit=body.must_visit,
-    )
-    db.add(trip)
-    db.commit()
-    db.refresh(trip)
-
-    # Auto-generate template itinerary on creation
-    trip = generate_itinerary(db, trip)
-    return trip
+    return create_trip_with_itinerary(db, body)
 
 
 @router.get("/{trip_id}", response_model=TripOut)

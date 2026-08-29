@@ -219,12 +219,28 @@ interface TripStore {
   - `RouteReplanner`
   - `TimeScheduler`
   - `Geocoder`
+  - `TripGenerator`
 - `app/infrastructure/`：
   - `AmapRouteReplanner`
   - `ItineraryTimeScheduler`
   - `AmapGeocoder`
+  - `LangGraphTripGenerator`
 - `trip_editor.py` 不再直接 import Agent/Tool 内部函数，改为依赖 Port。
 - 后续命令模式/事件溯源可在同一 Service 层切换实现，不改业务逻辑。
+
+### 4.7 应用编排器收敛
+
+- `itinerary.py` 拆成纯生成策略：
+  - `generate_itinerary_draft()`：只返回行程草稿，不落库。
+  - 旧的 `generate_itinerary()` 保留为兼容 wrapper。
+- 新增 `itinerary_persistence.py`：
+  - `persist_itinerary()`：负责草稿落库。
+- `trip_editor.py` 成为应用唯一入口：
+  - `create_trip_with_itinerary(db, body)`
+  - `regenerate_trip(db, trip, generator=None)`
+  - 后续可继续扩展 `regenerate_segment()`
+- `POST /trips` 已改为只调用 `trip_editor.create_trip_with_itinerary()`。
+- 未来 Agent / AI Delta / 快照回滚都统一走 `trip_editor`。
 
 ---
 

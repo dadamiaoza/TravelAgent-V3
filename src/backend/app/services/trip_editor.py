@@ -14,18 +14,27 @@ from sqlalchemy.orm import Session
 
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
+    TripCreate,
     ItineraryItemCreate,
     ItineraryItemUpdate,
     ItineraryDayReorder,
 )
-from app.domain.interfaces import Geocoder, RouteReplanner, TimeScheduler
+from app.domain.interfaces import (
+    Geocoder,
+    RouteReplanner,
+    TimeScheduler,
+    TripGenerator,
+)
 from app.infrastructure.geocoder import AmapGeocoder
 from app.infrastructure.route_replanner import AmapRouteReplanner
 from app.infrastructure.itinerary_scheduler import ItineraryTimeScheduler
+from app.infrastructure.itinerary_generator import LangGraphTripGenerator
+from app.services.itinerary_persistence import persist_itinerary
 
 _geocoder: Geocoder = AmapGeocoder()
 _replanner: RouteReplanner = AmapRouteReplanner()
 _scheduler: TimeScheduler = ItineraryTimeScheduler()
+_generator: TripGenerator = LangGraphTripGenerator()
 
 
 def _get_trip(db: Session, trip_id: UUID) -> Trip:
@@ -62,6 +71,47 @@ def _get_item(db: Session, trip_id: UUID, item_id: UUID) -> ItineraryItem:
     if not item:
         raise HTTPException(status_code=404, detail="Itinerary item not found")
     return item
+
+
+def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:
+    """Create a trip and generate its itinerary as one application use-case."""
+    trip = Trip(
+        destination=body.destination,
+        city=body.city,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        people_count=body.people_count,
+        budget_min=body.budget_min,
+        budget_max=body.budget_max,
+        user_prompt=body.user_prompt,
+        must_visit=body.must_visit,
+    )
+    db.add(trip)
+    db.flush()
+    return regenerate_trip(db, trip)
+
+
+def regenerate_trip(
+    db: Session,
+    trip: Trip,
+    generator: TripGenerator | None = None,
+) -> Trip:
+    """Regenerate a full trip using the injected generator strategy."""
+    generator = generator or _generator
+    draft = generator.generate(
+        destination=trip.destination,
+        city=trip.city or "",
+        start_date=trip.start_date,
+        end_date=trip.end_date,
+        people_count=trip.people_count,
+        budget_min=trip.budget_min,
+        budget_max=trip.budget_max,
+        user_prompt=trip.user_prompt,
+        must_visit=trip.must_visit,
+        thread_id=f"trip-{trip.id}",
+    )
+    persist_itinerary(db, trip, draft, trip.start_date)
+    return trip
 
 
 def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:

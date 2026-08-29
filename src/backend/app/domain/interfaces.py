@@ -37,3 +37,10 @@ class Geocoder(Protocol):
 
     def geocode(self, name: str, city: str) -> dict | None:
         ...
+
+@runtime_checkable
+class TripGenerator(Protocol):
+    """Generate an itinerary draft (no persistence side effects)."""
+
+    def generate(self, **kwargs) -> dict:
+        ...
