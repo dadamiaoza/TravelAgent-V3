@@ -1,6 +1,8 @@
 # 开发问题与解决方案记录
 
 > 本文档用于复盘实际开发中遇到的问题、定位过程与最终方案，方便后续继续开发时快速回忆上下文。
+>
+> 复盘原则：只记录用户发现/反馈的问题；开发过程中自己完成的小问题不写复盘，除非影响产品决策或后续维护。
 
 ## 1. P0-1：前端最小可用闭环
 
@@ -319,44 +321,3 @@ Nginx 返回给浏览器
 - `route_optimizer.py`：按 `route_type` 选择矩阵交通方式，回填景区交通建议。
 - `itinerary_days.route_type` + `itinerary_items.route_verified/travel_advice`。
 - 前端 `TripMap` / `ItineraryItemCard` 展示模式标识和提示。
-
-
-## 9. Phase A：点位编号 + 地图/列表双向聚焦
-
-> 技术方案见：[ai-chat-collaboration-design.md](../plans/ai-chat-collaboration-design.md)
-
-### 做了什么
-- 自定义高德 Marker，用圆形数字替代默认图钉。
-- 行程卡片左侧增加序号圆点，和地图编号一一对应。
-- 点击列表卡片：
-  - 地图聚焦到对应 Marker
-  - 高亮该 Marker（2.5 秒后恢复）
-  - 地图放大到 `zoom=16`
-- 点击地图 Marker：
-  - 弹出信息窗
-  - 同时高亮列表对应卡片并 `scrollIntoView`
-- Day 切换时清空聚焦状态，地图重新 `setFitView`。
-
-### 遇到的问题与解决
-1. **AMap 类型定义不完整**
-   - 原 `AMapMarker` 没有 `setContent`
-   - 原 `AMapMap` 没有 `setZoomAndCenter`
-   - 解决：在 `src/frontend/src/lib/amap.ts` 中补充这两个方法类型。
-
-2. **焦点状态放哪里**
-   - 先放在 `TripDetail` 本地 state，改动最小。
-   - 后续 Phase B 把 `focusItemId`、`selectedDayIndex` 上收到 Zustand store。
-   - 现在不引入全局 store，避免 Phase A 被架构改造拖慢。
-
-3. **地图主渲染 effect 是否要依赖 focusItemId**
-   - 如果依赖，每次点击列表/地图都会重建所有 Marker 和 Polyline。
-   - 解决：主渲染 effect 只依赖 `days/selectedDayIndex`；焦点变化由独立 effect 调用 `focusMarker` 处理。
-
-4. **Marker 高亮恢复**
-   - 使用 `Window.setTimeout` 2.5 秒后恢复普通样式。
-   - 组件卸载时清理 timer，避免内存泄漏。
-
-### 验证
-- `npx tsc -b --pretty false` 通过。
-- `npm run build` 在当前沙箱中因 esbuild EPERM 未跑完，需在正常环境执行最终构建验证。
-- 尚未人工打开页面验证高德自定义 Marker 展示效果。
