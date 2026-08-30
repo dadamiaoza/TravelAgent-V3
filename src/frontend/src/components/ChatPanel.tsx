@@ -65,7 +65,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
-  const [handled, setHandled] = useState<Record<string, "accepted" | "ignored">>({});
+  const [handled, setHandled] = useState<Record<string, "accepted" | "ignored" | "failed">>({});
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   async function handleSend() {
@@ -108,7 +108,23 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
       queryClient.setQueryData(["trip", tripId], data);
       applyServerTrip(data);
     } catch {
-      setHandled((prev) => ({ ...prev, [key]: "ignored" }));
+      setHandled((prev) => ({ ...prev, [key]: "failed" }));
+    }
+  }
+
+  async function handleAcceptAll(deltas: ItineraryDelta[], keys: string[]) {
+    for (let i = 0; i < deltas.length; i++) {
+      const delta = deltas[i];
+      const key = keys[i];
+      if (handled[key]) continue;
+      setHandled((prev) => ({ ...prev, [key]: "accepted" }));
+      try {
+        const data = await api.post<Trip>(`/trips/${tripId}/deltas/apply`, { delta });
+        queryClient.setQueryData(["trip", tripId], data);
+        applyServerTrip(data);
+      } catch {
+        setHandled((prev) => ({ ...prev, [key]: "failed" }));
+      }
     }
   }
 
@@ -140,15 +156,37 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             >
               {msg.content}
             </div>
+            {msg.suggestions && msg.suggestions.length > 1 && (() => {
+              const keys = msg.suggestions.map(
+                (delta, idx) => delta.suggestion_id ?? `${msg.id}-s${idx}`,
+              );
+              const pending = keys.filter((key) => !handled[key]).length;
+              if (pending === 0) return null;
+              return (
+                <button
+                  type="button"
+                  onClick={() => handleAcceptAll(msg.suggestions!, keys)}
+                  className="mt-2 rounded border border-blue-300 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
+                >
+                  全部采纳（{pending}）
+                </button>
+              );
+            })()}
             {msg.suggestions && msg.suggestions.length > 0 && (
               <div className="mt-2 space-y-2">
                 {msg.suggestions.map((delta, idx) => {
                   const key = delta.suggestion_id ?? `${msg.id}-s${idx}`;
                   const status = handled[key];
                   if (status) {
+                    const label =
+                      status === "accepted"
+                        ? "✅ 已采纳"
+                        : status === "failed"
+                          ? "❌ 采纳失败"
+                          : "已忽略";
                     return (
                       <p key={key} className="text-xs text-gray-400">
-                        {status === "accepted" ? "✅ 已采纳" : "已忽略"} · {deltaSummary(delta)}
+                        {label} · {deltaSummary(delta)}
                       </p>
                     );
                   }
