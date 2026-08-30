@@ -111,6 +111,22 @@
 
 ---
 
+## 2.3 地图 Provider 抽象（后续替换高德）
+
+- 当前地图和路线渲染直接依赖高德 JS API，后续希望替换为其他地图工具。
+- 建议抽象：
+  - `MapProvider`（加载地图容器 / Marker / Polyline / InfoWindow）
+  - `RouteRenderer`（真实路线 / 景区示意图 / 普通道路样式）
+  - `MapConfig`（key / security / 坐标系转换）
+- 当前实现：
+  - `src/frontend/src/lib/amap.ts` 是高德适配层
+  - `TripMap.tsx` 调用该适配层
+- 后续替换时只需要新增另一个 Provider 适配层，不重写业务组件。
+- 路线目前有时显示直线的原因：
+  - 后端 `route_polyline` 为 null（景区未核实 / 高德未返回真实坐标）
+  - 前端回退为两点直线
+- 这不能完全靠换地图解决，需要后端补充真实路线或明确标注示意线。
+
 ## 3. Phase A：点位编号 + 地图/列表双向聚焦
 
 > 纯前端，改动小，先提升可感知交互。
