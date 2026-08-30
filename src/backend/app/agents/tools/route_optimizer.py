@@ -180,9 +180,18 @@ def _is_scenic_poi(item: dict) -> bool:
 
 
 def _infer_leg_route_type(from_item: dict, to_item: dict, day_route_type: str) -> str:
-    """按路段推断 route_type：任一端是景区时按 scenic 处理，否则沿用当天默认。"""
-    if _is_scenic_poi(from_item) or _is_scenic_poi(to_item):
+    """按路段推断 route_type。
+
+    - 两端都在景区内 → 景区内部路段，用步行/驾车/索道。
+    - 一端在景区、另一端不在 → 进出景区的接驳/转移路段，按城市模式处理。
+    - 两端都不在景区 → 沿用当天默认。
+    """
+    from_scenic = _is_scenic_poi(from_item)
+    to_scenic = _is_scenic_poi(to_item)
+    if from_scenic and to_scenic:
         return "scenic"
+    if from_scenic != to_scenic:
+        return "city"
     return day_route_type if day_route_type == "scenic" else "city"
 
 

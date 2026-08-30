@@ -45,9 +45,9 @@ export default function ItineraryDayCard({
       <div className="sticky top-0 z-10 mb-3 flex items-center justify-between border-b border-gray-100 bg-white pb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-gray-900">Day {day.day_index}</h2>
-          {day.route_type === "scenic" && (
-            <span className="rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">
-              景区模式
+          {(day.items ?? []).some((item) => item.is_scenic) && (
+            <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">
+              含景区
             </span>
           )}
         </div>

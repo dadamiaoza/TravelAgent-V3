@@ -232,6 +232,7 @@ class ItineraryItemOut(BaseModel):
     cost_estimate: int | None = None
     route_verified: bool | None = None
     travel_advice: str | None = None
+    is_scenic: bool = False
     is_locked: bool
 
     model_config = {"from_attributes": True}

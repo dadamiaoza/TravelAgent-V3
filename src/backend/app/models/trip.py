@@ -74,4 +74,13 @@ class ItineraryItem(Base):
     travel_advice: Mapped[str | None] = mapped_column(Text(), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean(), default=False)
 
+    @property
+    def is_scenic(self) -> bool:
+        """判断该节点是否位于景区/山岳类地点。"""
+        text = f"{self.poi_name or ''} {self.poi_type or ''}"
+        return any(
+            token in text
+            for token in ("景区", "风景名胜", "索道", "缆车", "登山步道", "游步道", "国家级景点", "山")
+        )
+
     day: Mapped["ItineraryDay"] = relationship(back_populates="items")
