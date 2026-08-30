@@ -288,3 +288,50 @@ class ChatRequest(BaseModel):
 class ChatOut(BaseModel):
     reply: str
     thread_id: str
+
+
+# ── Trip chat / AI delta schemas (Phase C1) ──
+
+class TripChatContext(BaseModel):
+    day_index: int | None = None
+    item_id: UUID | None = None
+
+
+class TripChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    thread_id: str | None = None
+    context: TripChatContext | None = None
+
+
+class ItineraryDeltaTarget(BaseModel):
+    day_index: int | None = None
+    item_id: UUID | None = None
+    seq: int | None = None
+
+
+class ItineraryDeltaPayload(BaseModel):
+    poi_name: str | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    duration_h: float | None = None
+    notes: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+    item_ids: list[UUID] | None = None
+
+
+class ItineraryDelta(BaseModel):
+    suggestion_id: UUID | None = None
+    action: str = Field(..., examples=["add", "update", "delete", "move", "reorder"])
+    target: ItineraryDeltaTarget | None = None
+    payload: ItineraryDeltaPayload | None = None
+
+
+class TripChatOut(BaseModel):
+    reply: str
+    thread_id: str
+    suggestions: list[ItineraryDelta] = []
+
+
+class DeltaApplyRequest(BaseModel):
+    delta: ItineraryDelta

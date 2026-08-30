@@ -1,5 +1,8 @@
 """Trip CRUD + itinerary generation API endpoints."""
+import json
+import uuid
 from datetime import timedelta
+from typing import Dict
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
@@ -24,6 +27,10 @@ from app.schemas.trip import (
     ItineraryItemCreate,
     ItineraryDayReorder,
     TripSyncRequest,
+    TripChatRequest,
+    TripChatOut,
+    DeltaApplyRequest,
+    ItineraryDelta,
     EntityImportRequest,
 )
 from app.services.trip_editor import (
@@ -35,6 +42,7 @@ from app.services.trip_editor import (
     reoptimize_day,
     regenerate_segment,
     sync_trip,
+    apply_delta,
 )
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -249,6 +257,99 @@ def update_trip(
     db.commit()
     db.refresh(trip)
     return trip
+def _build_trip_context(trip) -> Dict:
+    """Compact itinerary context for the chat prompt (no heavy route polylines)."""
+    return {
+        "destination": trip.destination,
+        "city": trip.city or "",
+        "days": [
+            {
+                "day_index": day.day_index,
+                "route_type": day.route_type or "city",
+                "items": [
+                    {
+                        "id": str(item.id),
+                        "seq": item.seq,
+                        "poi_name": item.poi_name,
+                        "start_time": str(item.start_time) if item.start_time else None,
+                        "end_time": str(item.end_time) if item.end_time else None,
+                        "travel_minutes": item.travel_minutes,
+                    }
+                    for item in sorted(day.items, key=lambda it: it.seq)
+                ],
+            }
+            for day in sorted(trip.days, key=lambda d: d.day_index)
+        ],
+    }
+
+
+@router.post("/{trip_id}/chat", response_model=TripChatOut)
+def trip_chat(
+    trip_id: UUID,
+    body: TripChatRequest,
+    db: Session = Depends(get_db),
+):
+    """带行程上下文的 AI 对话，返回文本和结构化建议。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    thread_id = body.thread_id or f"trip-{trip_id}"
+    context = _build_trip_context(trip)
+    if body.context:
+        context["current_day_index"] = body.context.day_index
+        if body.context.item_id:
+            context["current_item_id"] = str(body.context.item_id)
+
+    prompt = (
+        "你是旅行行程协作助手。根据当前行程 JSON 和用户消息，给出中文回复和可执行的结构化建议。\n"
+        "只输出 JSON，格式：\n"
+        '{"reply": "...", "suggestions": [{"action": "add|update|delete|move|reorder", '
+        '"target": {"day_index": 1, "item_id": "uuid", "seq": 2}, '
+        '"payload": {"poi_name": "...", "start_time": "09:00:00", "end_time": "10:00:00"}}]}\n'
+        "如果没有建议，suggestions 返回空数组。不要修改行程，只给建议。\n\n"
+        f"当前行程：\n{json.dumps(context, ensure_ascii=False)}\n\n"
+        f"用户消息：{body.message}\n"
+    )
+
+    try:
+        model = ChatOpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+        )
+        response = model.invoke(prompt)
+        content = response.content.strip()
+        start = content.find("{")
+        end = content.rfind("}")
+        data = json.loads(content[start:end + 1]) if start != -1 and end > start else {}
+        reply = data.get("reply") or "抱歉，我暂时没有理解你的需求。"
+        raw_suggestions = data.get("suggestions") or []
+        suggestions = []
+        for raw in raw_suggestions:
+            try:
+                suggestions.append(ItineraryDelta(**raw))
+            except Exception:
+                continue
+        return TripChatOut(reply=reply, thread_id=thread_id, suggestions=suggestions)
+    except Exception:
+        return TripChatOut(
+            reply="AI 对话服务暂时不可用，请稍后再试。",
+            thread_id=thread_id,
+            suggestions=[],
+        )
+
+
+@router.post("/{trip_id}/deltas/apply", response_model=TripOut)
+def apply_trip_delta(
+    trip_id: UUID,
+    body: DeltaApplyRequest,
+    db: Session = Depends(get_db),
+):
+    """应用一条 AI 建议 Delta，返回最新完整行程。"""
+    return apply_delta(db, trip_id, body.delta)
+
+
 @router.get("", response_model=list[TripBrief])
 def list_trips(db: Session = Depends(get_db)):
     """List all trips (brief)."""

@@ -294,6 +294,18 @@ interface TripStore {
    - 前端把 `dayIndex` / `itemId` 随聊天请求传给后端
    - 例如用户正在编辑“金顶”，AI 可自然接话
 
+### 5.2.1 示例问题
+
+| 用户输入 | AI 应返回的建议 |
+|---|---|
+| “把第三天改轻松一点” | 缩短 Day3 景点数量 / 调整时间 |
+| “第二天的萍乡博物馆时间太短” | `update` 萍乡博物馆的 start/end time |
+| “在 Day1 第3位插入金顶索道” | `add` 金顶索道，目标 Day1 seq=3 |
+| “第三天重新生成” | 提示用户确认后调用 `regenerate_segment` |
+| “删除杨岐山” | `delete` 杨岐山，附带影响范围提示 |
+| “把博物馆和纪念馆换一下顺序” | `move` / `reorder` |
+| “帮我解析这篇攻略并插入 Day2” | 走 guide_parser + `add` 建议卡片 |
+
 ### 5.3 后端接口设计
 
 #### 现有接口扩展
@@ -339,6 +351,38 @@ interface ItineraryDelta {
 }
 ```
 
+#### 幂等性设计
+
+`POST /trips/{id}/deltas/apply` 必须支持幂等语义，防止用户重复点击“采纳”产生重复修改。
+
+建议方案：
+
+1. 每次 AI 返回的建议带 `suggestion_id`（UUID）。
+2. 前端采纳时提交 `suggestion_id`。
+3. 后端记录已应用的 `suggestion_id`：
+   - 同一 `suggestion_id` 重复提交 → 直接返回当前 trip，不重复执行。
+   - 如果暂时不引入独立表，可用 `(trip_id, suggestion_id)` 内存缓存或后续 `itinerary_delta_applied` 表。
+4. `add` 操作如果没有天然幂等键，必须由 `suggestion_id` 去重；`update/delete/move/reorder` 也应在同一事务内校验目标仍存在。
+
+#### 影响范围提示
+
+AI 建议不能只给一句话，必须给“改动影响”：
+
+```text
+示例：删除“杨岐山孽龙洞景区”
+影响：Day3 将减少 1 个地点
+      Day3 后续节点时间会重新计算
+      Day3 现有路线会重算
+```
+
+前端卡片在“采纳”前展示影响范围，降低误操作：
+
+- 新增：展示插入位置
+- 修改：展示旧值 → 新值
+- 删除：展示受影响 Day 和后续节点
+- 排序：展示旧顺序 → 新顺序
+- 重生成：提示会覆盖当天全部节点
+
 #### 流式升级（第二阶段）
 
 - 使用 FastAPI `StreamingResponse` + SSE
@@ -351,9 +395,10 @@ interface ItineraryDelta {
 - 返回 `suggestions`
 - 用户点击“采纳”后：
   ```text
-  前端调用对应 REST mutation
-  后端写库
-  React Query invalidate / store 更新
+  前端 POST /trips/{id}/deltas/apply
+  后端 trip_editor.apply_delta()
+  写库（事务内）
+  setQueryData + applyServerTrip
   地图和列表自动刷新
   ```
 

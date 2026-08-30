@@ -73,3 +73,34 @@ export interface TripSuggestOut {
   must_visit?: string[];
 }
 
+
+
+export interface ItineraryDeltaTarget {
+  day_index?: number | null;
+  item_id?: string | null;
+  seq?: number | null;
+}
+
+export interface ItineraryDeltaPayload {
+  poi_name?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_h?: number | null;
+  notes?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  item_ids?: string[] | null;
+}
+
+export interface ItineraryDelta {
+  suggestion_id?: string | null;
+  action: "add" | "update" | "delete" | "move" | "reorder" | string;
+  target?: ItineraryDeltaTarget | null;
+  payload?: ItineraryDeltaPayload | null;
+}
+
+export interface TripChatOut {
+  reply: string;
+  thread_id: string;
+  suggestions: ItineraryDelta[];
+}

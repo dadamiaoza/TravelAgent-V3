@@ -18,6 +18,7 @@ from app.schemas.trip import (
     ItineraryItemCreate,
     ItineraryItemUpdate,
     ItineraryDayReorder,
+    ItineraryDelta,
     TripSyncRequest,
 )
 from app.domain.interfaces import (
@@ -141,6 +142,82 @@ def regenerate_segment(
     db.commit()
     db.refresh(trip)
     return trip
+
+
+def _day_by_index(db: Session, trip_id: UUID, day_index: int) -> ItineraryDay:
+    day = (
+        db.query(ItineraryDay)
+        .filter(ItineraryDay.trip_id == trip_id, ItineraryDay.day_index == day_index)
+        .first()
+    )
+    if not day:
+        raise HTTPException(status_code=404, detail="Itinerary day not found")
+    return day
+
+
+def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
+    """Apply one AI suggestion delta through the existing editor service."""
+    action = delta.action
+    target = delta.target
+    payload = delta.payload
+
+    if action == "add":
+        if not target or not target.day_index or not payload or not payload.poi_name:
+            raise HTTPException(status_code=400, detail="add delta requires target.day_index and payload.poi_name")
+        day = _day_by_index(db, trip_id, target.day_index)
+        create_item(db, trip_id, ItineraryItemCreate(
+            day_id=day.id,
+            poi_name=payload.poi_name,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+            notes=payload.notes,
+            lat=payload.lat,
+            lng=payload.lng,
+        ))
+        if target.seq is not None and target.seq >= 1:
+            day = _day_by_index(db, trip_id, target.day_index)
+            ordered = [i.id for i in sorted(day.items, key=lambda it: it.seq)]
+            # simple insertion: move appended item to target position
+            if len(ordered) > 1:
+                last_id = ordered[-1]
+                ordered.remove(last_id)
+                pos = min(max(target.seq - 1, 0), len(ordered))
+                ordered.insert(pos, last_id)
+                reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=ordered))
+        return _get_trip(db, trip_id)
+
+    if action == "update":
+        if not target or not target.item_id:
+            raise HTTPException(status_code=400, detail="update delta requires target.item_id")
+        update_kwargs = {}
+        if payload:
+            if payload.poi_name is not None:
+                update_kwargs["poi_name"] = payload.poi_name
+            if payload.start_time is not None:
+                update_kwargs["start_time"] = payload.start_time
+            if payload.end_time is not None:
+                update_kwargs["end_time"] = payload.end_time
+            if payload.notes is not None:
+                update_kwargs["notes"] = payload.notes
+        update_item(db, trip_id, target.item_id, ItineraryItemUpdate(**update_kwargs))
+        return _get_trip(db, trip_id)
+
+    if action == "delete":
+        if not target or not target.item_id:
+            raise HTTPException(status_code=400, detail="delete delta requires target.item_id")
+        return delete_item(db, trip_id, target.item_id)
+
+    if action == "reorder":
+        if not target or not target.day_index or not payload or not payload.item_ids:
+            raise HTTPException(status_code=400, detail="reorder delta requires target.day_index and payload.item_ids")
+        day = _day_by_index(db, trip_id, target.day_index)
+        reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=payload.item_ids))
+        return _get_trip(db, trip_id)
+
+    if action == "move":
+        raise HTTPException(status_code=400, detail="move delta is not supported in C1 yet")
+
+    raise HTTPException(status_code=400, detail=f"Unsupported delta action: {action}")
 
 
 def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
