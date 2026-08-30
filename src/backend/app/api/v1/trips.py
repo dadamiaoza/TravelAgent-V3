@@ -1,5 +1,6 @@
 """Trip CRUD + itinerary generation API endpoints."""
 import json
+import re
 import uuid
 from datetime import timedelta
 from typing import Dict
@@ -69,6 +70,12 @@ def suggest_trip(body: TripSuggestRequest):
     )
     response = model.invoke(prompt)
     content = response.content.strip()
+    # 去掉模型思考块，避免其中的花括号干扰 JSON 提取
+    content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
+    # 如果模型用 ```json 包裹，优先取代码块内容
+    fence = re.search(r"```json\s*(.*?)```", content, flags=re.DOTALL)
+    if fence:
+        content = fence.group(1)
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end <= start:
@@ -297,6 +304,10 @@ def trip_chat(
         )
         response = model.invoke(prompt)
         content = response.content.strip()
+        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
+        fence = re.search(r"```json\s*(.*?)```", content, flags=re.DOTALL)
+        if fence:
+            content = fence.group(1)
         start = content.find("{")
         end = content.rfind("}")
         data = json.loads(content[start:end + 1]) if start != -1 and end > start else {}
