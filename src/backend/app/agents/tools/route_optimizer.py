@@ -42,17 +42,25 @@ def _geocode_with_fallback(
     name: str,
     preferred_city: str,
     nearby: tuple[float, float] | None = None,
+    route_type: str = "city",
 ) -> dict:
-    """POI 地理编码回退链：周边搜索 → 指定城市 → 无城市 → mock。"""
-    # 1. 有上一节点坐标时，优先周边搜索，解决景区内同名地点错配
-    if nearby:
-        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby)
+    """POI 地理编码回退链：周边搜索 → 指定城市 → 无城市 → mock。
+
+    route_type=scenic 时优先用上一节点坐标做周边搜索，
+    解决景区内同名地点错配；city 模式不能用周边搜索，
+    否则会把市区场馆错误匹配到上一景点附近的同名场馆。
+    """
+    nearby_ctx = nearby if route_type == "scenic" else None
+
+    # 1. 景区内：有上一节点坐标时，优先周边搜索
+    if nearby_ctx:
+        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby_ctx)
         if result is not None:
             return result
 
     # 2. 再按 POI 自己的城市/行程城市搜索，消除同名歧义
     if preferred_city:
-        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby)
+        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby_ctx)
         if result is not None:
             return result
 
@@ -64,7 +72,7 @@ def _geocode_with_fallback(
     # 4. 仍找不到才使用 mock 兜底，保证行程始终有可展示坐标
     return geocode_poi(name, city=preferred_city)
 
-def optimize_itinerary(itinerary_json: str) -> str:
+def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
     """对行程中的 POI 进行地理编码、路径优化排序和交通时间填充。
 
     流程：
@@ -103,7 +111,9 @@ def optimize_itinerary(itinerary_json: str) -> str:
         prev_center: tuple[float, float] | None = None
         for item in items:
             item_city = item.get("city") or fallback_city
-            result = _geocode_with_fallback(item["poi_name"], item_city, nearby=prev_center)
+            result = _geocode_with_fallback(
+                item["poi_name"], item_city, nearby=prev_center, route_type=route_type
+            )
             item["lat"] = result["lat"]
             item["lng"] = result["lng"]
             item["city"] = result.get("city", "")
@@ -122,7 +132,10 @@ def optimize_itinerary(itinerary_json: str) -> str:
 
         # 第三步：排序 + 填充交通时间
         if matrix is not None:
-            index_map = _reorder_by_nearest_neighbor(items, matrix)
+            if reorder:
+                index_map = _reorder_by_nearest_neighbor(items, matrix)
+            else:
+                index_map = list(range(len(items)))
             _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
         else:
             _fill_travel_times_fallback(items, route_type=route_type)

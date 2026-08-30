@@ -19,6 +19,7 @@
 | 13 | API 矩阵构建策略 | 方案 B：完整 N×(N-1) 有向矩阵 + all-or-nothing 降级 | [knowledge-map.md](../../.ad/retrospect/knowledge-map.md#有向旅行时间矩阵) |
 | 14 | 记忆与状态分离 | 双通道架构：消息修剪 + 结构化任务摘要注入 system_prompt | [knowledge-map.md](../../.ad/retrospect/knowledge-map.md#12-mvp-后规划记忆架构与外部集成) |
 | 15 | 外部搜索/抓取集成 | MCP 用于开放性搜索（LLM 自主决策），直接 API 用于确定性调用 | [knowledge-map.md](../../.ad/retrospect/knowledge-map.md#外部集成mcp-搜索--抓取) |
+| 16 | 行程编辑服务层分层 | Controller -> Service -> Ports/Adapters；后续演进 Command/Event Sourcing | [ai-chat-collaboration-design.md](./ai-chat-collaboration-design.md) |
 
 ## 相关文档
 

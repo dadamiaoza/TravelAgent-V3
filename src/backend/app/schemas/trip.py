@@ -58,6 +58,35 @@ class ItineraryItemUpdate(BaseModel):
     notes: str | None = None
 
 
+class ItineraryItemCreate(BaseModel):
+    """新增单个行程节点。"""
+    day_id: UUID
+    poi_name: str = Field(..., min_length=1, max_length=256)
+    start_time: time | None = None
+    end_time: time | None = None
+    notes: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+
+
+class TripDaySync(BaseModel):
+    """某一天内所有节点的新顺序。"""
+    day_id: UUID
+    item_ids: list[UUID]
+
+
+class TripItemSync(BaseModel):
+    """单个节点的轻量字段同步。"""
+    item_id: UUID
+    poi_name: str | None = None
+
+
+class TripSyncRequest(BaseModel):
+    """轻量最终一致性同步请求：只传排序和名称。"""
+    days: list[TripDaySync] = []
+    items: list[TripItemSync] = []
+
+
 class ItineraryDayReorder(BaseModel):
     """同一天内的节点排序：item_ids 即新顺序。"""
     item_ids: list[UUID] = Field(..., min_length=1)

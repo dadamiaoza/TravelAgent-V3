@@ -21,10 +21,21 @@ from app.schemas.trip import (
     ItineraryItemOut,
     ItineraryDayOut,
     ItineraryItemUpdate,
+    ItineraryItemCreate,
     ItineraryDayReorder,
+    TripSyncRequest,
     EntityImportRequest,
 )
-from app.services.itinerary import generate_itinerary
+from app.services.trip_editor import (
+    create_trip_with_itinerary,
+    create_item,
+    update_item,
+    delete_item,
+    reorder_day,
+    reoptimize_day,
+    regenerate_segment,
+    sync_trip,
+)
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -70,24 +81,7 @@ def suggest_trip(body: TripSuggestRequest):
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(body: TripCreate, db: Session = Depends(get_db)):
     """Create a new trip and auto-generate a template itinerary."""
-    trip = Trip(
-        destination=body.destination,
-          city=body.city,
-        start_date=body.start_date,
-        end_date=body.end_date,
-        people_count=body.people_count,
-        budget_min=body.budget_min,
-        budget_max=body.budget_max,
-          user_prompt=body.user_prompt,
-          must_visit=body.must_visit,
-    )
-    db.add(trip)
-    db.commit()
-    db.refresh(trip)
-
-    # Auto-generate template itinerary on creation
-    trip = generate_itinerary(db, trip)
-    return trip
+    return create_trip_with_itinerary(db, body)
 
 
 @router.get("/{trip_id}", response_model=TripOut)
@@ -106,26 +100,70 @@ def update_itinerary_item(
     body: ItineraryItemUpdate,
     db: Session = Depends(get_db),
 ):
-    """更新单个行程节点的用户可编辑字段（名称/时间/备注）。"""
-    item = (
-        db.query(ItineraryItem)
-        .join(ItineraryDay, ItineraryItem.day_id == ItineraryDay.id)
-        .filter(
-            ItineraryItem.id == item_id,
-            ItineraryDay.trip_id == trip_id,
-        )
+    """更新单个行程节点（改名称会自动重新地理编码）。"""
+    return update_item(db, trip_id, item_id, body)
+
+
+@router.post("/{trip_id}/items", response_model=TripOut, status_code=201)
+def create_itinerary_item(
+    trip_id: UUID,
+    body: ItineraryItemCreate,
+    db: Session = Depends(get_db),
+):
+    """新增单个行程节点。"""
+    return create_item(db, trip_id, body)
+
+
+@router.delete("/{trip_id}/items/{item_id}", response_model=TripOut)
+def delete_itinerary_item(
+    trip_id: UUID,
+    item_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """删除单个行程节点，返回最新完整行程。"""
+    return delete_item(db, trip_id, item_id)
+
+
+@router.post("/{trip_id}/sync", response_model=TripOut)
+def sync_trip_endpoint(
+    trip_id: UUID,
+    body: TripSyncRequest,
+    db: Session = Depends(get_db),
+):
+    """轻量最终一致性同步：批量保存排序和名称修改。"""
+    return sync_trip(db, trip_id, body)
+
+
+@router.post("/{trip_id}/days/{day_id}/regenerate", response_model=TripOut)
+def regenerate_day(
+    trip_id: UUID,
+    day_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """原子重新生成并替换某一天。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    day = (
+        db.query(ItineraryDay)
+        .filter(ItineraryDay.id == day_id, ItineraryDay.trip_id == trip_id)
         .first()
     )
-    if not item:
-        raise HTTPException(status_code=404, detail="Itinerary item not found")
+    if not day:
+        raise HTTPException(status_code=404, detail="Itinerary day not found")
 
-    # 只更新请求中实际传入的字段
-    for field, value in body.model_dump(exclude_unset=True).items():
-        setattr(item, field, value)
+    return regenerate_segment(db, trip, day.day_index)
 
-    db.commit()
-    db.refresh(item)
-    return item
+
+@router.post("/{trip_id}/days/{day_id}/reoptimize", response_model=TripOut)
+def reoptimize_day(
+    trip_id: UUID,
+    day_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """重算当天交通时间/路线，并重新生成游玩时间段。"""
+    return reoptimize_day(db, trip_id, day_id)
 
 
 @router.post("/{trip_id}/days/{day_id}/reorder", response_model=ItineraryDayOut)
@@ -135,32 +173,8 @@ def reorder_day_items(
     body: ItineraryDayReorder,
     db: Session = Depends(get_db),
 ):
-    """同一天内按 item_ids 顺序重新编号，不重新请求高德路线。"""
-    day = (
-        db.query(ItineraryDay)
-        .filter(
-            ItineraryDay.id == day_id,
-            ItineraryDay.trip_id == trip_id,
-        )
-        .first()
-    )
-    if not day:
-        raise HTTPException(status_code=404, detail="Itinerary day not found")
-
-    existing_ids = {item.id for item in day.items}
-    if set(body.item_ids) != existing_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="item_ids must contain exactly all items in this day",
-        )
-
-    by_id = {item.id: item for item in day.items}
-    for seq, item_id in enumerate(body.item_ids, start=1):
-        by_id[item_id].seq = seq
-
-    db.commit()
-    db.refresh(day)
-    return day
+    """同一天内按 item_ids 顺序重新编号并重算时间段。"""
+    return reorder_day(db, trip_id, day_id, body)
 
 
 @router.post("/{trip_id}/entities/import", response_model=TripOut)

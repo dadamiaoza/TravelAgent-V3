@@ -3,29 +3,35 @@ import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Trip } from "@/lib/types";
 import { api } from "@/lib/api";
+import { useTripStore } from "@/stores/tripStore";
+import { useTripDraftSync } from "@/hooks/useTripDraftSync";
 import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
 import GuideImportPanel from "@/components/GuideImportPanel";
 
 export default function TripDetail({ trip }: { trip: Trip }) {
-  const days = trip.days ?? [];
+  const { dirtyTrip, isDirty } = useTripDraftSync(trip.id, trip);
+  const displayTrip = dirtyTrip ?? trip;
+  const days = displayTrip.days ?? [];
   const queryClient = useQueryClient();
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
-  const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
+  const focusItemId = useTripStore((s) => s.focusItemId);
+  const setSelectedDayIndex = useTripStore((s) => s.setSelectedDayIndex);
+  const setFocusItem = useTripStore((s) => s.setFocusItem);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(trip.destination);
 
   const updateTrip = useMutation({
     mutationFn: (destination: string) =>
       api.patch<Trip>(`/trips/${trip.id}`, { destination }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip", trip.id] });
+    onSuccess: (data) => {
+      queryClient.setQueryData(["trip", trip.id], data);
       setEditingTitle(false);
     },
   });
 
   function handleSelectItem(itemId: string) {
-    setFocusItemId(itemId);
+    setFocusItem(itemId);
     requestAnimationFrame(() => {
       document
         .getElementById(`itinerary-item-${itemId}`)
@@ -35,7 +41,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
 
   function handleSelectDay(index: number) {
     setSelectedDayIndex(index);
-    setFocusItemId(null);
+    setFocusItem(null);
   }
 
   function handleSaveTitle() {
@@ -92,7 +98,12 @@ export default function TripDetail({ trip }: { trip: Trip }) {
               </div>
             )}
             <p className="mt-1 text-sm text-gray-500">
-              {trip.people_count} 人 · 状态：{trip.status}
+              {displayTrip.people_count} 人 · 状态：{displayTrip.status}
+              {isDirty && (
+                <span className="ml-2 inline-block rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-600">
+                  未保存
+                </span>
+              )}
             </p>
           </div>
           <Link

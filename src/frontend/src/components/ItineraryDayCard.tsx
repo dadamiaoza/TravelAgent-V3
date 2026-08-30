@@ -1,6 +1,11 @@
 import type { DayView } from "@/lib/types";
 import ItineraryItemCard from "@/components/ItineraryItemCard";
-import { useReorderItineraryDay } from "@/hooks/useItineraryMutations";
+import {
+  useReoptimizeItineraryDay,
+  useRegenerateItineraryDay,
+  useCreateItineraryItem,
+} from "@/hooks/useItineraryMutations";
+import { useTripStore } from "@/stores/tripStore";
 
 export default function ItineraryDayCard({
   day,
@@ -13,16 +18,28 @@ export default function ItineraryDayCard({
   focusedItemId?: string | null;
   onSelectItem?: (itemId: string) => void;
 }) {
-  const reorder = useReorderItineraryDay(tripId);
+  const updateTripLocally = useTripStore((s) => s.updateTripLocally);
+  const reoptimize = useReoptimizeItineraryDay(tripId);
+  const regenerate = useRegenerateItineraryDay(tripId);
+  const createItem = useCreateItineraryItem(tripId);
   const items = day.items ?? [];
 
   function moveItem(index: number, direction: -1 | 1) {
     const target = index + direction;
     if (target < 0 || target >= items.length) return;
 
-    const nextIds = items.map((item) => item.id);
-    [nextIds[index], nextIds[target]] = [nextIds[target], nextIds[index]];
-    reorder.mutate({ dayId: day.id, itemIds: nextIds });
+    const nextItems = [...items];
+    [nextItems[index], nextItems[target]] = [nextItems[target], nextItems[index]];
+    const renumberedItems = nextItems.map((it, idx) => ({ ...it, seq: idx + 1 }));
+    updateTripLocally((trip) => {
+      if (!trip?.days) return trip;
+      return {
+        ...trip,
+        days: trip.days.map((d) =>
+          d.id === day.id ? { ...d, items: renumberedItems } : d,
+        ),
+      };
+    });
   }
 
   return (
@@ -36,7 +53,42 @@ export default function ItineraryDayCard({
             </span>
           )}
         </div>
-        <span className="text-sm text-gray-500">{day.date}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">{day.date}</span>
+          <button
+            type="button"
+            onClick={() => {
+              const name = window.prompt("新增地点名称");
+              if (name?.trim()) {
+                createItem.mutate({ day_id: day.id, poi_name: name.trim() });
+              }
+            }}
+            disabled={createItem.isPending}
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            新增地点
+          </button>
+          <button
+            type="button"
+            onClick={() => reoptimize.mutate(day.id)}
+            disabled={reoptimize.isPending || items.length < 2}
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {reoptimize.isPending ? "重算中…" : "重新计算路线"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`确定重新生成 Day${day.day_index} 吗？`)) {
+                regenerate.mutate(day.id);
+              }
+            }}
+            disabled={regenerate.isPending}
+            className="rounded border border-orange-300 px-2 py-1 text-xs text-orange-600 hover:bg-orange-50 disabled:opacity-50"
+          >
+            {regenerate.isPending ? "生成中…" : "重新生成这天"}
+          </button>
+        </div>
       </div>
 
       {items.length > 0 ? (
@@ -51,7 +103,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, -1)}
-                  disabled={index === 0 || reorder.isPending}
+                  disabled={index === 0 || reoptimize.isPending || regenerate.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="上移"
                 >
@@ -60,7 +112,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, 1)}
-                  disabled={index === items.length - 1 || reorder.isPending}
+                  disabled={index === items.length - 1 || reoptimize.isPending || regenerate.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="下移"
                 >

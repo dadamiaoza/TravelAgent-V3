@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ItineraryItem } from "@/lib/types";
-import { useUpdateItineraryItem } from "@/hooks/useItineraryMutations";
+import { useDeleteItineraryItem } from "@/hooks/useItineraryMutations";
+import { useTripStore } from "@/stores/tripStore";
 
 // 把后端可能返回的英文交通方式转成中文 + 图标展示
 const TRANSPORT_LABELS: Record<string, string> = {
@@ -53,7 +54,8 @@ export default function ItineraryItemCard({
   selected?: boolean;
   onSelect?: () => void;
 }) {
-  const updateItem = useUpdateItineraryItem(tripId);
+  const deleteItem = useDeleteItineraryItem(tripId);
+  const updateTripLocally = useTripStore((s) => s.updateTripLocally);
 
   const [isEditing, setIsEditing] = useState(false);
   const [poiName, setPoiName] = useState(item.poi_name);
@@ -78,20 +80,27 @@ export default function ItineraryItemCard({
   }
 
   function handleSave() {
-    updateItem.mutate(
-      {
-        itemId: item.id,
-        payload: {
-          poi_name: poiName.trim() || item.poi_name,
-          start_time: toTimeValue(startTime),
-          end_time: toTimeValue(endTime),
-          notes: notes.trim() || null,
-        },
-      },
-      {
-        onSuccess: () => setIsEditing(false),
-      },
-    );
+    updateTripLocally((trip) => {
+      if (!trip?.days) return trip;
+      return {
+        ...trip,
+        days: trip.days.map((day) => ({
+          ...day,
+          items: day.items.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  poi_name: poiName.trim() || it.poi_name,
+                  start_time: toTimeValue(startTime),
+                  end_time: toTimeValue(endTime),
+                  notes: notes.trim() || null,
+                }
+              : it,
+          ),
+        })),
+      };
+    });
+    setIsEditing(false);
   }
 
   const inputClass =
@@ -132,16 +141,31 @@ export default function ItineraryItemCard({
               {timeText}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsEditing(true);
-            }}
-            className="mt-2 text-xs text-blue-600 hover:underline"
-          >
-            编辑
-          </button>
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsEditing(true);
+              }}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm(`确定删除“${item.poi_name}”吗？`)) {
+                  deleteItem.mutate(item.id);
+                }
+              }}
+              className="text-xs text-red-600 hover:underline disabled:opacity-50"
+              disabled={deleteItem.isPending}
+            >
+              删除
+            </button>
+          </div>
         </>
       ) : (
         <div className="space-y-2">
@@ -186,7 +210,7 @@ export default function ItineraryItemCard({
             <button
               type="button"
               onClick={handleSave}
-              disabled={updateItem.isPending}
+              disabled={false}
               className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-60"
             >
               保存
