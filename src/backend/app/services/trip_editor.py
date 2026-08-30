@@ -7,6 +7,7 @@ service layer instead of adding more ad-hoc API code.
 Dependencies follow ports & adapters: the service depends on the protocols
 in app.domain.interfaces, not on Agent/Tool internals directly.
 """
+import re
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -164,6 +165,9 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
     if action == "add":
         if not target or not target.day_index or not payload or not payload.poi_name:
             raise HTTPException(status_code=400, detail="add delta requires target.day_index and payload.poi_name")
+        trip = _get_trip(db, trip_id)
+        if _trip_has_poi(trip, payload.poi_name):
+            return trip
         day = _day_by_index(db, trip_id, target.day_index)
         create_item(db, trip_id, ItineraryItemCreate(
             day_id=day.id,
@@ -257,9 +261,25 @@ def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
     return trip
 
 
+def _poi_key(name: str) -> str:
+    return re.sub(r"\s+", "", name or "").lower()
+
+
+def _trip_has_poi(trip: Trip, name: str) -> bool:
+    key = _poi_key(name)
+    for day in trip.days:
+        for item in day.items:
+            if _poi_key(item.poi_name) == key:
+                return True
+    return False
+
+
 def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
     trip = _get_trip(db, trip_id)
     day = _get_day(db, trip_id, body.day_id)
+
+    if _trip_has_poi(trip, body.poi_name):
+        return trip
 
     next_seq = max((item.seq for item in day.items), default=0) + 1
     item = ItineraryItem(

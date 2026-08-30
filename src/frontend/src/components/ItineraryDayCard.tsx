@@ -44,7 +44,7 @@ export default function ItineraryDayCard({
 
   return (
     <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between border-b border-gray-100 bg-white pb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-gray-900">Day {day.day_index}</h2>
           {day.route_type === "scenic" && (
