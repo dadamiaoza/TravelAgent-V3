@@ -65,6 +65,12 @@ export function useCreateItineraryDay(tripId: string) {
       api.post<Trip>(`/trips/${tripId}/days`, payload ?? {}),
     onSuccess: (data) => {
       applyTripResult(queryClient, tripId, data);
+      const days = data.days ?? [];
+      if (days.length > 0) {
+        // 新增一天后自动切换到新的一天
+        useTripStore.getState().setSelectedDayIndex(days.length - 1);
+        useTripStore.getState().setFocusItem(null);
+      }
     },
   });
 }
