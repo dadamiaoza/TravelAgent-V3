@@ -3,6 +3,8 @@ import ItineraryItemCard from "@/components/ItineraryItemCard";
 import {
   useReoptimizeItineraryDay,
   useCreateItineraryItem,
+  useCreateItineraryDay,
+  useDeleteItineraryDay,
 } from "@/hooks/useItineraryMutations";
 import { useTripStore } from "@/stores/tripStore";
 
@@ -20,6 +22,8 @@ export default function ItineraryDayCard({
   const updateTripLocally = useTripStore((s) => s.updateTripLocally);
   const reoptimize = useReoptimizeItineraryDay(tripId);
   const createItem = useCreateItineraryItem(tripId);
+  const createDay = useCreateItineraryDay(tripId);
+  const deleteDay = useDeleteItineraryDay(tripId);
   const items = day.items ?? [];
 
   function moveItem(index: number, direction: -1 | 1) {
@@ -73,6 +77,26 @@ export default function ItineraryDayCard({
             className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
           >
             {reoptimize.isPending ? "重算中…" : "重新计算路线"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`确定删除 Day${day.day_index} 吗？`)) {
+                deleteDay.mutate(day.id);
+              }
+            }}
+            disabled={deleteDay.isPending}
+            className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            删除这天
+          </button>
+          <button
+            type="button"
+            onClick={() => createDay.mutate({})}
+            disabled={createDay.isPending}
+            className="rounded border border-green-300 px-2 py-1 text-xs text-green-700 hover:bg-green-50 disabled:opacity-50"
+          >
+            新增一天
           </button>
         </div>
       </div>

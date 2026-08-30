@@ -58,6 +58,11 @@ class ItineraryItemUpdate(BaseModel):
     notes: str | None = None
 
 
+class ItineraryDayCreate(BaseModel):
+    """新增一个 Day，默认追加到最后。"""
+    day_index: int | None = None
+
+
 class ItineraryItemCreate(BaseModel):
     """新增单个行程节点。"""
     day_id: UUID

@@ -26,6 +26,7 @@ from app.schemas.trip import (
     ItineraryDayOut,
     ItineraryItemUpdate,
     ItineraryItemCreate,
+    ItineraryDayCreate,
     ItineraryDayReorder,
     TripSyncRequest,
     TripChatRequest,
@@ -41,6 +42,8 @@ from app.services.trip_editor import (
     delete_item,
     reorder_day,
     reoptimize_day,
+    create_day,
+    delete_day,
     sync_trip,
     apply_delta,
 )
@@ -136,6 +139,26 @@ def delete_itinerary_item(
 ):
     """删除单个行程节点，返回最新完整行程。"""
     return delete_item(db, trip_id, item_id)
+
+
+@router.post("/{trip_id}/days", response_model=TripOut, status_code=201)
+def create_day_endpoint(
+    trip_id: UUID,
+    body: ItineraryDayCreate,
+    db: Session = Depends(get_db),
+):
+    """新增一天。"""
+    return create_day(db, trip_id, body)
+
+
+@router.delete("/{trip_id}/days/{day_id}", response_model=TripOut)
+def delete_day_endpoint(
+    trip_id: UUID,
+    day_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """删除一天，并重排剩余 Day 编号和日期。"""
+    return delete_day(db, trip_id, day_id)
 
 
 @router.post("/{trip_id}/sync", response_model=TripOut)

@@ -8,6 +8,7 @@ Dependencies follow ports & adapters: the service depends on the protocols
 in app.domain.interfaces, not on Agent/Tool internals directly.
 """
 import re
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
     TripCreate,
+    ItineraryDayCreate,
     ItineraryItemCreate,
     ItineraryItemUpdate,
     ItineraryDayReorder,
@@ -203,6 +205,39 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
         raise HTTPException(status_code=400, detail="move delta is not supported in C1 yet")
 
     raise HTTPException(status_code=400, detail=f"Unsupported delta action: {action}")
+
+
+def create_day(db: Session, trip_id: UUID, body: ItineraryDayCreate) -> Trip:
+    """Append a new day to the trip and renumber dates."""
+    trip = _get_trip(db, trip_id)
+    next_index = max((day.day_index for day in trip.days), default=0) + 1
+    day = ItineraryDay(
+        trip_id=trip.id,
+        day_index=next_index,
+        date=trip.start_date + timedelta(days=next_index - 1),
+        route_type="city",
+    )
+    db.add(day)
+    db.commit()
+    db.refresh(trip)
+    return trip
+
+
+def delete_day(db: Session, trip_id: UUID, day_id: UUID) -> Trip:
+    """Delete a day and renumber remaining days to keep dates continuous."""
+    trip = _get_trip(db, trip_id)
+    day = _get_day(db, trip_id, day_id)
+    db.delete(day)
+    db.flush()
+
+    remaining = sorted(trip.days, key=lambda d: d.day_index)
+    for idx, d in enumerate(remaining, start=1):
+        d.day_index = idx
+        d.date = trip.start_date + timedelta(days=idx - 1)
+
+    db.commit()
+    db.refresh(trip)
+    return trip
 
 
 def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:

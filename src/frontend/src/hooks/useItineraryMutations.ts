@@ -55,3 +55,28 @@ export function useReoptimizeItineraryDay(tripId: string) {
     },
   });
 }
+
+
+export function useCreateItineraryDay(tripId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload?: { day_index?: number }) =>
+      api.post<Trip>(`/trips/${tripId}/days`, payload ?? {}),
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
+    },
+  });
+}
+
+export function useDeleteItineraryDay(tripId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (dayId: string) =>
+      api.delete<Trip>(`/trips/${tripId}/days/${dayId}`),
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
+    },
+  });
+}
