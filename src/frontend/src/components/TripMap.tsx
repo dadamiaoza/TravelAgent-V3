@@ -63,6 +63,12 @@ function buildPopupContent(item: ItineraryItem): string {
   `;
 }
 
+function isScenicItem(item: ItineraryItem): boolean {
+  if (item.is_scenic != null) return item.is_scenic;
+  const text = `${item.poi_name ?? ""} ${item.poi_type ?? ""}`;
+  return /景区|风景名胜|索道|缆车|登山步道|游步道|国家级景点|山/.test(text);
+}
+
 export default function TripMap({
   days,
   selectedDayIndex,
@@ -106,7 +112,7 @@ export default function TripMap({
     markersRef.current.forEach((marker, itemId) => {
       const day = days[selectedDayIndex];
       const item = day?.items.find((it) => it.id === itemId);
-      if (item) marker.setContent(markerContent(item.seq, false, item.is_scenic ?? false));
+      if (item) marker.setContent(markerContent(item.seq, false, isScenicItem(item)));
     });
   }
 
@@ -118,12 +124,12 @@ export default function TripMap({
     if (!item || !marker) return;
 
     resetMarkerHighlights();
-    marker.setContent(markerContent(item.seq, true, item.is_scenic ?? false));
+    marker.setContent(markerContent(item.seq, true, isScenicItem(item)));
     map.setZoomAndCenter(16, [item.lng!, item.lat!]);
 
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
     highlightTimerRef.current = window.setTimeout(() => {
-      marker.setContent(markerContent(item.seq, false, item.is_scenic ?? false));
+      marker.setContent(markerContent(item.seq, false, isScenicItem(item)));
       highlightTimerRef.current = null;
     }, 2500);
   }
@@ -186,7 +192,7 @@ export default function TripMap({
       const marker = new amap.Marker({
         position: [item.lng!, item.lat!],
         title: item.poi_name,
-        content: markerContent(item.seq, focusItemId === item.id, item.is_scenic ?? false),
+        content: markerContent(item.seq, focusItemId === item.id, isScenicItem(item)),
       });
       marker.on("click", () => {
         infoWindow.setContent(buildPopupContent(item));
@@ -208,7 +214,7 @@ export default function TripMap({
         ? curr.route_polyline
         : [[prev.lng!, prev.lat!], [curr.lng!, curr.lat!]];
       const isUnverified = isScenic && !curr.route_verified;
-      const isScenicLeg = (prev.is_scenic ?? false) && (curr.is_scenic ?? false);
+      const isScenicLeg = isScenicItem(prev) && isScenicItem(curr);
       const strokeColor =
         isScenicLeg
           ? "#059669"
@@ -249,7 +255,7 @@ export default function TripMap({
   }, [map]);
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm lg:sticky lg:top-4 z-10">
+    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {days.map((day, index) => (
           <button

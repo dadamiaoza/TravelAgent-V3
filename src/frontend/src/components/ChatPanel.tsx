@@ -133,7 +133,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   }
 
   return (
-    <aside className="flex h-full min-h-[500px] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
+    <aside className="flex h-[70vh] min-h-[500px] max-h-[70vh] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-100 px-4 py-3">
         <h2 className="text-sm font-semibold text-gray-900">AI 行程协作</h2>
         <p className="mt-0.5 text-xs text-gray-500">当前上下文：Day {selectedDayIndex + 1}</p>

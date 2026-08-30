@@ -37,6 +37,8 @@ export interface ItineraryItem {
   route_verified?: boolean | null;
   travel_advice?: string | null;
   is_scenic?: boolean;
+  poi_address?: string | null;
+  poi_type?: string | null;
   notes?: string | null;
   cost_estimate?: number | null;
   is_locked: boolean;
