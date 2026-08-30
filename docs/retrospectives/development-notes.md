@@ -429,3 +429,19 @@ Nginx 返回给浏览器
 - 只显示一行极简状态：
   - `✅ 已采纳 · 新增地点…`
   - `已忽略 · 删除地点…`
+
+
+## 14. 用户反馈：采纳/忽略后建议卡片没有刷新
+
+### 现象
+- 点击“采纳”或“忽略”后，建议卡片没有折叠成小字，界面没有变化。
+
+### 根因
+- `suggestion_id` 为空时，handleAccept/handleIgnore 内部使用随机 key。
+- 渲染时使用 `msg.id-sidx` 作为 key。
+- 两边 key 不一致，`handled` 状态无法命中同一张卡片。
+
+### 解决
+- 统一由渲染层计算 key。
+- 将 key 传给 `handleAccept(delta, key)` / `handleIgnore(delta, key)`。
+- 采纳/忽略后卡片立即折叠为一行小字。

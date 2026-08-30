@@ -101,8 +101,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     }
   }
 
-  async function handleAccept(delta: ItineraryDelta) {
-    const key = delta.suggestion_id ?? `${delta.action}-${Math.random()}`;
+  async function handleAccept(delta: ItineraryDelta, key: string) {
     setHandled((prev) => ({ ...prev, [key]: "accepted" }));
     try {
       const data = await api.post<Trip>(`/trips/${tripId}/deltas/apply`, { delta });
@@ -113,8 +112,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     }
   }
 
-  function handleIgnore(delta: ItineraryDelta) {
-    const key = delta.suggestion_id ?? `${delta.action}-${Math.random()}`;
+  function handleIgnore(_delta: ItineraryDelta, key: string) {
     setHandled((prev) => ({ ...prev, [key]: "ignored" }));
   }
 
@@ -161,14 +159,14 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
                       <div className="mt-2 flex gap-2">
                         <button
                           type="button"
-                          onClick={() => handleAccept(delta)}
+                          onClick={() => handleAccept(delta, key)}
                           className="rounded bg-blue-600 px-2 py-1 text-xs text-white"
                         >
                           采纳
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleIgnore(delta)}
+                          onClick={() => handleIgnore(delta, key)}
                           className="rounded bg-gray-200 px-2 py-1 text-xs text-gray-700"
                         >
                           忽略
