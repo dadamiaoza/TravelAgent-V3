@@ -2,7 +2,6 @@ import type { DayView } from "@/lib/types";
 import ItineraryItemCard from "@/components/ItineraryItemCard";
 import {
   useReoptimizeItineraryDay,
-  useRegenerateItineraryDay,
   useCreateItineraryItem,
 } from "@/hooks/useItineraryMutations";
 import { useTripStore } from "@/stores/tripStore";
@@ -20,7 +19,6 @@ export default function ItineraryDayCard({
 }) {
   const updateTripLocally = useTripStore((s) => s.updateTripLocally);
   const reoptimize = useReoptimizeItineraryDay(tripId);
-  const regenerate = useRegenerateItineraryDay(tripId);
   const createItem = useCreateItineraryItem(tripId);
   const items = day.items ?? [];
 
@@ -76,18 +74,6 @@ export default function ItineraryDayCard({
           >
             {reoptimize.isPending ? "重算中…" : "重新计算路线"}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm(`确定重新生成 Day${day.day_index} 吗？`)) {
-                regenerate.mutate(day.id);
-              }
-            }}
-            disabled={regenerate.isPending}
-            className="rounded border border-orange-300 px-2 py-1 text-xs text-orange-600 hover:bg-orange-50 disabled:opacity-50"
-          >
-            {regenerate.isPending ? "生成中…" : "重新生成这天"}
-          </button>
         </div>
       </div>
 
@@ -103,7 +89,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, -1)}
-                  disabled={index === 0 || reoptimize.isPending || regenerate.isPending}
+                  disabled={index === 0 || reoptimize.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="上移"
                 >
@@ -112,7 +98,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, 1)}
-                  disabled={index === items.length - 1 || reoptimize.isPending || regenerate.isPending}
+                  disabled={index === items.length - 1 || reoptimize.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="下移"
                 >

@@ -40,7 +40,6 @@ from app.services.trip_editor import (
     delete_item,
     reorder_day,
     reoptimize_day,
-    regenerate_segment,
     sync_trip,
     apply_delta,
 )
@@ -140,28 +139,6 @@ def sync_trip_endpoint(
 ):
     """轻量最终一致性同步：批量保存排序和名称修改。"""
     return sync_trip(db, trip_id, body)
-
-
-@router.post("/{trip_id}/days/{day_id}/regenerate", response_model=TripOut)
-def regenerate_day(
-    trip_id: UUID,
-    day_id: UUID,
-    db: Session = Depends(get_db),
-):
-    """原子重新生成并替换某一天。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
-
-    day = (
-        db.query(ItineraryDay)
-        .filter(ItineraryDay.id == day_id, ItineraryDay.trip_id == trip_id)
-        .first()
-    )
-    if not day:
-        raise HTTPException(status_code=404, detail="Itinerary day not found")
-
-    return regenerate_segment(db, trip, day.day_index)
 
 
 @router.post("/{trip_id}/days/{day_id}/reoptimize", response_model=TripOut)

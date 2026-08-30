@@ -32,7 +32,7 @@ from app.infrastructure.geocoder import AmapGeocoder
 from app.infrastructure.route_replanner import AmapRouteReplanner
 from app.infrastructure.itinerary_scheduler import ItineraryTimeScheduler
 from app.infrastructure.itinerary_generator import LangGraphTripGenerator
-from app.services.itinerary_persistence import persist_itinerary, replace_day
+from app.services.itinerary_persistence import persist_itinerary
 
 _geocoder: Geocoder = AmapGeocoder()
 _replanner: RouteReplanner = AmapRouteReplanner()
@@ -76,73 +76,17 @@ def _get_item(db: Session, trip_id: UUID, item_id: UUID) -> ItineraryItem:
     return item
 
 
-def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:
-    """Create a trip and generate its itinerary as one application use-case."""
-    trip = Trip(
-        destination=body.destination,
-        city=body.city,
-        start_date=body.start_date,
-        end_date=body.end_date,
-        people_count=body.people_count,
-        budget_min=body.budget_min,
-        budget_max=body.budget_max,
-        user_prompt=body.user_prompt,
-        must_visit=body.must_visit,
-    )
-    db.add(trip)
-    db.flush()
-    return regenerate_trip(db, trip)
+def _poi_key(name: str) -> str:
+    return re.sub(r"\s+", "", name or "").lower()
 
 
-def regenerate_trip(
-    db: Session,
-    trip: Trip,
-    generator: TripGenerator | None = None,
-) -> Trip:
-    """Regenerate a full trip using the injected generator strategy."""
-    generator = generator or _generator
-    draft = generator.generate(
-        destination=trip.destination,
-        city=trip.city or "",
-        start_date=trip.start_date,
-        end_date=trip.end_date,
-        people_count=trip.people_count,
-        budget_min=trip.budget_min,
-        budget_max=trip.budget_max,
-        user_prompt=trip.user_prompt,
-        must_visit=trip.must_visit,
-        thread_id=f"trip-{trip.id}",
-    )
-    persist_itinerary(db, trip, draft, trip.start_date)
-    return trip
-
-
-def regenerate_segment(
-    db: Session,
-    trip: Trip,
-    day_index: int,
-    generator: TripGenerator | None = None,
-) -> Trip:
-    """Atomically regenerate and replace a single day."""
-    generator = generator or _generator
-    day_data = generator.generate_day(
-        destination=trip.destination,
-        city=trip.city or "",
-        start_date=trip.start_date,
-        end_date=trip.end_date,
-        people_count=trip.people_count,
-        budget_min=trip.budget_min,
-        budget_max=trip.budget_max,
-        user_prompt=trip.user_prompt,
-        must_visit=trip.must_visit,
-        thread_id=f"trip-{trip.id}-day{day_index}",
-        day_index=day_index,
-    )
-    replace_day(db, trip, day_index, day_data, trip.start_date)
-    trip.status = "generated"
-    db.commit()
-    db.refresh(trip)
-    return trip
+def _trip_has_poi(trip: Trip, name: str) -> bool:
+    key = _poi_key(name)
+    for day in trip.days:
+        for item in day.items:
+            if _poi_key(item.poi_name) == key:
+                return True
+    return False
 
 
 def _day_by_index(db: Session, trip_id: UUID, day_index: int) -> ItineraryDay:
@@ -154,6 +98,43 @@ def _day_by_index(db: Session, trip_id: UUID, day_index: int) -> ItineraryDay:
     if not day:
         raise HTTPException(status_code=404, detail="Itinerary day not found")
     return day
+
+
+def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
+    """Apply lightweight field/order changes in one atomic sync."""
+    trip = _get_trip(db, trip_id)
+
+    # 1. Name patches (geocode if changed)
+    for patch in body.items:
+        item = _get_item(db, trip_id, patch.item_id)
+        if patch.poi_name is not None and patch.poi_name != item.poi_name:
+            item.poi_name = patch.poi_name
+            city = trip.city or trip.destination or ""
+            geo = _geocoder.geocode(patch.poi_name, city)
+            if geo:
+                item.lat = geo.get("lat", item.lat)
+                item.lng = geo.get("lng", item.lng)
+                item.amap_poi_id = geo.get("amap_poi_id", item.amap_poi_id)
+                item.poi_address = geo.get("poi_address", item.poi_address)
+                item.poi_type = geo.get("poi_type", item.poi_type)
+
+    # 2. Order patches
+    for day_sync in body.days:
+        day = _get_day(db, trip_id, day_sync.day_id)
+        existing_ids = {item.id for item in day.items}
+        if set(day_sync.item_ids) != existing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="sync item_ids must contain exactly all items in this day",
+            )
+        by_id = {item.id: item for item in day.items}
+        for seq, item_id in enumerate(day_sync.item_ids, start=1):
+            by_id[item_id].seq = seq
+        _scheduler.recalculate(day)
+
+    db.commit()
+    db.refresh(trip)
+    return trip
 
 
 def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
@@ -224,54 +205,45 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
     raise HTTPException(status_code=400, detail=f"Unsupported delta action: {action}")
 
 
-def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
-    """Apply lightweight field/order changes in one atomic sync."""
-    trip = _get_trip(db, trip_id)
+def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:
+    """Create a trip and generate its itinerary as one application use-case."""
+    trip = Trip(
+        destination=body.destination,
+        city=body.city,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        people_count=body.people_count,
+        budget_min=body.budget_min,
+        budget_max=body.budget_max,
+        user_prompt=body.user_prompt,
+        must_visit=body.must_visit,
+    )
+    db.add(trip)
+    db.flush()
+    return regenerate_trip(db, trip)
 
-    # 1. Name patches (geocode if changed)
-    for patch in body.items:
-        item = _get_item(db, trip_id, patch.item_id)
-        if patch.poi_name is not None and patch.poi_name != item.poi_name:
-            item.poi_name = patch.poi_name
-            city = trip.city or trip.destination or ""
-            geo = _geocoder.geocode(patch.poi_name, city)
-            if geo:
-                item.lat = geo.get("lat", item.lat)
-                item.lng = geo.get("lng", item.lng)
-                item.amap_poi_id = geo.get("amap_poi_id", item.amap_poi_id)
-                item.poi_address = geo.get("poi_address", item.poi_address)
-                item.poi_type = geo.get("poi_type", item.poi_type)
 
-    # 2. Order patches
-    for day_sync in body.days:
-        day = _get_day(db, trip_id, day_sync.day_id)
-        existing_ids = {item.id for item in day.items}
-        if set(day_sync.item_ids) != existing_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="sync item_ids must contain exactly all items in this day",
-            )
-        by_id = {item.id: item for item in day.items}
-        for seq, item_id in enumerate(day_sync.item_ids, start=1):
-            by_id[item_id].seq = seq
-        _scheduler.recalculate(day)
-
-    db.commit()
-    db.refresh(trip)
+def regenerate_trip(
+    db: Session,
+    trip: Trip,
+    generator: TripGenerator | None = None,
+) -> Trip:
+    """Regenerate a full trip using the injected generator strategy."""
+    generator = generator or _generator
+    draft = generator.generate(
+        destination=trip.destination,
+        city=trip.city or "",
+        start_date=trip.start_date,
+        end_date=trip.end_date,
+        people_count=trip.people_count,
+        budget_min=trip.budget_min,
+        budget_max=trip.budget_max,
+        user_prompt=trip.user_prompt,
+        must_visit=trip.must_visit,
+        thread_id=f"trip-{trip.id}",
+    )
+    persist_itinerary(db, trip, draft, trip.start_date)
     return trip
-
-
-def _poi_key(name: str) -> str:
-    return re.sub(r"\s+", "", name or "").lower()
-
-
-def _trip_has_poi(trip: Trip, name: str) -> bool:
-    key = _poi_key(name)
-    for day in trip.days:
-        for item in day.items:
-            if _poi_key(item.poi_name) == key:
-                return True
-    return False
 
 
 def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:

@@ -270,9 +270,7 @@ interface TripStore {
 - `trip_editor.py` 成为应用唯一入口：
   - `create_trip_with_itinerary(db, body)`
   - `regenerate_trip(db, trip, generator=None)`
-  - `regenerate_segment(db, trip, day_index, generator=None)`
-- `POST /trips` 已改为只调用 `trip_editor.create_trip_with_itinerary()`。
-- `POST /trips/{id}/days/{day_id}/regenerate` 已提供“原子重生成单天”能力。
+  - `POST /trips` 已改为只调用 `trip_editor.create_trip_with_itinerary()`。
 - 未来 Agent / AI Delta / 快照回滚都统一走 `trip_editor`。
 
 ---
@@ -313,7 +311,6 @@ interface TripStore {
 | “把第三天改轻松一点” | 缩短 Day3 景点数量 / 调整时间 |
 | “第二天的萍乡博物馆时间太短” | `update` 萍乡博物馆的 start/end time |
 | “在 Day1 第3位插入金顶索道” | `add` 金顶索道，目标 Day1 seq=3 |
-| “第三天重新生成” | 提示用户确认后调用 `regenerate_segment` |
 | “删除杨岐山” | `delete` 杨岐山，附带影响范围提示 |
 | “把博物馆和纪念馆换一下顺序” | `move` / `reorder` |
 | “帮我解析这篇攻略并插入 Day2” | 走 guide_parser + `add` 建议卡片 |
