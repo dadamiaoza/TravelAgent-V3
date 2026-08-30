@@ -170,6 +170,22 @@ def _normalize_route_type(value: str | None) -> str:
     return "scenic" if (value or "").lower() == "scenic" else "city"
 
 
+def _is_scenic_poi(item: dict) -> bool:
+    """判断单个 POI 是否属于景区/山岳类，用于按路段而不是按天选择模式。"""
+    text = f"{item.get('poi_name', '')} {item.get('poi_type', '')}"
+    return any(
+        token in text
+        for token in ("景区", "风景名胜", "索道", "缆车", "登山步道", "游步道", "国家级景点", "山")
+    )
+
+
+def _infer_leg_route_type(from_item: dict, to_item: dict, day_route_type: str) -> str:
+    """按路段推断 route_type：任一端是景区时按 scenic 处理，否则沿用当天默认。"""
+    if _is_scenic_poi(from_item) or _is_scenic_poi(to_item):
+        return "scenic"
+    return day_route_type if day_route_type == "scenic" else "city"
+
+
 def _infer_route_type_from_items(day: dict) -> str:
     """没有显式 route_type 时，根据 POI 名称里的景区内部交通线索推断。"""
     if day.get("route_type"):
@@ -391,7 +407,8 @@ def _build_travel_time_matrix(items: list[dict], route_type: str = "city") -> di
                 items[i]["lat"], items[i]["lng"],
                 items[j]["lat"], items[j]["lng"],
             )
-            mode = _select_mode(dist, route_type=route_type)
+            leg_route_type = _infer_leg_route_type(items[i], items[j], route_type)
+            mode = _select_mode(dist, route_type=leg_route_type)
             city = items[j].get("city", "")
 
             route_info = _amap_direction_direct(
@@ -483,7 +500,7 @@ def _fill_travel_times_from_matrix(
             api_mode = route_info.get("mode") or "walking"
             api_path = route_info.get("path") or None
 
-            if route_type == "scenic":
+            if _infer_leg_route_type(items[i - 1], items[i], route_type) == "scenic":
                 prev = items[i - 1]
                 curr = items[i]
                 explicit = curr.get("transport_mode") or curr.get("suggested_transport")
@@ -539,7 +556,7 @@ def _fill_travel_times_fallback(items: list[dict], route_type: str = "city"):
             curr["lat"], curr["lng"],
         )
 
-        if route_type == "scenic":
+        if _infer_leg_route_type(prev, curr, route_type) == "scenic":
             # 景区内按业务层标注交通方式；高德不可核实，只给建议
             explicit = curr.get("transport_mode") or curr.get("suggested_transport")
             mode = _infer_scenic_transport(

@@ -147,32 +147,33 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
                 {msg.suggestions.map((delta, idx) => {
                   const key = delta.suggestion_id ?? `${msg.id}-s${idx}`;
                   const status = handled[key];
+                  if (status) {
+                    return (
+                      <p key={key} className="text-xs text-gray-400">
+                        {status === "accepted" ? "✅ 已采纳" : "已忽略"} · {deltaSummary(delta)}
+                      </p>
+                    );
+                  }
                   return (
                     <div key={key} className="rounded-md border border-orange-200 bg-orange-50 p-3">
                       <p className="text-xs font-semibold text-orange-800">{deltaSummary(delta)}</p>
                       <p className="mt-1 text-xs text-orange-700">{deltaImpact(delta)}</p>
-                      {!status ? (
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleAccept(delta)}
-                            className="rounded bg-blue-600 px-2 py-1 text-xs text-white"
-                          >
-                            采纳
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleIgnore(delta)}
-                            className="rounded bg-gray-200 px-2 py-1 text-xs text-gray-700"
-                          >
-                            忽略
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="mt-1 text-xs text-gray-500">
-                          {status === "accepted" ? "已采纳" : "已忽略"}
-                        </p>
-                      )}
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleAccept(delta)}
+                          className="rounded bg-blue-600 px-2 py-1 text-xs text-white"
+                        >
+                          采纳
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleIgnore(delta)}
+                          className="rounded bg-gray-200 px-2 py-1 text-xs text-gray-700"
+                        >
+                          忽略
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

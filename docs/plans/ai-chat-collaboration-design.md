@@ -228,6 +228,18 @@ interface TripStore {
 - `trip_editor.py` 不再直接 import Agent/Tool 内部函数，改为依赖 Port。
 - 后续命令模式/事件溯源可在同一 Service 层切换实现，不改业务逻辑。
 
+### 4.8.1 路段级城市/景区模式复用
+
+- 之前 `route_type` 只按天区分 city/scenic，遇到“一天去多个景区”会不合理。
+- 改为：
+  - 天级 `route_type` 作为默认值
+  - 每个路段按起点/终点 POI 判断是否属于景区
+  - 判断依据：`poi_name` / `poi_type`（如“风景名胜”“景区”“索道”“山”）
+- 效果：
+  - 城市段仍可走公交
+  - 景区段自动走步行/驾车，并保留索道/接驳车业务标注
+- `itinerary_gen` prompt 已同步说明该规则。
+
 ### 4.8 前端最终一致性编辑快照
 
 - `tripStore` 新增：
