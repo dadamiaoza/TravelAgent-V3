@@ -126,7 +126,10 @@ def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
         matrix = None
         if amap_available:
             try:
-                matrix = _build_travel_time_matrix(items, route_type=route_type)
+                if reorder:
+                    matrix = _build_travel_time_matrix(items, route_type=route_type)
+                else:
+                    matrix = _build_sequence_travel_matrix(items, route_type=route_type)
             except Exception:
                 logger.warning("构建旅行时间矩阵异常，降级到坐标估算", exc_info=True)
 
@@ -389,6 +392,41 @@ def _extract_route_path_direct(data: dict, mode: str) -> list[list[float]]:
 
 
 # ── 旅行时间矩阵 ──
+
+def _build_sequence_travel_matrix(
+    items: list[dict], route_type: str = "city"
+) -> dict | None:
+    """只构建相邻节点的旅行时间矩阵，用于保持顺序的 reoptimize。
+
+    相比全量 N×N 矩阵，只在有需要时调用高德，避免点击“重新计算路线”卡死。
+    """
+    n = len(items)
+    if n <= 1:
+        return {}
+
+    matrix = {}
+    for i in range(1, n):
+        dist = _haversine_distance(
+            items[i - 1]["lat"], items[i - 1]["lng"],
+            items[i]["lat"], items[i]["lng"],
+        )
+        leg_route_type = _infer_leg_route_type(items[i - 1], items[i], route_type)
+        mode = _select_mode(dist, route_type=leg_route_type)
+        city = items[i].get("city", "")
+        route_info = _amap_direction_direct(
+            items[i - 1]["lng"], items[i - 1]["lat"],
+            items[i]["lng"], items[i]["lat"],
+            mode=mode, city=city,
+        )
+        if route_info is None:
+            logger.warning(
+                "Direction API 失败(相邻): %s → %s，该日降级到估算",
+                items[i - 1]["poi_name"], items[i]["poi_name"],
+            )
+            return None
+        matrix[(i - 1, i)] = route_info
+    return matrix
+
 
 def _build_travel_time_matrix(items: list[dict], route_type: str = "city") -> dict | None:
     """构建 N×(N-1) 有向旅行时间矩阵。
