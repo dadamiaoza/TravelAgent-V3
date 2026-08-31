@@ -91,6 +91,14 @@ def _trip_has_poi(trip: Trip, name: str) -> bool:
     return False
 
 
+def _day_has_poi(day: ItineraryDay, name: str) -> bool:
+    key = _poi_key(name)
+    for item in day.items:
+        if _poi_key(item.poi_name) == key:
+            return True
+    return False
+
+
 def _day_by_index(db: Session, trip_id: UUID, day_index: int) -> ItineraryDay:
     day = (
         db.query(ItineraryDay)
@@ -148,10 +156,9 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
     if action == "add":
         if not target or not target.day_index or not payload or not payload.poi_name:
             raise HTTPException(status_code=400, detail="add delta requires target.day_index and payload.poi_name")
-        trip = _get_trip(db, trip_id)
-        if _trip_has_poi(trip, payload.poi_name):
-            return trip
         day = _day_by_index(db, trip_id, target.day_index)
+        if _day_has_poi(day, payload.poi_name):
+            return _get_trip(db, trip_id)
         create_item(db, trip_id, ItineraryItemCreate(
             day_id=day.id,
             poi_name=payload.poi_name,
@@ -171,7 +178,7 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
                 pos = min(max(target.seq - 1, 0), len(ordered))
                 ordered.insert(pos, last_id)
                 reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=ordered))
-        return _get_trip(db, trip_id)
+        return reoptimize_day(db, trip_id, day.id)
 
     if action == "update":
         if not target or not target.item_id:
@@ -199,7 +206,7 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
             raise HTTPException(status_code=400, detail="reorder delta requires target.day_index and payload.item_ids")
         day = _day_by_index(db, trip_id, target.day_index)
         reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=payload.item_ids))
-        return _get_trip(db, trip_id)
+        return reoptimize_day(db, trip_id, day.id)
 
     if action == "move":
         raise HTTPException(status_code=400, detail="move delta is not supported in C1 yet")
@@ -285,7 +292,7 @@ def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
     trip = _get_trip(db, trip_id)
     day = _get_day(db, trip_id, body.day_id)
 
-    if _trip_has_poi(trip, body.poi_name):
+    if _day_has_poi(day, body.poi_name):
         return trip
 
     next_seq = max((item.seq for item in day.items), default=0) + 1
