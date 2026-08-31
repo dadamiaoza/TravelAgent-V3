@@ -30,6 +30,7 @@ docs/
 | 文档 | 内容 |
 |---|---|
 | [next-phase-design.md](./plans/next-phase-design.md) | 下一阶段产品与技术架构总规划 |
+| [mvp-v1.md](./plans/mvp-v1.md) | MVP v1 正式范围与验收标准 |
 | [ai-chat-collaboration-design.md](./plans/ai-chat-collaboration-design.md) | 常驻 AI 对话、地图联动、长短期记忆方案 |
 | [test-architecture.md](./plans/test-architecture.md) | 测试分层与短平快治理方案 |
 | [decisions.md](./plans/decisions.md) | 关键架构/技术决策汇总 |

@@ -420,10 +420,10 @@ def _build_sequence_travel_matrix(
         )
         if route_info is None:
             logger.warning(
-                "Direction API 失败(相邻): %s → %s，该日降级到估算",
+                "Direction API 失败(相邻): %s → %s，跳过该段，保留其他真实路段",
                 items[i - 1]["poi_name"], items[i]["poi_name"],
             )
-            return None
+            continue
         matrix[(i - 1, i)] = route_info
     return matrix
 
@@ -524,7 +524,7 @@ def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
 def _fill_travel_times_from_matrix(
     items: list[dict], matrix: dict, index_map: list[int], route_type: str = "city"
 ):
-    """用真实矩阵数据回填 travel_minutes、transport_mode 和 route_polyline。
+    """用真实矩阵数据回填交通时间；缺失路段回退为估算。
 
     城市模式：直接采用高德返回的 mode 和真实道路。
     景区模式：只保留可核实的步行/驾车道路；索道/接驳车等作为业务层标注，
@@ -539,9 +539,37 @@ def _fill_travel_times_from_matrix(
     for i in range(1, len(items)):
         orig_from = index_map[i - 1]  # 前一个 POI 的原始索引
         orig_to = index_map[i]        # 当前 POI 的原始索引
-        route_info = matrix.get((orig_from, orig_to), 0)
+        route_info = matrix.get((orig_from, orig_to))
 
-        # 兼容旧测试：直接传 int 时只填时间
+        if route_info is None:
+            # 该段没有真实路线，按当前模式估算并保留示意
+            prev = items[i - 1]
+            curr = items[i]
+            dist_m = _haversine_distance(prev["lat"], prev["lng"], curr["lat"], curr["lng"])
+            scenic_leg = _infer_leg_route_type(prev, curr, route_type) == "scenic"
+            if scenic_leg:
+                explicit = curr.get("transport_mode") or curr.get("suggested_transport")
+                api_mode = _select_mode(dist_m, route_type="scenic")
+                mode = _infer_scenic_transport(
+                    prev.get("poi_name", ""), curr.get("poi_name", ""), api_mode, explicit
+                )
+                items[i]["travel_minutes_from_prev"] = _estimate_travel_minutes_from_distance(
+                    dist_m, route_type="scenic"
+                )
+                items[i]["transport_mode"] = mode
+                items[i]["route_polyline"] = None
+                items[i]["route_verified"] = False
+                items[i]["travel_advice"] = _scenic_travel_advice(mode, verified=False)
+            else:
+                items[i]["travel_minutes_from_prev"] = _estimate_travel_minutes_from_distance(
+                    dist_m, route_type="city"
+                )
+                items[i]["transport_mode"] = _select_mode(dist_m, route_type="city")
+                items[i]["route_polyline"] = None
+                items[i]["route_verified"] = False
+                items[i]["travel_advice"] = None
+            continue
+
         if isinstance(route_info, dict):
             items[i]["travel_minutes_from_prev"] = route_info.get("minutes", 0)
             api_mode = route_info.get("mode") or "walking"
