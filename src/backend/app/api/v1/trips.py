@@ -9,6 +9,7 @@ from uuid import UUID
 from langchain_openai import ChatOpenAI
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -290,18 +291,8 @@ def _build_trip_context(trip) -> Dict:
     }
 
 
-@router.post("/{trip_id}/chat", response_model=TripChatOut)
-def trip_chat(
-    trip_id: UUID,
-    body: TripChatRequest,
-    db: Session = Depends(get_db),
-):
-    """带行程上下文的 AI 对话，返回文本和结构化建议。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
-
-    thread_id = body.thread_id or f"trip-{trip_id}"
+def _run_trip_chat(trip, body: TripChatRequest, thread_id: str) -> TripChatOut:
+    """Run the trip chat LLM call and return structured output."""
     context = _build_trip_context(trip)
     if body.context:
         context["current_day_index"] = body.context.day_index
@@ -349,6 +340,64 @@ def trip_chat(
             thread_id=thread_id,
             suggestions=[],
         )
+
+
+@router.post("/{trip_id}/chat", response_model=TripChatOut)
+def trip_chat(
+    trip_id: UUID,
+    body: TripChatRequest,
+    db: Session = Depends(get_db),
+):
+    """带行程上下文的 AI 对话，返回文本和结构化建议（同步版本）。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    thread_id = body.thread_id or f"trip-{trip_id}"
+    return _run_trip_chat(trip, body, thread_id)
+
+
+@router.post("/{trip_id}/chat/stream")
+def trip_chat_stream(
+    trip_id: UUID,
+    body: TripChatRequest,
+    db: Session = Depends(get_db),
+):
+    """SSE 流式返回 AI 对话：先发思考状态，再逐段输出回复，最后附建议。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    thread_id = body.thread_id or f"trip-{trip_id}"
+
+    async def event_generator():
+        import asyncio
+
+        yield 'event: status\ndata: {"status":"thinking"}\n\n'
+        # 模拟/真实计算放在这里，避免阻塞第一个事件
+        result = await asyncio.to_thread(_run_trip_chat, trip, body, thread_id)
+
+        reply = result.reply or ""
+        # 按2-4个字符切块，形成流式输出效果
+        step = 3
+        for i in range(0, len(reply), step):
+            chunk = reply[i:i + step]
+            import json as _json
+            yield f'event: delta\ndata: {_json.dumps({"text": chunk}, ensure_ascii=False)}\n\n'
+            await asyncio.sleep(0.03)
+
+        final_payload = {
+            "reply": reply,
+            "thread_id": result.thread_id,
+            "suggestions": [s.model_dump(mode="json") for s in result.suggestions],
+        }
+        yield f'event: done\ndata: {json.dumps(final_payload, ensure_ascii=False)}\n\n'
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/{trip_id}/deltas/apply", response_model=TripOut)

@@ -115,7 +115,8 @@ TravelAgent-V3/
 | DELETE | `/api/v1/trips/{trip_id}/days/{day_id}` | 删除一天并重排编号 |
 | POST | `/api/v1/trips/{trip_id}/days/{day_id}/reoptimize` | 重算当天交通时间/路线 |
 | POST | `/api/v1/trips/{trip_id}/sync` | 轻量最终一致性同步（排序+名称） |
-| POST | `/api/v1/trips/{trip_id}/chat` | 带行程上下文的 AI 对话 |
+| POST | `/api/v1/trips/{trip_id}/chat` | 带行程上下文的 AI 对话（同步） |
+| POST | `/api/v1/trips/{trip_id}/chat/stream` | SSE 流式 AI 对话 |
 | POST | `/api/v1/trips/{trip_id}/deltas/apply` | 采纳并执行一条 AI 建议 |
 | POST | `/api/v1/sources/parse` | 攻略解析 |
 | POST | `/api/v1/sources/merge` | 多源合并去重 |

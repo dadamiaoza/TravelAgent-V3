@@ -12,7 +12,7 @@
 | A：点位编号 + 列表/地图双向聚焦 | ✅ 已合并 | 已完成并合并 |
 | B：Zustand 统一数据源 + 编辑/排序实时联动 | ✅ 核心已完成 | 后端增删/geocode/reoptimize/regenerate/sync + 服务层/Ports/编排器；前端 dirtyTrip 编辑快照 + 防抖最终一致性已落地 |
 | C1：常驻对话面板 + 建议卡片 | ⬜ 未开始 | 依赖 B 的数据流 |
-| C2：SSE 流式回复 | ⬜ 未开始 | |
+| C2：SSE 流式回复 | 🚧 已实现基础流式 | 分支 `feature/c2-streaming`，后端 SSE + 前端逐段输出，待验证 |
 | D：长短期记忆 + 上下文摘要 | ⬜ 未开始 | |
 
 ---
@@ -434,6 +434,17 @@ AI 建议不能只给一句话，必须给“改动影响”：
 - 使用 FastAPI `StreamingResponse` + SSE
 - 前端 `fetch` + `ReadableStream` 逐步展示
 - 建议卡片可以在流结束前先出现
+
+#### C2 当前实现
+
+- `POST /trips/{id}/chat/stream`
+- SSE 事件：
+  - `status`: `thinking`
+  - `delta`: `{ "text": "..." }`
+  - `done`: `{ "reply", "thread_id", "suggestions" }`
+- 前端逐段把 `delta.text` 追加到 AI 消息，形成流式打字效果
+- 当前 `delta` 是对完整 reply 的切块发送，不是底层 token 级流式
+- 后续可替换为 LLM `.stream()` 真 token 流式
 
 ### 5.3.1 重复地点处理
 
