@@ -41,6 +41,12 @@ function buildBrief(item: ItineraryItem): string {
   return parts.length > 0 ? parts.join(" · ") : "待补充详细信息";
 }
 
+function isScenicItem(item: ItineraryItem): boolean {
+  if (item.is_scenic != null) return item.is_scenic;
+  const text = `${item.poi_name ?? ""} ${item.poi_type ?? ""}`;
+  return /景区|风景名胜|索道|缆车|登山步道|游步道|国家级景点|山/.test(text);
+}
+
 export default function ItineraryItemCard({
   item,
   tripId,
@@ -103,15 +109,19 @@ export default function ItineraryItemCard({
     setIsEditing(false);
   }
 
+  const isScenic = isScenicItem(item);
+
   const inputClass =
     "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
     <div
       className={`rounded-md border p-3 transition ${
-        selected
-          ? "border-blue-500 bg-blue-50 shadow-sm"
-          : "border-gray-200 bg-gray-50"
+        isScenic
+          ? "border-green-300 bg-green-50"
+          : selected
+            ? "border-blue-500 bg-blue-50 shadow-sm"
+            : "border-gray-200 bg-gray-50"
       } ${isEditing ? "" : "cursor-pointer hover:border-blue-300"}`}
       onClick={() => {
         if (!isEditing) onSelect?.();
@@ -122,12 +132,19 @@ export default function ItineraryItemCard({
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-2">
               {sequence != null && (
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
+                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ${isScenic ? "bg-green-600" : "bg-blue-600"}`}>
                   {sequence}
                 </span>
               )}
               <div>
-                <p className="text-sm font-medium text-gray-900">{item.poi_name}</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {item.poi_name}
+                  {isScenic && (
+                    <span className="ml-1 rounded bg-green-100 px-1 py-0.5 text-xs text-green-700">
+                      景区
+                    </span>
+                  )}
+                </p>
                 <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
               {item.travel_advice && (
                 <p className="mt-1 text-xs text-amber-700">提示：{item.travel_advice}</p>

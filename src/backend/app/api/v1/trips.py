@@ -1,5 +1,9 @@
 """Trip CRUD + itinerary generation API endpoints."""
+import json
+import re
+import uuid
 from datetime import timedelta
+from typing import Dict
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
@@ -22,8 +26,13 @@ from app.schemas.trip import (
     ItineraryDayOut,
     ItineraryItemUpdate,
     ItineraryItemCreate,
+    ItineraryDayCreate,
     ItineraryDayReorder,
     TripSyncRequest,
+    TripChatRequest,
+    TripChatOut,
+    DeltaApplyRequest,
+    ItineraryDelta,
     EntityImportRequest,
 )
 from app.services.trip_editor import (
@@ -33,8 +42,10 @@ from app.services.trip_editor import (
     delete_item,
     reorder_day,
     reoptimize_day,
-    regenerate_segment,
+    create_day,
+    delete_day,
     sync_trip,
+    apply_delta,
 )
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -62,6 +73,12 @@ def suggest_trip(body: TripSuggestRequest):
     )
     response = model.invoke(prompt)
     content = response.content.strip()
+    # 去掉模型思考块，避免其中的花括号干扰 JSON 提取
+    content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
+    # 如果模型用 ```json 包裹，优先取代码块内容
+    fence = re.search(r"```json\s*(.*?)```", content, flags=re.DOTALL)
+    if fence:
+        content = fence.group(1)
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end <= start:
@@ -124,6 +141,26 @@ def delete_itinerary_item(
     return delete_item(db, trip_id, item_id)
 
 
+@router.post("/{trip_id}/days", response_model=TripOut, status_code=201)
+def create_day_endpoint(
+    trip_id: UUID,
+    body: ItineraryDayCreate,
+    db: Session = Depends(get_db),
+):
+    """新增一天。"""
+    return create_day(db, trip_id, body)
+
+
+@router.delete("/{trip_id}/days/{day_id}", response_model=TripOut)
+def delete_day_endpoint(
+    trip_id: UUID,
+    day_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """删除一天，并重排剩余 Day 编号和日期。"""
+    return delete_day(db, trip_id, day_id)
+
+
 @router.post("/{trip_id}/sync", response_model=TripOut)
 def sync_trip_endpoint(
     trip_id: UUID,
@@ -132,28 +169,6 @@ def sync_trip_endpoint(
 ):
     """轻量最终一致性同步：批量保存排序和名称修改。"""
     return sync_trip(db, trip_id, body)
-
-
-@router.post("/{trip_id}/days/{day_id}/regenerate", response_model=TripOut)
-def regenerate_day(
-    trip_id: UUID,
-    day_id: UUID,
-    db: Session = Depends(get_db),
-):
-    """原子重新生成并替换某一天。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
-
-    day = (
-        db.query(ItineraryDay)
-        .filter(ItineraryDay.id == day_id, ItineraryDay.trip_id == trip_id)
-        .first()
-    )
-    if not day:
-        raise HTTPException(status_code=404, detail="Itinerary day not found")
-
-    return regenerate_segment(db, trip, day.day_index)
 
 
 @router.post("/{trip_id}/days/{day_id}/reoptimize", response_model=TripOut)
@@ -249,6 +264,103 @@ def update_trip(
     db.commit()
     db.refresh(trip)
     return trip
+def _build_trip_context(trip) -> Dict:
+    """Compact itinerary context for the chat prompt (no heavy route polylines)."""
+    return {
+        "destination": trip.destination,
+        "city": trip.city or "",
+        "days": [
+            {
+                "day_index": day.day_index,
+                "route_type": day.route_type or "city",
+                "items": [
+                    {
+                        "id": str(item.id),
+                        "seq": item.seq,
+                        "poi_name": item.poi_name,
+                        "start_time": str(item.start_time) if item.start_time else None,
+                        "end_time": str(item.end_time) if item.end_time else None,
+                        "travel_minutes": item.travel_minutes,
+                    }
+                    for item in sorted(day.items, key=lambda it: it.seq)
+                ],
+            }
+            for day in sorted(trip.days, key=lambda d: d.day_index)
+        ],
+    }
+
+
+@router.post("/{trip_id}/chat", response_model=TripChatOut)
+def trip_chat(
+    trip_id: UUID,
+    body: TripChatRequest,
+    db: Session = Depends(get_db),
+):
+    """带行程上下文的 AI 对话，返回文本和结构化建议。"""
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    thread_id = body.thread_id or f"trip-{trip_id}"
+    context = _build_trip_context(trip)
+    if body.context:
+        context["current_day_index"] = body.context.day_index
+        if body.context.item_id:
+            context["current_item_id"] = str(body.context.item_id)
+
+    prompt = (
+        "你是旅行行程协作助手。根据当前行程 JSON 和用户消息，给出中文回复和可执行的结构化建议。\n"
+        "只输出 JSON，格式：\n"
+        '{"reply": "...", "suggestions": [{"action": "add|update|delete|move|reorder", '
+        '"target": {"day_index": 1, "item_id": "uuid", "seq": 2}, '
+        '"payload": {"poi_name": "...", "start_time": "09:00:00", "end_time": "10:00:00"}}]}\n'
+        "如果没有建议，suggestions 返回空数组。不要修改行程，只给建议。\n\n"
+        f"当前行程：\n{json.dumps(context, ensure_ascii=False)}\n\n"
+        f"用户消息：{body.message}\n"
+    )
+
+    try:
+        model = ChatOpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+        )
+        response = model.invoke(prompt)
+        content = response.content.strip()
+        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
+        fence = re.search(r"```json\s*(.*?)```", content, flags=re.DOTALL)
+        if fence:
+            content = fence.group(1)
+        start = content.find("{")
+        end = content.rfind("}")
+        data = json.loads(content[start:end + 1]) if start != -1 and end > start else {}
+        reply = data.get("reply") or "抱歉，我暂时没有理解你的需求。"
+        raw_suggestions = data.get("suggestions") or []
+        suggestions = []
+        for raw in raw_suggestions:
+            try:
+                suggestions.append(ItineraryDelta(**raw))
+            except Exception:
+                continue
+        return TripChatOut(reply=reply, thread_id=thread_id, suggestions=suggestions)
+    except Exception:
+        return TripChatOut(
+            reply="AI 对话服务暂时不可用，请稍后再试。",
+            thread_id=thread_id,
+            suggestions=[],
+        )
+
+
+@router.post("/{trip_id}/deltas/apply", response_model=TripOut)
+def apply_trip_delta(
+    trip_id: UUID,
+    body: DeltaApplyRequest,
+    db: Session = Depends(get_db),
+):
+    """应用一条 AI 建议 Delta，返回最新完整行程。"""
+    return apply_delta(db, trip_id, body.delta)
+
+
 @router.get("", response_model=list[TripBrief])
 def list_trips(db: Session = Depends(get_db)):
     """List all trips (brief)."""

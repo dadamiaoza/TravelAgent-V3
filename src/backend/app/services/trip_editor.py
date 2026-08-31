@@ -7,6 +7,8 @@ service layer instead of adding more ad-hoc API code.
 Dependencies follow ports & adapters: the service depends on the protocols
 in app.domain.interfaces, not on Agent/Tool internals directly.
 """
+import re
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -15,9 +17,11 @@ from sqlalchemy.orm import Session
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
     TripCreate,
+    ItineraryDayCreate,
     ItineraryItemCreate,
     ItineraryItemUpdate,
     ItineraryDayReorder,
+    ItineraryDelta,
     TripSyncRequest,
 )
 from app.domain.interfaces import (
@@ -30,7 +34,7 @@ from app.infrastructure.geocoder import AmapGeocoder
 from app.infrastructure.route_replanner import AmapRouteReplanner
 from app.infrastructure.itinerary_scheduler import ItineraryTimeScheduler
 from app.infrastructure.itinerary_generator import LangGraphTripGenerator
-from app.services.itinerary_persistence import persist_itinerary, replace_day
+from app.services.itinerary_persistence import persist_itinerary
 
 _geocoder: Geocoder = AmapGeocoder()
 _replanner: RouteReplanner = AmapRouteReplanner()
@@ -74,6 +78,175 @@ def _get_item(db: Session, trip_id: UUID, item_id: UUID) -> ItineraryItem:
     return item
 
 
+def _poi_key(name: str) -> str:
+    return re.sub(r"\s+", "", name or "").lower()
+
+
+def _trip_has_poi(trip: Trip, name: str) -> bool:
+    key = _poi_key(name)
+    for day in trip.days:
+        for item in day.items:
+            if _poi_key(item.poi_name) == key:
+                return True
+    return False
+
+
+def _day_has_poi(day: ItineraryDay, name: str) -> bool:
+    key = _poi_key(name)
+    for item in day.items:
+        if _poi_key(item.poi_name) == key:
+            return True
+    return False
+
+
+def _day_by_index(db: Session, trip_id: UUID, day_index: int) -> ItineraryDay:
+    day = (
+        db.query(ItineraryDay)
+        .filter(ItineraryDay.trip_id == trip_id, ItineraryDay.day_index == day_index)
+        .first()
+    )
+    if not day:
+        raise HTTPException(status_code=404, detail="Itinerary day not found")
+    return day
+
+
+def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
+    """Apply lightweight field/order changes in one atomic sync."""
+    trip = _get_trip(db, trip_id)
+
+    # 1. Name patches (geocode if changed)
+    for patch in body.items:
+        item = _get_item(db, trip_id, patch.item_id)
+        if patch.poi_name is not None and patch.poi_name != item.poi_name:
+            item.poi_name = patch.poi_name
+            city = trip.city or trip.destination or ""
+            geo = _geocoder.geocode(patch.poi_name, city)
+            if geo:
+                item.lat = geo.get("lat", item.lat)
+                item.lng = geo.get("lng", item.lng)
+                item.amap_poi_id = geo.get("amap_poi_id", item.amap_poi_id)
+                item.poi_address = geo.get("poi_address", item.poi_address)
+                item.poi_type = geo.get("poi_type", item.poi_type)
+
+    # 2. Order patches
+    for day_sync in body.days:
+        day = _get_day(db, trip_id, day_sync.day_id)
+        existing_ids = {item.id for item in day.items}
+        if set(day_sync.item_ids) != existing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="sync item_ids must contain exactly all items in this day",
+            )
+        by_id = {item.id: item for item in day.items}
+        for seq, item_id in enumerate(day_sync.item_ids, start=1):
+            by_id[item_id].seq = seq
+        _scheduler.recalculate(day)
+
+    db.commit()
+    db.refresh(trip)
+    return trip
+
+
+def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
+    """Apply one AI suggestion delta through the existing editor service."""
+    action = delta.action
+    target = delta.target
+    payload = delta.payload
+
+    if action == "add":
+        if not target or not target.day_index or not payload or not payload.poi_name:
+            raise HTTPException(status_code=400, detail="add delta requires target.day_index and payload.poi_name")
+        day = _day_by_index(db, trip_id, target.day_index)
+        if _day_has_poi(day, payload.poi_name):
+            return _get_trip(db, trip_id)
+        create_item(db, trip_id, ItineraryItemCreate(
+            day_id=day.id,
+            poi_name=payload.poi_name,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+            notes=payload.notes,
+            lat=payload.lat,
+            lng=payload.lng,
+        ))
+        if target.seq is not None and target.seq >= 1:
+            day = _day_by_index(db, trip_id, target.day_index)
+            ordered = [i.id for i in sorted(day.items, key=lambda it: it.seq)]
+            # simple insertion: move appended item to target position
+            if len(ordered) > 1:
+                last_id = ordered[-1]
+                ordered.remove(last_id)
+                pos = min(max(target.seq - 1, 0), len(ordered))
+                ordered.insert(pos, last_id)
+                reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=ordered))
+        return reoptimize_day(db, trip_id, day.id)
+
+    if action == "update":
+        if not target or not target.item_id:
+            raise HTTPException(status_code=400, detail="update delta requires target.item_id")
+        update_kwargs = {}
+        if payload:
+            if payload.poi_name is not None:
+                update_kwargs["poi_name"] = payload.poi_name
+            if payload.start_time is not None:
+                update_kwargs["start_time"] = payload.start_time
+            if payload.end_time is not None:
+                update_kwargs["end_time"] = payload.end_time
+            if payload.notes is not None:
+                update_kwargs["notes"] = payload.notes
+        update_item(db, trip_id, target.item_id, ItineraryItemUpdate(**update_kwargs))
+        return _get_trip(db, trip_id)
+
+    if action == "delete":
+        if not target or not target.item_id:
+            raise HTTPException(status_code=400, detail="delete delta requires target.item_id")
+        return delete_item(db, trip_id, target.item_id)
+
+    if action == "reorder":
+        if not target or not target.day_index or not payload or not payload.item_ids:
+            raise HTTPException(status_code=400, detail="reorder delta requires target.day_index and payload.item_ids")
+        day = _day_by_index(db, trip_id, target.day_index)
+        reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=payload.item_ids))
+        return reoptimize_day(db, trip_id, day.id)
+
+    if action == "move":
+        raise HTTPException(status_code=400, detail="move delta is not supported in C1 yet")
+
+    raise HTTPException(status_code=400, detail=f"Unsupported delta action: {action}")
+
+
+def create_day(db: Session, trip_id: UUID, body: ItineraryDayCreate) -> Trip:
+    """Append a new day to the trip and renumber dates."""
+    trip = _get_trip(db, trip_id)
+    next_index = max((day.day_index for day in trip.days), default=0) + 1
+    day = ItineraryDay(
+        trip_id=trip.id,
+        day_index=next_index,
+        date=trip.start_date + timedelta(days=next_index - 1),
+        route_type="city",
+    )
+    db.add(day)
+    db.commit()
+    db.refresh(trip)
+    return trip
+
+
+def delete_day(db: Session, trip_id: UUID, day_id: UUID) -> Trip:
+    """Delete a day and renumber remaining days to keep dates continuous."""
+    trip = _get_trip(db, trip_id)
+    day = _get_day(db, trip_id, day_id)
+    db.delete(day)
+    db.flush()
+
+    remaining = sorted(trip.days, key=lambda d: d.day_index)
+    for idx, d in enumerate(remaining, start=1):
+        d.day_index = idx
+        d.date = trip.start_date + timedelta(days=idx - 1)
+
+    db.commit()
+    db.refresh(trip)
+    return trip
+
+
 def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:
     """Create a trip and generate its itinerary as one application use-case."""
     trip = Trip(
@@ -115,74 +288,12 @@ def regenerate_trip(
     return trip
 
 
-def regenerate_segment(
-    db: Session,
-    trip: Trip,
-    day_index: int,
-    generator: TripGenerator | None = None,
-) -> Trip:
-    """Atomically regenerate and replace a single day."""
-    generator = generator or _generator
-    day_data = generator.generate_day(
-        destination=trip.destination,
-        city=trip.city or "",
-        start_date=trip.start_date,
-        end_date=trip.end_date,
-        people_count=trip.people_count,
-        budget_min=trip.budget_min,
-        budget_max=trip.budget_max,
-        user_prompt=trip.user_prompt,
-        must_visit=trip.must_visit,
-        thread_id=f"trip-{trip.id}-day{day_index}",
-        day_index=day_index,
-    )
-    replace_day(db, trip, day_index, day_data, trip.start_date)
-    trip.status = "generated"
-    db.commit()
-    db.refresh(trip)
-    return trip
-
-
-def sync_trip(db: Session, trip_id: UUID, body: TripSyncRequest) -> Trip:
-    """Apply lightweight field/order changes in one atomic sync."""
-    trip = _get_trip(db, trip_id)
-
-    # 1. Name patches (geocode if changed)
-    for patch in body.items:
-        item = _get_item(db, trip_id, patch.item_id)
-        if patch.poi_name is not None and patch.poi_name != item.poi_name:
-            item.poi_name = patch.poi_name
-            city = trip.city or trip.destination or ""
-            geo = _geocoder.geocode(patch.poi_name, city)
-            if geo:
-                item.lat = geo.get("lat", item.lat)
-                item.lng = geo.get("lng", item.lng)
-                item.amap_poi_id = geo.get("amap_poi_id", item.amap_poi_id)
-                item.poi_address = geo.get("poi_address", item.poi_address)
-                item.poi_type = geo.get("poi_type", item.poi_type)
-
-    # 2. Order patches
-    for day_sync in body.days:
-        day = _get_day(db, trip_id, day_sync.day_id)
-        existing_ids = {item.id for item in day.items}
-        if set(day_sync.item_ids) != existing_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="sync item_ids must contain exactly all items in this day",
-            )
-        by_id = {item.id: item for item in day.items}
-        for seq, item_id in enumerate(day_sync.item_ids, start=1):
-            by_id[item_id].seq = seq
-        _scheduler.recalculate(day)
-
-    db.commit()
-    db.refresh(trip)
-    return trip
-
-
 def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
     trip = _get_trip(db, trip_id)
     day = _get_day(db, trip_id, body.day_id)
+
+    if _day_has_poi(day, body.poi_name):
+        return trip
 
     next_seq = max((item.seq for item in day.items), default=0) + 1
     item = ItineraryItem(

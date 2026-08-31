@@ -45,7 +45,3 @@ class TripGenerator(Protocol):
     def generate(self, **kwargs) -> dict:
         """Generate a full itinerary draft."""
         ...
-
-    def generate_day(self, **kwargs) -> dict:
-        """Generate a single day draft (day_index passed via kwargs)."""
-        ...

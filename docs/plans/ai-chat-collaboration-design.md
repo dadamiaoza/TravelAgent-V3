@@ -111,6 +111,22 @@
 
 ---
 
+## 2.3 地图 Provider 抽象（后续替换高德）
+
+- 当前地图和路线渲染直接依赖高德 JS API，后续希望替换为其他地图工具。
+- 建议抽象：
+  - `MapProvider`（加载地图容器 / Marker / Polyline / InfoWindow）
+  - `RouteRenderer`（真实路线 / 景区示意图 / 普通道路样式）
+  - `MapConfig`（key / security / 坐标系转换）
+- 当前实现：
+  - `src/frontend/src/lib/amap.ts` 是高德适配层
+  - `TripMap.tsx` 调用该适配层
+- 后续替换时只需要新增另一个 Provider 适配层，不重写业务组件。
+- 路线目前有时显示直线的原因：
+  - 后端 `route_polyline` 为 null（景区未核实 / 高德未返回真实坐标）
+  - 前端回退为两点直线
+- 这不能完全靠换地图解决，需要后端补充真实路线或明确标注示意线。
+
 ## 3. Phase A：点位编号 + 地图/列表双向聚焦
 
 > 纯前端，改动小，先提升可感知交互。
@@ -228,6 +244,39 @@ interface TripStore {
 - `trip_editor.py` 不再直接 import Agent/Tool 内部函数，改为依赖 Port。
 - 后续命令模式/事件溯源可在同一 Service 层切换实现，不改业务逻辑。
 
+### 4.8.2 景区模式的正确粒度：POI 级，而不是天级
+
+- 天级 `route_type` 只作为默认值，不应决定整天的视觉和路线策略。
+- 每个 POI 增加 `is_scenic`：
+  - 依据 `poi_name` / `poi_type` 判断
+  - 景区点用特殊颜色显示（绿色标记）
+- 路段规则：
+  - 两端都是景区点 → 景区内部路段（步行/驾车/索道/接驳）
+  - 一端景区、一端非景区 → 进出景区转移路段（按城市模式）
+  - 两端都不是景区 → 城市模式
+- 非景区点（酒店/车站/城市景点）作为“景区前后锚点”：
+  - 负责和景区之间的转移
+  - 不进入景区内部路线
+- 地图：
+  - 景区 POI 绿色 Marker
+  - 景区内部路段绿色
+  - 进出景区转移路段使用普通城市路线颜色
+- 重新规划路线时：
+  - 只对景区内部路段使用步行/驾车/索道
+  - 对转移路段允许公交/驾车
+
+### 4.8.1 路段级城市/景区模式复用
+
+- 之前 `route_type` 只按天区分 city/scenic，遇到“一天去多个景区”会不合理。
+- 改为：
+  - 天级 `route_type` 作为默认值
+  - 每个路段按起点/终点 POI 判断是否属于景区
+  - 判断依据：`poi_name` / `poi_type`（如“风景名胜”“景区”“索道”“山”）
+- 效果：
+  - 城市段仍可走公交
+  - 景区段自动走步行/驾车，并保留索道/接驳车业务标注
+- `itinerary_gen` prompt 已同步说明该规则。
+
 ### 4.8 前端最终一致性编辑快照
 
 - `tripStore` 新增：
@@ -258,9 +307,7 @@ interface TripStore {
 - `trip_editor.py` 成为应用唯一入口：
   - `create_trip_with_itinerary(db, body)`
   - `regenerate_trip(db, trip, generator=None)`
-  - `regenerate_segment(db, trip, day_index, generator=None)`
-- `POST /trips` 已改为只调用 `trip_editor.create_trip_with_itinerary()`。
-- `POST /trips/{id}/days/{day_id}/regenerate` 已提供“原子重生成单天”能力。
+  - `POST /trips` 已改为只调用 `trip_editor.create_trip_with_itinerary()`。
 - 未来 Agent / AI Delta / 快照回滚都统一走 `trip_editor`。
 
 ---
@@ -293,6 +340,17 @@ interface TripStore {
 4. 上下文感知：
    - 前端把 `dayIndex` / `itemId` 随聊天请求传给后端
    - 例如用户正在编辑“金顶”，AI 可自然接话
+
+### 5.2.1 示例问题
+
+| 用户输入 | AI 应返回的建议 |
+|---|---|
+| “把第三天改轻松一点” | 缩短 Day3 景点数量 / 调整时间 |
+| “第二天的萍乡博物馆时间太短” | `update` 萍乡博物馆的 start/end time |
+| “在 Day1 第3位插入金顶索道” | `add` 金顶索道，目标 Day1 seq=3 |
+| “删除杨岐山” | `delete` 杨岐山，附带影响范围提示 |
+| “把博物馆和纪念馆换一下顺序” | `move` / `reorder` |
+| “帮我解析这篇攻略并插入 Day2” | 走 guide_parser + `add` 建议卡片 |
 
 ### 5.3 后端接口设计
 
@@ -339,11 +397,53 @@ interface ItineraryDelta {
 }
 ```
 
+#### 幂等性设计
+
+`POST /trips/{id}/deltas/apply` 必须支持幂等语义，防止用户重复点击“采纳”产生重复修改。
+
+建议方案：
+
+1. 每次 AI 返回的建议带 `suggestion_id`（UUID）。
+2. 前端采纳时提交 `suggestion_id`。
+3. 后端记录已应用的 `suggestion_id`：
+   - 同一 `suggestion_id` 重复提交 → 直接返回当前 trip，不重复执行。
+   - 如果暂时不引入独立表，可用 `(trip_id, suggestion_id)` 内存缓存或后续 `itinerary_delta_applied` 表。
+4. `add` 操作如果没有天然幂等键，必须由 `suggestion_id` 去重；`update/delete/move/reorder` 也应在同一事务内校验目标仍存在。
+
+#### 影响范围提示
+
+AI 建议不能只给一句话，必须给“改动影响”：
+
+```text
+示例：删除“杨岐山孽龙洞景区”
+影响：Day3 将减少 1 个地点
+      Day3 后续节点时间会重新计算
+      Day3 现有路线会重算
+```
+
+前端卡片在“采纳”前展示影响范围，降低误操作：
+
+- 新增：展示插入位置
+- 修改：展示旧值 → 新值
+- 删除：展示受影响 Day 和后续节点
+- 排序：展示旧顺序 → 新顺序
+- 重生成：提示会覆盖当天全部节点
+
 #### 流式升级（第二阶段）
 
 - 使用 FastAPI `StreamingResponse` + SSE
 - 前端 `fetch` + `ReadableStream` 逐步展示
 - 建议卡片可以在流结束前先出现
+
+### 5.3.1 重复地点处理
+
+- `trip_editor.create_item` / `apply_delta` 增加防重复：
+  - 按规范化名称（去空格、小写）判断整个 trip 是否已有同名 POI。
+  - 如果已有同名地点，`add` 建议直接跳过，不新增重复节点。
+- 当前不会自动“覆盖旧地点”，只会跳过新增。
+- 自动排序：
+  - 如果 AI 建议里带 `reorder / target.seq`，会按建议执行排序。
+  - 如果没有显式排序建议，系统不会强行重排，避免覆盖用户手动顺序。
 
 ### 5.4 AI 修改落地
 
@@ -351,9 +451,10 @@ interface ItineraryDelta {
 - 返回 `suggestions`
 - 用户点击“采纳”后：
   ```text
-  前端调用对应 REST mutation
-  后端写库
-  React Query invalidate / store 更新
+  前端 POST /trips/{id}/deltas/apply
+  后端 trip_editor.apply_delta()
+  写库（事务内）
+  setQueryData + applyServerTrip
   地图和列表自动刷新
   ```
 

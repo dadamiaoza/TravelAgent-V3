@@ -126,7 +126,10 @@ def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
         matrix = None
         if amap_available:
             try:
-                matrix = _build_travel_time_matrix(items, route_type=route_type)
+                if reorder:
+                    matrix = _build_travel_time_matrix(items, route_type=route_type)
+                else:
+                    matrix = _build_sequence_travel_matrix(items, route_type=route_type)
             except Exception:
                 logger.warning("构建旅行时间矩阵异常，降级到坐标估算", exc_info=True)
 
@@ -168,6 +171,31 @@ def _select_mode(distance_m: float, route_type: str = "city") -> str:
 def _normalize_route_type(value: str | None) -> str:
     """把路线类型收敛为 city/scenic。"""
     return "scenic" if (value or "").lower() == "scenic" else "city"
+
+
+def _is_scenic_poi(item: dict) -> bool:
+    """判断单个 POI 是否属于景区/山岳类，用于按路段而不是按天选择模式。"""
+    text = f"{item.get('poi_name', '')} {item.get('poi_type', '')}"
+    return any(
+        token in text
+        for token in ("景区", "风景名胜", "索道", "缆车", "登山步道", "游步道", "国家级景点", "山")
+    )
+
+
+def _infer_leg_route_type(from_item: dict, to_item: dict, day_route_type: str) -> str:
+    """按路段推断 route_type。
+
+    - 两端都在景区内 → 景区内部路段，用步行/驾车/索道。
+    - 一端在景区、另一端不在 → 进出景区的接驳/转移路段，按城市模式处理。
+    - 两端都不在景区 → 沿用当天默认。
+    """
+    from_scenic = _is_scenic_poi(from_item)
+    to_scenic = _is_scenic_poi(to_item)
+    if from_scenic and to_scenic:
+        return "scenic"
+    if from_scenic != to_scenic:
+        return "city"
+    return day_route_type if day_route_type == "scenic" else "city"
 
 
 def _infer_route_type_from_items(day: dict) -> str:
@@ -365,6 +393,41 @@ def _extract_route_path_direct(data: dict, mode: str) -> list[list[float]]:
 
 # ── 旅行时间矩阵 ──
 
+def _build_sequence_travel_matrix(
+    items: list[dict], route_type: str = "city"
+) -> dict | None:
+    """只构建相邻节点的旅行时间矩阵，用于保持顺序的 reoptimize。
+
+    相比全量 N×N 矩阵，只在有需要时调用高德，避免点击“重新计算路线”卡死。
+    """
+    n = len(items)
+    if n <= 1:
+        return {}
+
+    matrix = {}
+    for i in range(1, n):
+        dist = _haversine_distance(
+            items[i - 1]["lat"], items[i - 1]["lng"],
+            items[i]["lat"], items[i]["lng"],
+        )
+        leg_route_type = _infer_leg_route_type(items[i - 1], items[i], route_type)
+        mode = _select_mode(dist, route_type=leg_route_type)
+        city = items[i].get("city", "")
+        route_info = _amap_direction_direct(
+            items[i - 1]["lng"], items[i - 1]["lat"],
+            items[i]["lng"], items[i]["lat"],
+            mode=mode, city=city,
+        )
+        if route_info is None:
+            logger.warning(
+                "Direction API 失败(相邻): %s → %s，跳过该段，保留其他真实路段",
+                items[i - 1]["poi_name"], items[i]["poi_name"],
+            )
+            continue
+        matrix[(i - 1, i)] = route_info
+    return matrix
+
+
 def _build_travel_time_matrix(items: list[dict], route_type: str = "city") -> dict | None:
     """构建 N×(N-1) 有向旅行时间矩阵。
 
@@ -391,7 +454,8 @@ def _build_travel_time_matrix(items: list[dict], route_type: str = "city") -> di
                 items[i]["lat"], items[i]["lng"],
                 items[j]["lat"], items[j]["lng"],
             )
-            mode = _select_mode(dist, route_type=route_type)
+            leg_route_type = _infer_leg_route_type(items[i], items[j], route_type)
+            mode = _select_mode(dist, route_type=leg_route_type)
             city = items[j].get("city", "")
 
             route_info = _amap_direction_direct(
@@ -460,7 +524,7 @@ def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
 def _fill_travel_times_from_matrix(
     items: list[dict], matrix: dict, index_map: list[int], route_type: str = "city"
 ):
-    """用真实矩阵数据回填 travel_minutes、transport_mode 和 route_polyline。
+    """用真实矩阵数据回填交通时间；缺失路段回退为估算。
 
     城市模式：直接采用高德返回的 mode 和真实道路。
     景区模式：只保留可核实的步行/驾车道路；索道/接驳车等作为业务层标注，
@@ -475,15 +539,43 @@ def _fill_travel_times_from_matrix(
     for i in range(1, len(items)):
         orig_from = index_map[i - 1]  # 前一个 POI 的原始索引
         orig_to = index_map[i]        # 当前 POI 的原始索引
-        route_info = matrix.get((orig_from, orig_to), 0)
+        route_info = matrix.get((orig_from, orig_to))
 
-        # 兼容旧测试：直接传 int 时只填时间
+        if route_info is None:
+            # 该段没有真实路线，按当前模式估算并保留示意
+            prev = items[i - 1]
+            curr = items[i]
+            dist_m = _haversine_distance(prev["lat"], prev["lng"], curr["lat"], curr["lng"])
+            scenic_leg = _infer_leg_route_type(prev, curr, route_type) == "scenic"
+            if scenic_leg:
+                explicit = curr.get("transport_mode") or curr.get("suggested_transport")
+                api_mode = _select_mode(dist_m, route_type="scenic")
+                mode = _infer_scenic_transport(
+                    prev.get("poi_name", ""), curr.get("poi_name", ""), api_mode, explicit
+                )
+                items[i]["travel_minutes_from_prev"] = _estimate_travel_minutes_from_distance(
+                    dist_m, route_type="scenic"
+                )
+                items[i]["transport_mode"] = mode
+                items[i]["route_polyline"] = None
+                items[i]["route_verified"] = False
+                items[i]["travel_advice"] = _scenic_travel_advice(mode, verified=False)
+            else:
+                items[i]["travel_minutes_from_prev"] = _estimate_travel_minutes_from_distance(
+                    dist_m, route_type="city"
+                )
+                items[i]["transport_mode"] = _select_mode(dist_m, route_type="city")
+                items[i]["route_polyline"] = None
+                items[i]["route_verified"] = False
+                items[i]["travel_advice"] = None
+            continue
+
         if isinstance(route_info, dict):
             items[i]["travel_minutes_from_prev"] = route_info.get("minutes", 0)
             api_mode = route_info.get("mode") or "walking"
             api_path = route_info.get("path") or None
 
-            if route_type == "scenic":
+            if _infer_leg_route_type(items[i - 1], items[i], route_type) == "scenic":
                 prev = items[i - 1]
                 curr = items[i]
                 explicit = curr.get("transport_mode") or curr.get("suggested_transport")
@@ -539,7 +631,7 @@ def _fill_travel_times_fallback(items: list[dict], route_type: str = "city"):
             curr["lat"], curr["lng"],
         )
 
-        if route_type == "scenic":
+        if _infer_leg_route_type(prev, curr, route_type) == "scenic":
             # 景区内按业务层标注交通方式；高德不可核实，只给建议
             explicit = curr.get("transport_mode") or curr.get("suggested_transport")
             mode = _infer_scenic_transport(

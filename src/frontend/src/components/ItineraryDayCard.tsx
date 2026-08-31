@@ -2,8 +2,9 @@ import type { DayView } from "@/lib/types";
 import ItineraryItemCard from "@/components/ItineraryItemCard";
 import {
   useReoptimizeItineraryDay,
-  useRegenerateItineraryDay,
   useCreateItineraryItem,
+  useCreateItineraryDay,
+  useDeleteItineraryDay,
 } from "@/hooks/useItineraryMutations";
 import { useTripStore } from "@/stores/tripStore";
 
@@ -20,8 +21,9 @@ export default function ItineraryDayCard({
 }) {
   const updateTripLocally = useTripStore((s) => s.updateTripLocally);
   const reoptimize = useReoptimizeItineraryDay(tripId);
-  const regenerate = useRegenerateItineraryDay(tripId);
   const createItem = useCreateItineraryItem(tripId);
+  const createDay = useCreateItineraryDay(tripId);
+  const deleteDay = useDeleteItineraryDay(tripId);
   const items = day.items ?? [];
 
   function moveItem(index: number, direction: -1 | 1) {
@@ -44,12 +46,12 @@ export default function ItineraryDayCard({
 
   return (
     <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between border-b border-gray-100 bg-white pb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-gray-900">Day {day.day_index}</h2>
-          {day.route_type === "scenic" && (
-            <span className="rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">
-              景区模式
+          {(day.items ?? []).some((item) => item.is_scenic) && (
+            <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">
+              含景区
             </span>
           )}
         </div>
@@ -79,14 +81,22 @@ export default function ItineraryDayCard({
           <button
             type="button"
             onClick={() => {
-              if (window.confirm(`确定重新生成 Day${day.day_index} 吗？`)) {
-                regenerate.mutate(day.id);
+              if (window.confirm(`确定删除 Day${day.day_index} 吗？`)) {
+                deleteDay.mutate(day.id);
               }
             }}
-            disabled={regenerate.isPending}
-            className="rounded border border-orange-300 px-2 py-1 text-xs text-orange-600 hover:bg-orange-50 disabled:opacity-50"
+            disabled={deleteDay.isPending}
+            className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            {regenerate.isPending ? "生成中…" : "重新生成这天"}
+            删除这天
+          </button>
+          <button
+            type="button"
+            onClick={() => createDay.mutate({})}
+            disabled={createDay.isPending}
+            className="rounded border border-green-300 px-2 py-1 text-xs text-green-700 hover:bg-green-50 disabled:opacity-50"
+          >
+            新增一天
           </button>
         </div>
       </div>
@@ -103,7 +113,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, -1)}
-                  disabled={index === 0 || reoptimize.isPending || regenerate.isPending}
+                  disabled={index === 0 || reoptimize.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="上移"
                 >
@@ -112,7 +122,7 @@ export default function ItineraryDayCard({
                 <button
                   type="button"
                   onClick={() => moveItem(index, 1)}
-                  disabled={index === items.length - 1 || reoptimize.isPending || regenerate.isPending}
+                  disabled={index === items.length - 1 || reoptimize.isPending}
                   className="rounded border px-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
                   title="下移"
                 >

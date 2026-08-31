@@ -7,7 +7,6 @@ import { useTripStore } from "@/stores/tripStore";
 import { useTripDraftSync } from "@/hooks/useTripDraftSync";
 import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
-import GuideImportPanel from "@/components/GuideImportPanel";
 
 export default function TripDetail({ trip }: { trip: Trip }) {
   const { dirtyTrip, isDirty } = useTripDraftSync(trip.id, trip);
@@ -141,7 +140,6 @@ export default function TripDetail({ trip }: { trip: Trip }) {
         </p>
       )}
 
-      <GuideImportPanel tripId={trip.id} />
     </div>
   );
 }

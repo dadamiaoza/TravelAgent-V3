@@ -58,7 +58,7 @@ RUN_AGENT_TESTS=1 pytest -m agent
 2. 拆分 `tests/integration/`：
    - trips API
    - items API
-   - reoptimize / regenerate API
+   - reoptimize API
 3. 拆分 `tests/agents/`：
    - itinerary_gen
    - supervisor

@@ -56,12 +56,31 @@ export function useReoptimizeItineraryDay(tripId: string) {
   });
 }
 
-export function useRegenerateItineraryDay(tripId: string) {
+
+export function useCreateItineraryDay(tripId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload?: { day_index?: number }) =>
+      api.post<Trip>(`/trips/${tripId}/days`, payload ?? {}),
+    onSuccess: (data) => {
+      applyTripResult(queryClient, tripId, data);
+      const days = data.days ?? [];
+      if (days.length > 0) {
+        // 新增一天后自动切换到新的一天
+        useTripStore.getState().setSelectedDayIndex(days.length - 1);
+        useTripStore.getState().setFocusItem(null);
+      }
+    },
+  });
+}
+
+export function useDeleteItineraryDay(tripId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (dayId: string) =>
-      api.post<Trip>(`/trips/${tripId}/days/${dayId}/regenerate`, {}),
+      api.delete<Trip>(`/trips/${tripId}/days/${dayId}`),
     onSuccess: (data) => {
       applyTripResult(queryClient, tripId, data);
     },
