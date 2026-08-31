@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useTripStore } from "@/stores/tripStore";
-import type { ItineraryDelta, Trip, TripChatOut } from "@/lib/types";
+import type { ItineraryDelta, Trip } from "@/lib/types";
 
 interface ChatMessage {
   id: string;
@@ -55,6 +55,54 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+async function streamTripChat(
+  tripId: string,
+  payload: {
+    message: string;
+    thread_id?: string;
+    context?: { day_index?: number; item_id?: string };
+  },
+  onEvent: (event: string, data: Record<string, unknown>) => void,
+) {
+  const response = await fetch(`/api/v1/trips/${tripId}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`Chat stream failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+
+      let event = "message";
+      const dataLines: string[] = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+      if (dataLines.length > 0) {
+        onEvent(event, JSON.parse(dataLines.join("\n")));
+      }
+    }
+  }
+}
+
 export default function ChatPanel({ tripId }: { tripId: string }) {
   const queryClient = useQueryClient();
   const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
@@ -73,28 +121,50 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     if (!text || loading) return;
 
     setMessages((prev) => [...prev, { id: newId(), role: "user", content: text }]);
+    const aiMessageId = newId();
+    setMessages((prev) => [...prev, { id: aiMessageId, role: "ai", content: "", suggestions: [] }]);
     setInput("");
     setLoading(true);
 
     try {
-      const res = await api.post<TripChatOut>(`/trips/${tripId}/chat`, {
-        message: text,
-        thread_id: threadId,
-        context: {
-          day_index: selectedDayIndex + 1,
-          item_id: focusItemId ?? undefined,
+      await streamTripChat(
+        tripId,
+        {
+          message: text,
+          thread_id: threadId,
+          context: {
+            day_index: selectedDayIndex + 1,
+            item_id: focusItemId ?? undefined,
+          },
         },
-      });
-      setThreadId(res.thread_id);
-      setMessages((prev) => [
-        ...prev,
-        { id: newId(), role: "ai", content: res.reply, suggestions: res.suggestions ?? [] },
-      ]);
+        (event, data) => {
+          if (event === "delta") {
+            const chunk = String(data.text ?? "");
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMessageId ? { ...msg, content: msg.content + chunk } : msg,
+              ),
+            );
+          } else if (event === "done") {
+            setThreadId(String(data.thread_id ?? ""));
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMessageId
+                  ? { ...msg, suggestions: (data.suggestions as ItineraryDelta[]) ?? [] }
+                  : msg,
+              ),
+            );
+          }
+        },
+      );
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { id: newId(), role: "ai", content: "抱歉，AI 对话暂时不可用，请稍后再试。" },
-      ]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === aiMessageId
+            ? { ...msg, content: "抱歉，AI 对话暂时不可用，请稍后再试。" }
+            : msg,
+        ),
+      );
     } finally {
       setLoading(false);
       inputRef.current?.focus();
