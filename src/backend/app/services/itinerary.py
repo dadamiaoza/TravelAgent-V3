@@ -10,7 +10,7 @@ from datetime import date, time
 from sqlalchemy.orm import Session
 
 from app.agents.itinerary_gen import create_itinerary_gen
-from app.agents.route_optimizer import create_route_optimizer
+from app.agents.tools.route_optimizer import optimize_itinerary
 from app.models.trip import Trip
 from app.services.itinerary_persistence import persist_itinerary
 
@@ -114,16 +114,12 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
 
 
 def _run_route_optimizer(itinerary: dict) -> dict:
-    """Pass the itinerary through the route_optimizer Agent to fill lat/lng."""
-    agent = create_route_optimizer()
-    itinerary_json = json.dumps(itinerary, ensure_ascii=False)
-    prompt = (
-        "请调用 optimize_itinerary 工具处理以下行程数据。\n"
-        f"行程 JSON：\n{itinerary_json}\n\n"
-        "将工具返回的 JSON 直接输出，不要添加任何其他文字。"
+    """直接调用路线优化工具，避免额外 Agent LLM 调用，提升生成速度。"""
+    result = optimize_itinerary(
+        json.dumps(itinerary, ensure_ascii=False),
+        reorder=False,
     )
-    result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
-    return _parse_agent_output(result["messages"])
+    return json.loads(result)
 
 
 def _parse_agent_output(messages: list) -> dict:
