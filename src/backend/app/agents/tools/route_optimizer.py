@@ -123,25 +123,37 @@ def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
             prev_center = (item["lat"], item["lng"])
 
         # 第二步：尝试构建真实旅行时间矩阵
+        reordered = False
+
+        if reorder and amap_available and len(items) <= 4:
+            # 小规模仍使用完整真实矩阵，保持原排序行为（便于测试与少量点）
+            try:
+                matrix = _build_travel_time_matrix(items, route_type=route_type)
+                index_map = _reorder_by_nearest_neighbor(items, matrix)
+                _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
+                reordered = True
+            except Exception:
+                logger.warning("小规模真实矩阵构建异常，降级到估算", exc_info=True)
+
         matrix = None
-        if amap_available:
+        if not reordered and amap_available:
             try:
                 if reorder:
-                    matrix = _build_travel_time_matrix(items, route_type=route_type)
-                else:
-                    matrix = _build_sequence_travel_matrix(items, route_type=route_type)
-            except Exception:
-                logger.warning("构建旅行时间矩阵异常，降级到坐标估算", exc_info=True)
+                    # 较大规模：排序只用 Haversine 估算矩阵，不请求高德
+                    hav_matrix = _build_haversine_matrix(items)
+                    _reorder_by_nearest_neighbor(items, hav_matrix)
 
-        # 第三步：排序 + 填充交通时间
-        if matrix is not None:
-            if reorder:
-                index_map = _reorder_by_nearest_neighbor(items, matrix)
-            else:
+                matrix = _build_sequence_travel_matrix(items, route_type=route_type)
+            except Exception:
+                logger.warning("相邻路段矩阵构建异常，降级到坐标估算", exc_info=True)
+
+        if not reordered:
+            if matrix is not None:
                 index_map = list(range(len(items)))
-            _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
-        else:
-            _fill_travel_times_fallback(items, route_type=route_type)
+                _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
+            else:
+                # 无 API 或构建失败：保持原始顺序（不重新排序）
+                _fill_travel_times_fallback(items, route_type=route_type)
 
         # 第四步：更新 seq 序号
         for i, item in enumerate(items):
@@ -270,7 +282,27 @@ def _haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> f
 
 # ── 高德 Direction API（坐标直调） ──
 
+_DIRECTION_CACHE: dict[tuple, dict] = {}
+
+
 def _amap_direction_direct(
+    origin_lng: float, origin_lat: float,
+    dest_lng: float, dest_lat: float,
+    mode: str, city: str = "",
+) -> dict | None:
+    """Cached Amap direction lookup."""
+    cache_key = (mode, origin_lng, origin_lat, dest_lng, dest_lat, city)
+    if cache_key in _DIRECTION_CACHE:
+        return _DIRECTION_CACHE[cache_key]
+    result = _amap_direction_direct_uncached(
+        origin_lng, origin_lat, dest_lng, dest_lat, mode=mode, city=city
+    )
+    if result is not None:
+        _DIRECTION_CACHE[cache_key] = result
+    return result
+
+
+def _amap_direction_direct_uncached(
     origin_lng: float, origin_lat: float,
     dest_lng: float, dest_lat: float,
     mode: str, city: str = "",
@@ -392,6 +424,22 @@ def _extract_route_path_direct(data: dict, mode: str) -> list[list[float]]:
 
 
 # ── 旅行时间矩阵 ──
+
+def _build_haversine_matrix(items: list[dict]) -> dict:
+    """仅用坐标距离估算时间的矩阵，用于快速贪心排序，不调高德。"""
+    n = len(items)
+    matrix = {}
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            dist = _haversine_distance(
+                items[i]["lat"], items[i]["lng"],
+                items[j]["lat"], items[j]["lng"],
+            )
+            matrix[(i, j)] = _estimate_travel_minutes_from_distance(dist)
+    return matrix
+
 
 def _build_sequence_travel_matrix(
     items: list[dict], route_type: str = "city"

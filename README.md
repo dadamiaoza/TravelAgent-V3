@@ -104,7 +104,8 @@ TravelAgent-V3/
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/health` | 健康检查 |
-| POST | `/api/v1/trips` | 创建并生成行程 |
+| POST | `/api/v1/trips` | 创建行程（异步生成） |
+| GET | `/api/v1/trips/{trip_id}/progress` | 查询生成进度 |
 | GET | `/api/v1/trips` | 行程列表 |
 | GET | `/api/v1/trips/{trip_id}` | 行程详情 |
 | PATCH | `/api/v1/trips/{trip_id}/items/{item_id}` | 编辑节点（改名称自动重新地理编码） |

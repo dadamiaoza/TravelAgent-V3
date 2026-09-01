@@ -107,3 +107,10 @@ export interface TripChatOut {
   thread_id: string;
   suggestions: ItineraryDelta[];
 }
+
+
+export interface GenerationProgress {
+  status: string;
+  progress: number;
+  message: string;
+}

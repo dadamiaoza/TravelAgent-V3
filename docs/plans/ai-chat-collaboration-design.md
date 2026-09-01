@@ -167,6 +167,17 @@ src/frontend/src/lib/types.ts
 
 ---
 
+## 3.5 异步生成 + 高德缓存
+
+- `POST /trips` 改为立即返回，行程状态 `generating`。
+- 后台任务执行 `regenerate_trip`。
+- `GET /trips/{id}/progress` 返回进度。
+- 前端进入行程页后轮询进度并显示进度条。
+- 高德缓存：
+  - `geocode_poi` 增加内存缓存
+  - `_amap_direction_direct` 增加方向缓存
+- 当前进度/缓存为单进程内存，后续可持久化到 Redis/DB。
+
 ## 4. Phase B：统一数据源 + 编辑/排序实时联动
 
 > 这是后续所有功能的地基。
