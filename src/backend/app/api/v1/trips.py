@@ -8,12 +8,12 @@ from uuid import UUID
 
 from langchain_openai import ChatOpenAI
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.schemas.trip import (
@@ -47,9 +47,51 @@ from app.services.trip_editor import (
     delete_day,
     sync_trip,
     apply_delta,
+    regenerate_trip,
 )
 
 router = APIRouter(prefix="/trips", tags=["trips"])
+
+# 简单的内存进度表，适合单用户演示；后续可持久化
+_GENERATION_PROGRESS: dict[str, dict] = {}
+
+
+def _run_generation_in_background(trip_id: str):
+    import uuid as _uuid
+
+    trip_uuid = _uuid.UUID(trip_id)
+    db = SessionLocal()
+    try:
+        _GENERATION_PROGRESS[trip_id] = {
+            "status": "generating",
+            "progress": 10,
+            "message": "正在准备生成行程...",
+        }
+        trip = db.query(Trip).filter(Trip.id == trip_uuid).first()
+        if not trip:
+            _GENERATION_PROGRESS[trip_id] = {"status": "failed", "progress": 100, "message": "行程不存在"}
+            return
+
+        _GENERATION_PROGRESS[trip_id] = {
+            "status": "generating",
+            "progress": 30,
+            "message": "AI 正在生成行程...",
+        }
+        regenerate_trip(db, trip)
+
+        _GENERATION_PROGRESS[trip_id] = {
+            "status": "generated",
+            "progress": 100,
+            "message": "行程生成完成",
+        }
+    except Exception as exc:
+        _GENERATION_PROGRESS[trip_id] = {
+            "status": "failed",
+            "progress": 100,
+            "message": f"生成失败：{exc}",
+        }
+    finally:
+        db.close()
 
 
 
@@ -97,9 +139,40 @@ def suggest_trip(body: TripSuggestRequest):
           must_visit=data.get("must_visit") or [],
     )
 @router.post("", response_model=TripOut, status_code=201)
-def create_trip(body: TripCreate, db: Session = Depends(get_db)):
-    """Create a new trip and auto-generate a template itinerary."""
-    return create_trip_with_itinerary(db, body)
+def create_trip(
+    body: TripCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Create a trip immediately, then generate itinerary in background."""
+    trip = Trip(
+        destination=body.destination,
+        city=body.city,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        people_count=body.people_count,
+        budget_min=body.budget_min,
+        budget_max=body.budget_max,
+        user_prompt=body.user_prompt,
+        must_visit=body.must_visit,
+        status="generating",
+    )
+    db.add(trip)
+    db.commit()
+    db.refresh(trip)
+
+    background_tasks.add_task(_run_generation_in_background, str(trip.id))
+
+    return trip
+
+
+@router.get("/{trip_id}/progress")
+def get_generation_progress(trip_id: UUID):
+    """查询异步生成进度。"""
+    key = str(trip_id)
+    if key in _GENERATION_PROGRESS:
+        return _GENERATION_PROGRESS[key]
+    return {"status": "unknown", "progress": 0, "message": "暂无进度信息"}
 
 
 @router.get("/{trip_id}", response_model=TripOut)

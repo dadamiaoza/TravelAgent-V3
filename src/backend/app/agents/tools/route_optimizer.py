@@ -270,7 +270,27 @@ def _haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> f
 
 # ── 高德 Direction API（坐标直调） ──
 
+_DIRECTION_CACHE: dict[tuple, dict] = {}
+
+
 def _amap_direction_direct(
+    origin_lng: float, origin_lat: float,
+    dest_lng: float, dest_lat: float,
+    mode: str, city: str = "",
+) -> dict | None:
+    """Cached Amap direction lookup."""
+    cache_key = (mode, origin_lng, origin_lat, dest_lng, dest_lat, city)
+    if cache_key in _DIRECTION_CACHE:
+        return _DIRECTION_CACHE[cache_key]
+    result = _amap_direction_direct_uncached(
+        origin_lng, origin_lat, dest_lng, dest_lat, mode=mode, city=city
+    )
+    if result is not None:
+        _DIRECTION_CACHE[cache_key] = result
+    return result
+
+
+def _amap_direction_direct_uncached(
     origin_lng: float, origin_lat: float,
     dest_lng: float, dest_lat: float,
     mode: str, city: str = "",

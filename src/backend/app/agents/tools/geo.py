@@ -48,7 +48,26 @@ def _normalize_poi_search_name(name: str) -> str:
     return s.strip() or name
 
 
+_GEOCODE_CACHE: dict[tuple, dict] = {}
+
+
 def geocode_poi(
+    name: str,
+    city: str = "",
+    mock_fallback: bool = True,
+    nearby: tuple[float, float] | None = None,
+) -> dict | None:
+    """Cached wrapper around Amap geocoding to speed up repeated lookups."""
+    cache_key = (name, city, nearby)
+    if cache_key in _GEOCODE_CACHE:
+        return _GEOCODE_CACHE[cache_key]
+    result = _geocode_poi_uncached(name, city=city, mock_fallback=mock_fallback, nearby=nearby)
+    if result is not None:
+        _GEOCODE_CACHE[cache_key] = result
+    return result
+
+
+def _geocode_poi_uncached(
     name: str,
     city: str = "",
     mock_fallback: bool = True,
