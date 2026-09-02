@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import get_db, SessionLocal
 from app.models.source import SourceEntity
-from app.models.trip import Trip, ItineraryDay, ItineraryItem
+from app.models.trip import Trip, ItineraryDay, ItineraryItem, GenerationJob
 from app.schemas.trip import (
     TripCreate,
     TripUpdate,
@@ -49,47 +49,34 @@ from app.services.trip_editor import (
     apply_delta,
     regenerate_trip,
 )
+from app.services.generation_jobs import create_job, update_job, get_latest_job_for_trip
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
-# 简单的内存进度表，适合单用户演示；后续可持久化
-_GENERATION_PROGRESS: dict[str, dict] = {}
-
-
-def _run_generation_in_background(trip_id: str):
+def _run_generation_in_background(trip_id: str, job_id: str):
     import uuid as _uuid
 
     trip_uuid = _uuid.UUID(trip_id)
+    job_uuid = _uuid.UUID(job_id)
     db = SessionLocal()
     try:
-        _GENERATION_PROGRESS[trip_id] = {
-            "status": "generating",
-            "progress": 10,
-            "message": "正在准备生成行程...",
-        }
+        update_job(db, job_uuid, status="running", progress=10, message="正在准备生成行程...")
+
         trip = db.query(Trip).filter(Trip.id == trip_uuid).first()
         if not trip:
-            _GENERATION_PROGRESS[trip_id] = {"status": "failed", "progress": 100, "message": "行程不存在"}
+            update_job(db, job_uuid, status="failed", progress=100, message="行程不存在")
             return
 
-        _GENERATION_PROGRESS[trip_id] = {
-            "status": "generating",
-            "progress": 30,
-            "message": "AI 正在生成行程...",
-        }
+        update_job(db, job_uuid, status="running", progress=30, message="AI 正在生成行程...")
         regenerate_trip(db, trip)
 
-        _GENERATION_PROGRESS[trip_id] = {
-            "status": "generated",
-            "progress": 100,
-            "message": "行程生成完成",
-        }
+        update_job(db, job_uuid, status="succeeded", progress=100, message="行程生成完成")
     except Exception as exc:
-        _GENERATION_PROGRESS[trip_id] = {
-            "status": "failed",
-            "progress": 100,
-            "message": f"生成失败：{exc}",
-        }
+        db.rollback()
+        try:
+            update_job(db, job_uuid, status="failed", progress=100, message=f"生成失败：{exc}")
+        except Exception:
+            pass
     finally:
         db.close()
 
@@ -161,18 +148,23 @@ def create_trip(
     db.commit()
     db.refresh(trip)
 
-    background_tasks.add_task(_run_generation_in_background, str(trip.id))
+    job = create_job(db, trip.id)
+    background_tasks.add_task(_run_generation_in_background, str(trip.id), str(job.id))
 
     return trip
 
 
 @router.get("/{trip_id}/progress")
-def get_generation_progress(trip_id: UUID):
-    """查询异步生成进度。"""
-    key = str(trip_id)
-    if key in _GENERATION_PROGRESS:
-        return _GENERATION_PROGRESS[key]
-    return {"status": "unknown", "progress": 0, "message": "暂无进度信息"}
+def get_generation_progress(trip_id: UUID, db: Session = Depends(get_db)):
+    """查询异步生成进度（从 generation_jobs 读取）。"""
+    job = get_latest_job_for_trip(db, trip_id)
+    if not job:
+        return {"status": "unknown", "progress": 0, "message": "暂无进度信息"}
+    return {
+        "status": job.status or "unknown",
+        "progress": job.progress or 0,
+        "message": job.message or "",
+    }
 
 
 @router.get("/{trip_id}", response_model=TripOut)
