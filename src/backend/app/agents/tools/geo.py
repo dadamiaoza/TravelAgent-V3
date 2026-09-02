@@ -12,6 +12,8 @@ import requests
 from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
+from app.db.session import SessionLocal
+from app.services.cache_store import get_cache, set_cache
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +63,29 @@ def geocode_poi(
     cache_key = (name, city, nearby)
     if cache_key in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[cache_key]
+
+    db_cache_key = f"{name}|{city}|{nearby}"
+    db = SessionLocal()
+    try:
+        persisted = get_cache(db, "geocode", db_cache_key)
+        if persisted is not None:
+            _GEOCODE_CACHE[cache_key] = persisted
+            return persisted
+    except Exception:
+        pass
+    finally:
+        db.close()
+
     result = _geocode_poi_uncached(name, city=city, mock_fallback=mock_fallback, nearby=nearby)
     if result is not None:
         _GEOCODE_CACHE[cache_key] = result
+        db = SessionLocal()
+        try:
+            set_cache(db, "geocode", db_cache_key, result)
+        except Exception:
+            pass
+        finally:
+            db.close()
     return result
 
 

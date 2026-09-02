@@ -16,6 +16,8 @@ import requests
 
 from app.agents.tools.geo import geocode_poi
 from app.core.config import settings
+from app.db.session import SessionLocal
+from app.services.cache_store import get_cache, set_cache
 
 logger = logging.getLogger(__name__)
 
@@ -290,15 +292,35 @@ def _amap_direction_direct(
     dest_lng: float, dest_lat: float,
     mode: str, city: str = "",
 ) -> dict | None:
-    """Cached Amap direction lookup."""
+    """Cached Amap direction lookup (memory + Postgres)."""
     cache_key = (mode, origin_lng, origin_lat, dest_lng, dest_lat, city)
     if cache_key in _DIRECTION_CACHE:
         return _DIRECTION_CACHE[cache_key]
+
+    db_cache_key = f"{mode}|{origin_lng}|{origin_lat}|{dest_lng}|{dest_lat}|{city}"
+    db = SessionLocal()
+    try:
+        persisted = get_cache(db, "direction", db_cache_key)
+        if persisted is not None:
+            _DIRECTION_CACHE[cache_key] = persisted
+            return persisted
+    except Exception:
+        pass
+    finally:
+        db.close()
+
     result = _amap_direction_direct_uncached(
         origin_lng, origin_lat, dest_lng, dest_lat, mode=mode, city=city
     )
     if result is not None:
         _DIRECTION_CACHE[cache_key] = result
+        db = SessionLocal()
+        try:
+            set_cache(db, "direction", db_cache_key, result)
+        except Exception:
+            pass
+        finally:
+            db.close()
     return result
 
 
