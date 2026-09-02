@@ -167,6 +167,14 @@ src/frontend/src/lib/types.ts
 
 ---
 
+## 3.5.1 进度实时推送（SSE）
+
+- `GET /trips/{id}/progress/stream`
+- 前端使用 `EventSource` 订阅
+- 每秒推送 `progress` 事件
+- 任务完成推送 `done` 事件并关闭连接
+- 不再使用前端轮询
+
 ## 3.5 异步生成 + 高德缓存
 
 - `POST /trips` 改为立即返回，行程状态 `generating`。

@@ -135,6 +135,39 @@ def get_generation_progress(trip_id: UUID, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{trip_id}/progress/stream")
+def get_generation_progress_stream(trip_id: UUID, db: Session = Depends(get_db)):
+    """SSE 实时推送生成进度。"""
+
+    async def event_generator():
+        import asyncio
+
+        max_seconds = 180
+        elapsed = 0
+        while elapsed < max_seconds:
+            job = get_latest_job_for_trip(db, trip_id)
+            if job:
+                payload = {
+                    "status": job.status or "unknown",
+                    "progress": job.progress or 0,
+                    "message": job.message or "",
+                }
+                yield f'event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n'
+                if job.status in ("succeeded", "failed"):
+                    yield f'event: done\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n'
+                    return
+            else:
+                yield 'event: progress\ndata: {"status":"unknown","progress":0,"message":"暂无进度信息"}\n\n'
+            await asyncio.sleep(1)
+            elapsed += 1
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/{trip_id}", response_model=TripOut)
 def get_trip(trip_id: UUID, db: Session = Depends(get_db)):
     """Get a trip with all days and items."""

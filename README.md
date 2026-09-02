@@ -105,7 +105,8 @@ TravelAgent-V3/
 |---|---|---|
 | GET | `/api/v1/health` | 健康检查 |
 | POST | `/api/v1/trips` | 创建行程（异步生成） |
-| GET | `/api/v1/trips/{trip_id}/progress` | 查询生成进度 |
+| GET | `/api/v1/trips/{trip_id}/progress` | 查询生成进度（兼容） |
+| GET | `/api/v1/trips/{trip_id}/progress/stream` | SSE 实时推送生成进度 |
 | GET | `/api/v1/trips` | 行程列表 |
 | GET | `/api/v1/trips/{trip_id}` | 行程详情 |
 | PATCH | `/api/v1/trips/{trip_id}/items/{item_id}` | 编辑节点（改名称自动重新地理编码） |

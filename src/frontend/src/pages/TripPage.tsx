@@ -1,8 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTrip } from "@/hooks/useTrip";
-import { api } from "@/lib/api";
 import type { GenerationProgress } from "@/lib/types";
 import TripDetail from "@/components/TripDetail";
 import ChatPanel from "@/components/ChatPanel";
@@ -11,19 +10,37 @@ export default function TripPage() {
   const { tripId } = useParams<{ tripId: string }>();
   const { data: trip, isLoading, isError } = useTrip(tripId ?? "");
   const queryClient = useQueryClient();
-
-  const { data: progress } = useQuery<GenerationProgress>({
-    queryKey: ["progress", tripId],
-    queryFn: () => api.get<GenerationProgress>(`/trips/${tripId}/progress`),
-    enabled: !!tripId && trip?.status === "generating",
-    refetchInterval: 1000,
-  });
+  const [progress, setProgress] = useState<GenerationProgress | null>(null);
 
   useEffect(() => {
-    if (progress?.status === "generated") {
+    if (!tripId || trip?.status !== "generating") return;
+
+    const source = new EventSource(`/api/v1/trips/${tripId}/progress/stream`);
+
+    source.addEventListener("progress", (event) => {
+      try {
+        setProgress(JSON.parse(event.data));
+      } catch {
+        // ignore malformed progress events
+      }
+    });
+
+    source.addEventListener("done", (event) => {
+      try {
+        setProgress(JSON.parse(event.data));
+      } catch {
+        // ignore
+      }
       queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
-    }
-  }, [progress, tripId, queryClient]);
+      source.close();
+    });
+
+    source.onerror = () => {
+      source.close();
+    };
+
+    return () => source.close();
+  }, [tripId, trip?.status, queryClient]);
 
   return (
     <main className="mx-auto max-w-7xl p-8">
