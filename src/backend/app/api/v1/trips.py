@@ -8,12 +8,12 @@ from uuid import UUID
 
 from langchain_openai import ChatOpenAI
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.session import get_db, SessionLocal
+from app.db.session import get_db
 from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem, GenerationJob
 from app.schemas.trip import (
@@ -52,36 +52,6 @@ from app.services.trip_editor import (
 from app.services.generation_jobs import create_job, update_job, get_latest_job_for_trip
 
 router = APIRouter(prefix="/trips", tags=["trips"])
-
-def _run_generation_in_background(trip_id: str, job_id: str):
-    import uuid as _uuid
-
-    trip_uuid = _uuid.UUID(trip_id)
-    job_uuid = _uuid.UUID(job_id)
-    db = SessionLocal()
-    try:
-        update_job(db, job_uuid, status="running", progress=10, message="正在准备生成行程...")
-
-        trip = db.query(Trip).filter(Trip.id == trip_uuid).first()
-        if not trip:
-            update_job(db, job_uuid, status="failed", progress=100, message="行程不存在")
-            return
-
-        update_job(db, job_uuid, status="running", progress=30, message="AI 正在生成行程...")
-        regenerate_trip(db, trip)
-
-        update_job(db, job_uuid, status="succeeded", progress=100, message="行程生成完成")
-    except Exception as exc:
-        db.rollback()
-        try:
-            update_job(db, job_uuid, status="failed", progress=100, message=f"生成失败：{exc}")
-        except Exception:
-            pass
-    finally:
-        db.close()
-
-
-
 
 @router.post("/suggest", response_model=TripSuggestOut)
 def suggest_trip(body: TripSuggestRequest):
@@ -128,7 +98,6 @@ def suggest_trip(body: TripSuggestRequest):
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(
     body: TripCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Create a trip immediately, then generate itinerary in background."""
@@ -148,8 +117,7 @@ def create_trip(
     db.commit()
     db.refresh(trip)
 
-    job = create_job(db, trip.id)
-    background_tasks.add_task(_run_generation_in_background, str(trip.id), str(job.id))
+    create_job(db, trip.id)
 
     return trip
 

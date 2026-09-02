@@ -104,6 +104,7 @@ class GenerationJob(Base):
     trip_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     progress: Mapped[int] = mapped_column(Integer(), default=0)
+    attempts: Mapped[int] = mapped_column(Integer(), default=0)
     message: Mapped[str | None] = mapped_column(Text(), nullable=True)
     error: Mapped[str | None] = mapped_column(Text(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
