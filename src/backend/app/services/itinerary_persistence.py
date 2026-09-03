@@ -11,7 +11,14 @@ from sqlalchemy.orm import Session
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 
 
-def persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: date):
+def persist_itinerary(
+    db: Session,
+    trip: Trip,
+    itinerary: dict,
+    start_date: date,
+    *,
+    commit: bool = True,
+):
     """Convert agent JSON to ORM objects and write to DB."""
     # Clear old items if re-generating
     if trip.days:
@@ -61,5 +68,6 @@ def persist_itinerary(db: Session, trip: Trip, itinerary: dict, start_date: date
             accumulated_minutes = start_minutes + duration_m
 
     trip.status = "generated"
-    db.commit()
-    db.refresh(trip)
+    if commit:
+        db.commit()
+        db.refresh(trip)

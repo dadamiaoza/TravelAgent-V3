@@ -9,12 +9,17 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.models.trip import GenerationJob
+from app.models.trip import GenerationJob, Trip
+from app.services.itinerary_persistence import persist_itinerary
 
 
 SessionFactory = Callable[[], Session]
 STALE_HEARTBEAT_AFTER = timedelta(minutes=10)
 STALE_RETRY_DELAY = timedelta(seconds=5)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class GenerationJobStatus(str, Enum):
@@ -49,8 +54,10 @@ class ClaimedGenerationJob:
     max_attempts: int
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+def _mark_trip_generation_failed(db: Session, trip_id: UUID) -> None:
+    trip = db.get(Trip, trip_id)
+    if trip is not None:
+        trip.status = "generation_failed"
 
 
 def _terminalize_eligible_exhausted_jobs(
@@ -84,6 +91,7 @@ def _terminalize_eligible_exhausted_jobs(
         job.run_token = None
         job.finished_at = terminalized_at
         job.status_version = (job.status_version or 0) + 1
+        _mark_trip_generation_failed(db, job.trip_id)
         terminalized += 1
     return terminalized
 
@@ -257,24 +265,33 @@ def mark_job_failed(
     session_factory: SessionFactory = SessionLocal,
     now: datetime | None = None,
 ) -> bool:
-    """Fail an owned running attempt with safe public and detailed internal text."""
-    return _update_running_job(
-        claim.id,
-        claim.run_token,
-        {
-            "status": GenerationJobStatus.FAILED.value,
-            "progress": 100,
-            "message": message,
-            "error": error,
-            "error_code": error_code,
-            "next_run_at": None,
-            "heartbeat_at": None,
-            "run_token": None,
-            "finished_at": now or _now(),
-        },
-        increment_version=True,
-        session_factory=session_factory,
-    )
+    """Fail an owned running attempt and persist Trip generation_failed together."""
+    failed_at = now or _now()
+    with session_factory() as db:
+        with db.begin():
+            job = db.execute(
+                select(GenerationJob)
+                .where(
+                    GenerationJob.id == claim.id,
+                    GenerationJob.status == GenerationJobStatus.RUNNING.value,
+                    GenerationJob.run_token == claim.run_token,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if job is None:
+                return False
+            job.status = GenerationJobStatus.FAILED.value
+            job.progress = 100
+            job.message = message
+            job.error = error
+            job.error_code = error_code
+            job.next_run_at = None
+            job.heartbeat_at = None
+            job.run_token = None
+            job.finished_at = failed_at
+            job.status_version = (job.status_version or 0) + 1
+            _mark_trip_generation_failed(db, claim.trip_id)
+            return True
 
 
 def mark_job_succeeded(
@@ -302,6 +319,47 @@ def mark_job_succeeded(
         increment_version=True,
         session_factory=session_factory,
     )
+
+
+def finalize_job_success(
+    claim: ClaimedGenerationJob,
+    draft: dict,
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> bool:
+    """Persist itinerary, trip status, and job success in one short transaction."""
+    finished_at = now or _now()
+    with session_factory() as db:
+        with db.begin():
+            job = db.execute(
+                select(GenerationJob)
+                .where(GenerationJob.id == claim.id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if (
+                job is None
+                or job.status != GenerationJobStatus.RUNNING.value
+                or job.run_token != claim.run_token
+            ):
+                return False
+
+            trip = db.get(Trip, claim.trip_id)
+            if trip is None:
+                return False
+
+            persist_itinerary(db, trip, draft, trip.start_date, commit=False)
+            job.status = GenerationJobStatus.SUCCEEDED.value
+            job.progress = 100
+            job.message = "行程生成完成"
+            job.error = None
+            job.error_code = None
+            job.next_run_at = None
+            job.heartbeat_at = None
+            job.run_token = None
+            job.finished_at = finished_at
+            job.status_version = (job.status_version or 0) + 1
+            return True
 
 
 def recover_stale_jobs(
@@ -352,6 +410,7 @@ def recover_stale_jobs(
                     job.message = "行程生成失败，请稍后重试"
                     job.next_run_at = None
                     job.finished_at = recovered_at
+                    _mark_trip_generation_failed(db, job.trip_id)
                 recovered += 1
 
     return recovered
@@ -383,11 +442,17 @@ def transition_job(
     return job
 
 
-def create_job(db: Session, trip_id: UUID) -> GenerationJob:
+def create_job(
+    db: Session,
+    trip_id: UUID,
+    *,
+    commit: bool = True,
+) -> GenerationJob:
     job = GenerationJob(trip_id=trip_id, status="pending", progress=0, message="等待生成")
     db.add(job)
-    db.commit()
-    db.refresh(job)
+    if commit:
+        db.commit()
+        db.refresh(job)
     return job
 
 

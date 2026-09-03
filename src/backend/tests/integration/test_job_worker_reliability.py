@@ -213,7 +213,7 @@ def test_retryable_failure_waits_then_exhausts_total_claims(job_factory) -> None
     job_id = job_factory(max_attempts=2)
     before = datetime.now(timezone.utc)
 
-    def malformed_output(_db, _trip) -> None:
+    def malformed_output(_generation_input) -> None:
         raise ValueError("raw malformed model response")
 
     assert process_pending_jobs(regenerate=malformed_output) == 1
@@ -413,7 +413,7 @@ def test_heartbeat_cleanup_does_not_wait_forever_for_hung_renewal(
 def test_programming_error_is_permanent(job_factory) -> None:
     job_id = job_factory(max_attempts=3)
 
-    def programming_error(_db, _trip) -> None:
+    def programming_error(_generation_input) -> None:
         raise RuntimeError("private implementation detail")
 
     assert process_pending_jobs(regenerate=programming_error) == 1
@@ -432,7 +432,7 @@ def test_invalid_input_is_permanent(job_factory) -> None:
     class GeneratorInput(BaseModel):
         people_count: int
 
-    def invalid_input(_db, _trip) -> None:
+    def invalid_input(_generation_input) -> None:
         GeneratorInput(people_count="not-an-integer")
 
     assert process_pending_jobs(regenerate=invalid_input) == 1

@@ -4,7 +4,9 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
 from typing import Callable, Iterator
+from uuid import UUID
 
 import httpx
 import requests
@@ -17,20 +19,39 @@ from app.models.trip import Trip
 from app.services.generation_jobs import (
     ClaimedGenerationJob,
     claim_next_job,
+    finalize_job_success,
     mark_job_failed,
-    mark_job_succeeded,
     recover_stale_jobs,
     renew_heartbeat,
     schedule_job_retry,
     update_job_progress,
 )
-from app.services.trip_editor import regenerate_trip
+from app.services.trip_editor import generate_draft
 
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SECONDS = 30.0
 HEARTBEAT_JOIN_TIMEOUT_SECONDS = 1.0
-Regenerate = Callable[[Session, Trip], object]
+
+
+@dataclass(frozen=True)
+class GenerationInput:
+    """Immutable snapshot of trip fields needed to generate an itinerary draft."""
+
+    trip_id: UUID
+    destination: str
+    city: str
+    start_date: date
+    end_date: date
+    people_count: int
+    budget_min: int | None
+    budget_max: int | None
+    user_prompt: str | None
+    must_visit: tuple[str, ...]
+    thread_id: str
+
+
+Regenerate = Callable[[GenerationInput], dict]
 
 
 @dataclass(frozen=True)
@@ -109,25 +130,56 @@ def _heartbeat_during(
             )
 
 
+def _load_generation_input(claim: ClaimedGenerationJob) -> GenerationInput:
+    with SessionLocal() as db:
+        trip = db.get(Trip, claim.trip_id)
+        if trip is None:
+            raise MissingTripError(f"Trip {claim.trip_id} not found")
+        return GenerationInput(
+            trip_id=trip.id,
+            destination=trip.destination,
+            city=trip.city or "",
+            start_date=trip.start_date,
+            end_date=trip.end_date,
+            people_count=trip.people_count,
+            budget_min=trip.budget_min,
+            budget_max=trip.budget_max,
+            user_prompt=trip.user_prompt,
+            must_visit=tuple(trip.must_visit or ()),
+            thread_id=f"trip-{trip.id}",
+        )
+
+
+def _default_generate(generation_input: GenerationInput) -> dict:
+    return generate_draft(
+        destination=generation_input.destination,
+        city=generation_input.city,
+        start_date=generation_input.start_date,
+        end_date=generation_input.end_date,
+        people_count=generation_input.people_count,
+        budget_min=generation_input.budget_min,
+        budget_max=generation_input.budget_max,
+        user_prompt=generation_input.user_prompt,
+        must_visit=list(generation_input.must_visit) or None,
+        thread_id=generation_input.thread_id,
+    )
+
+
 def _execute_claim(claim: ClaimedGenerationJob, regenerate: Regenerate) -> None:
     try:
-        with SessionLocal() as execution_db:
-            trip = execution_db.get(Trip, claim.trip_id)
-            if trip is None:
-                raise MissingTripError(f"Trip {claim.trip_id} not found")
+        generation_input = _load_generation_input(claim)
+        if not update_job_progress(
+            claim.id,
+            claim.run_token,
+            progress=30,
+            message="AI 正在生成行程...",
+        ):
+            return
 
-            if not update_job_progress(
-                claim.id,
-                claim.run_token,
-                progress=30,
-                message="AI 正在生成行程...",
-            ):
-                return
+        with _heartbeat_during(claim):
+            draft = regenerate(generation_input)
 
-            with _heartbeat_during(claim):
-                regenerate(execution_db, trip)
-
-        if not mark_job_succeeded(claim.id, claim.run_token):
+        if not finalize_job_success(claim, draft):
             logger.warning("stale generation owner could not complete job %s", claim.id)
     except Exception as exc:
         disposition = classify_generation_error(exc)
@@ -161,7 +213,7 @@ def process_pending_jobs(
     regenerate: Regenerate | None = None,
 ) -> int:
     """Recover stale work, then claim and handle up to ``max_jobs`` attempts."""
-    regenerate = regenerate or regenerate_trip
+    regenerate = regenerate or _default_generate
     recover_stale_jobs()
     handled = 0
 

@@ -114,10 +114,10 @@ def create_trip(
         status="generating",
     )
     db.add(trip)
+    db.flush()
+    create_job(db, trip.id, commit=False)
     db.commit()
     db.refresh(trip)
-
-    create_job(db, trip.id)
 
     return trip
 
