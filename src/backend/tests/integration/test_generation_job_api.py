@@ -1,7 +1,8 @@
 """API coverage for durable job query, progress recovery, and notification SSE."""
 
 import json
-from uuid import uuid4
+from datetime import date
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,7 +11,12 @@ from app.db.session import SessionLocal
 from app.main import app
 from app.models.trip import GenerationJob, Trip
 from app.services import job_worker
-from app.services.generation_jobs import GenerationJobStatus, transition_job
+from app.services.generation_jobs import (
+    GenerationJobStatus,
+    claim_next_job,
+    mark_job_failed,
+    transition_job,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -239,3 +245,117 @@ def test_distinct_idempotency_keys_create_distinct_trips(
     assert second.status_code == 201
     assert first.json()["id"] != second.json()["id"]
     assert first.json()["job_id"] != second.json()["job_id"]
+
+
+def test_create_trip_preserves_existing_trip_fields(api_client: TestClient) -> None:
+    payload = _create_payload()
+    response = api_client.post("/api/v1/trips", json=payload)
+
+    assert response.status_code == 201
+    body = response.json()
+    for field in (
+        "id",
+        "destination",
+        "city",
+        "start_date",
+        "end_date",
+        "people_count",
+        "status",
+        "created_at",
+        "updated_at",
+        "days",
+        "job_id",
+    ):
+        assert field in body
+    assert body["destination"] == payload["destination"]
+    assert body["city"] == payload["city"]
+    assert body["start_date"] == payload["start_date"]
+    assert body["end_date"] == payload["end_date"]
+    assert body["people_count"] == payload["people_count"]
+    assert body["status"] == "generating"
+
+
+def test_progress_without_job_keeps_compatible_unknown_payload(
+    api_client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        trip = Trip(
+            destination=f"job-api-no-job-{uuid4()}",
+            start_date=date(2031, 3, 1),
+            end_date=date(2031, 3, 2),
+            status="generating",
+        )
+        db.add(trip)
+        db.commit()
+        trip_id = trip.id
+
+    try:
+        response = api_client.get(f"/api/v1/trips/{trip_id}/progress")
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "unknown",
+            "progress": 0,
+            "message": "暂无进度信息",
+            "job_id": None,
+        }
+    finally:
+        with SessionLocal() as db:
+            db.query(Trip).filter(Trip.id == trip_id).delete()
+            db.commit()
+
+
+def test_blank_idempotency_key_does_not_replay(api_client: TestClient) -> None:
+    first = api_client.post(
+        "/api/v1/trips",
+        json=_create_payload(),
+        headers={"Idempotency-Key": "   "},
+    )
+    second = api_client.post(
+        "/api/v1/trips",
+        json=_create_payload(),
+        headers={"Idempotency-Key": "   "},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+    assert first.json()["job_id"] != second.json()["job_id"]
+
+
+def test_get_job_is_source_of_truth_after_status_change(
+    api_client: TestClient,
+) -> None:
+    created = api_client.post("/api/v1/trips", json=_create_payload()).json()
+    _complete_job(created["job_id"])
+
+    response = api_client.get(f"/api/v1/jobs/{created['job_id']}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "succeeded"
+    assert "run_token" not in body
+    assert "error" not in body
+
+
+def test_failed_job_exposes_error_code_not_raw_error(api_client: TestClient) -> None:
+    created = api_client.post("/api/v1/trips", json=_create_payload()).json()
+    claim = claim_next_job()
+    assert claim is not None
+    assert claim.id == UUID(created["job_id"])
+    assert mark_job_failed(
+        claim,
+        error_code="INTERNAL_ERROR",
+        error="secret traceback should stay private",
+        message="行程生成失败，请稍后重试",
+    )
+
+    response = api_client.get(f"/api/v1/jobs/{created['job_id']}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error_code"] == "INTERNAL_ERROR"
+    assert body["message"] == "行程生成失败，请稍后重试"
+    assert "error" not in body
+    assert "secret traceback" not in str(body)
+    assert "run_token" not in body

@@ -121,6 +121,25 @@ def test_claim_skips_a_locked_eligible_row(job_factory) -> None:
     assert load_job(job_id).status == "pending"
 
 
+def test_two_workers_claim_distinct_eligible_jobs(job_factory) -> None:
+    first_id = job_factory()
+    second_id = job_factory()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = [
+            future.result(timeout=2)
+            for future in (
+                pool.submit(generation_jobs.claim_next_job),
+                pool.submit(generation_jobs.claim_next_job),
+            )
+        ]
+
+    claimed_ids = {claim.id for claim in claims if claim is not None}
+    assert claimed_ids == {first_id, second_id}
+    assert load_job(first_id).status == "running"
+    assert load_job(second_id).status == "running"
+
+
 def test_claim_skips_locked_row_and_claims_second_eligible_row(job_factory) -> None:
     locked_id = job_factory()
     available_id = job_factory()
