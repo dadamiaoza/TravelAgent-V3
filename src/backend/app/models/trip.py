@@ -1,7 +1,7 @@
 """SQLAlchemy ORM models for trips, days, and items."""
 import uuid
 from datetime import date, time, datetime
-from sqlalchemy import String, Integer, Float, Boolean, Date, Time, DateTime, ForeignKey, Text, text
+from sqlalchemy import String, Integer, Float, Boolean, Date, Time, DateTime, ForeignKey, Text, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
@@ -99,12 +99,38 @@ class AmapCache(Base):
 
 class GenerationJob(Base):
     __tablename__ = "generation_jobs"
+    __table_args__ = (
+        Index(
+            "uq_generation_jobs_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+        Index(
+            "uq_generation_jobs_active_trip",
+            "trip_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running', 'retry_wait')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     trip_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     progress: Mapped[int] = mapped_column(Integer(), default=0)
     attempts: Mapped[int] = mapped_column(Integer(), default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer(), default=3, server_default=text("3"))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_token: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status_version: Mapped[int] = mapped_column(Integer(), default=0, server_default=text("0"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("now()"),
+        onupdate=text("now()"),
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     message: Mapped[str | None] = mapped_column(Text(), nullable=True)
     error: Mapped[str | None] = mapped_column(Text(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
