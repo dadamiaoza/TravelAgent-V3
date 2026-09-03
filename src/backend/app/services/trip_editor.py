@@ -265,14 +265,43 @@ def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:
     return regenerate_trip(db, trip)
 
 
+def generate_draft(
+    *,
+    destination: str,
+    city: str = "",
+    start_date,
+    end_date,
+    people_count: int = 1,
+    budget_min: int | None = None,
+    budget_max: int | None = None,
+    user_prompt: str | None = None,
+    must_visit: list[str] | None = None,
+    thread_id: str = "itinerary",
+    generator: TripGenerator | None = None,
+) -> dict:
+    """Generate a pure itinerary draft without opening a business transaction."""
+    generator = generator or _generator
+    return generator.generate(
+        destination=destination,
+        city=city,
+        start_date=start_date,
+        end_date=end_date,
+        people_count=people_count,
+        budget_min=budget_min,
+        budget_max=budget_max,
+        user_prompt=user_prompt,
+        must_visit=must_visit,
+        thread_id=thread_id,
+    )
+
+
 def regenerate_trip(
     db: Session,
     trip: Trip,
     generator: TripGenerator | None = None,
 ) -> Trip:
     """Regenerate a full trip using the injected generator strategy."""
-    generator = generator or _generator
-    draft = generator.generate(
+    draft = generate_draft(
         destination=trip.destination,
         city=trip.city or "",
         start_date=trip.start_date,
@@ -283,6 +312,7 @@ def regenerate_trip(
         user_prompt=trip.user_prompt,
         must_visit=trip.must_visit,
         thread_id=f"trip-{trip.id}",
+        generator=generator,
     )
     persist_itinerary(db, trip, draft, trip.start_date)
     return trip

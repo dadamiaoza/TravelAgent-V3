@@ -169,11 +169,10 @@ src/frontend/src/lib/types.ts
 
 ## 3.5.1 进度实时推送（SSE）
 
-- `GET /trips/{id}/progress/stream`
-- 前端使用 `EventSource` 订阅
-- 每秒推送 `progress` 事件
-- 任务完成推送 `done` 事件并关闭连接
-- 不再使用前端轮询
+- `GET /trips/{id}/progress/stream` 保留为兼容通知流，payload 含 `job_id`
+- 持久化查询：`GET /jobs/{job_id}`；通知流：`GET /jobs/{job_id}/events`
+- 行程页通过 `/progress` 找回 `job_id`，再订阅 Job SSE；断线回查 Job GET
+- `/progress/stream` 仍推送 `progress`，终态推送 `done` 并关闭连接
 
 ## 3.5 异步生成 + 高德缓存
 

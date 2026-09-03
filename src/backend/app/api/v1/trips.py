@@ -3,13 +3,13 @@ import json
 import re
 import uuid
 from datetime import timedelta
-from typing import Dict
+from typing import Annotated, Dict
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -49,7 +49,12 @@ from app.services.trip_editor import (
     apply_delta,
     regenerate_trip,
 )
-from app.services.generation_jobs import create_job, update_job, get_latest_job_for_trip
+from app.services.generation_jobs import (
+    create_job,
+    get_job_by_idempotency_key,
+    get_latest_job_for_trip,
+    update_job,
+)
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -95,12 +100,33 @@ def suggest_trip(body: TripSuggestRequest):
         optimized_prompt=data.get("optimized_prompt", body.text),
           must_visit=data.get("must_visit") or [],
     )
+
+
+def _normalized_idempotency_key(raw_key: str | None) -> str | None:
+    key = (raw_key or "").strip()
+    return key or None
+
+
+def _trip_out_with_job(trip: Trip, job_id: UUID) -> TripOut:
+    return TripOut.model_validate(trip).model_copy(update={"job_id": job_id})
+
+
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(
     body: TripCreate,
     db: Session = Depends(get_db),
+    idempotency_key: Annotated[str | None, Header()] = None,
 ):
     """Create a trip immediately, then generate itinerary in background."""
+    key = _normalized_idempotency_key(idempotency_key)
+    if key:
+        existing = get_job_by_idempotency_key(db, key)
+        if existing is not None:
+            trip = db.get(Trip, existing.trip_id)
+            if trip is None:
+                raise HTTPException(status_code=500, detail="Idempotent trip not found")
+            return _trip_out_with_job(trip, existing.id)
+
     trip = Trip(
         destination=body.destination,
         city=body.city,
@@ -114,30 +140,50 @@ def create_trip(
         status="generating",
     )
     db.add(trip)
-    db.commit()
+    db.flush()
+    try:
+        job = create_job(db, trip.id, commit=False, idempotency_key=key)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if key:
+            existing = get_job_by_idempotency_key(db, key)
+            if existing is not None:
+                trip = db.get(Trip, existing.trip_id)
+                if trip is not None:
+                    return _trip_out_with_job(trip, existing.id)
+        raise
     db.refresh(trip)
+    db.refresh(job)
 
-    create_job(db, trip.id)
+    return _trip_out_with_job(trip, job.id)
 
-    return trip
+
+def _progress_payload(job: GenerationJob | None) -> dict:
+    if job is None:
+        return {
+            "status": "unknown",
+            "progress": 0,
+            "message": "暂无进度信息",
+            "job_id": None,
+        }
+    return {
+        "status": job.status or "unknown",
+        "progress": job.progress or 0,
+        "message": job.message or "",
+        "job_id": str(job.id),
+    }
 
 
 @router.get("/{trip_id}/progress")
 def get_generation_progress(trip_id: UUID, db: Session = Depends(get_db)):
     """查询异步生成进度（从 generation_jobs 读取）。"""
-    job = get_latest_job_for_trip(db, trip_id)
-    if not job:
-        return {"status": "unknown", "progress": 0, "message": "暂无进度信息"}
-    return {
-        "status": job.status or "unknown",
-        "progress": job.progress or 0,
-        "message": job.message or "",
-    }
+    return _progress_payload(get_latest_job_for_trip(db, trip_id))
 
 
 @router.get("/{trip_id}/progress/stream")
 def get_generation_progress_stream(trip_id: UUID, db: Session = Depends(get_db)):
-    """SSE 实时推送生成进度。"""
+    """SSE 实时推送生成进度。Job GET remains the durable source of truth."""
 
     async def event_generator():
         import asyncio
@@ -146,18 +192,11 @@ def get_generation_progress_stream(trip_id: UUID, db: Session = Depends(get_db))
         elapsed = 0
         while elapsed < max_seconds:
             job = get_latest_job_for_trip(db, trip_id)
-            if job:
-                payload = {
-                    "status": job.status or "unknown",
-                    "progress": job.progress or 0,
-                    "message": job.message or "",
-                }
-                yield f'event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n'
-                if job.status in ("succeeded", "failed"):
-                    yield f'event: done\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n'
-                    return
-            else:
-                yield 'event: progress\ndata: {"status":"unknown","progress":0,"message":"暂无进度信息"}\n\n'
+            payload = _progress_payload(job)
+            yield f"event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            if job is not None and job.status in ("succeeded", "failed"):
+                yield f"event: done\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                return
             await asyncio.sleep(1)
             elapsed += 1
 

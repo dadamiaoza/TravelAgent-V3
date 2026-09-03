@@ -12,6 +12,7 @@ export interface Trip {
   created_at?: string;
   updated_at?: string;
   days?: DayView[];
+  job_id?: string | null;
 }
 
 export interface DayView {
@@ -113,4 +114,29 @@ export interface GenerationProgress {
   status: string;
   progress: number;
   message: string;
+  job_id?: string | null;
+}
+
+export type GenerationJobStatus =
+  | "pending"
+  | "running"
+  | "retry_wait"
+  | "succeeded"
+  | "failed";
+
+export interface GenerationJob {
+  id: string;
+  trip_id: string;
+  status: GenerationJobStatus;
+  progress: number;
+  message?: string | null;
+  error_code?: string | null;
+  attempts: number;
+  max_attempts: number;
+  status_version?: number;
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  next_run_at?: string | null;
 }

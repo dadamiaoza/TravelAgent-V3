@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import type { SourceDocument, Trip } from "@/lib/types";
+import { waitForGenerationJob } from "@/lib/generationJob";
 
 export default function SourcePage() {
   const [searchParams] = useSearchParams();
@@ -139,6 +140,8 @@ export default function SourcePage() {
         people_count: 1,
       });
 
+      await waitForGenerationJob(newTrip);
+
       // 3. 把选中的 POI 导入新行程
       await importToTrip(newTrip.id, entityIds);
       setTripId(newTrip.id);
@@ -268,7 +271,7 @@ export default function SourcePage() {
                 disabled={loading || selectedIds.size === 0}
                 className="rounded bg-green-600 px-4 py-2 text-sm text-white disabled:opacity-60"
               >
-                {loading ? "正在创建…" : `根据攻略创建新行程并导入 ${selectedIds.size} 个 POI`}
+                {loading ? "正在生成并导入…" : `根据攻略创建新行程并导入 ${selectedIds.size} 个 POI`}
               </button>
             )}
 
