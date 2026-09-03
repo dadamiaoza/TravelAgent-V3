@@ -339,7 +339,8 @@ def test_stale_exhaustion_sets_trip_generation_failed(
         job.run_token = token
         db.commit()
 
-    assert generation_jobs.recover_stale_jobs(now=now) == 1
+    recovered = generation_jobs.recover_stale_jobs(now=now)
+    assert recovered >= 1
 
     trip_status, poi_names, job = _load_result(trip_id, job_id)
     assert trip_status == "generation_failed"

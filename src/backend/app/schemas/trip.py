@@ -269,6 +269,7 @@ class TripOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     days: list[ItineraryDayOut] = []
+    job_id: UUID | None = None
 
     model_config = {"from_attributes": True}
 

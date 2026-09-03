@@ -447,13 +447,32 @@ def create_job(
     trip_id: UUID,
     *,
     commit: bool = True,
+    idempotency_key: str | None = None,
 ) -> GenerationJob:
-    job = GenerationJob(trip_id=trip_id, status="pending", progress=0, message="等待生成")
+    job = GenerationJob(
+        trip_id=trip_id,
+        status="pending",
+        progress=0,
+        message="等待生成",
+        idempotency_key=idempotency_key,
+    )
     db.add(job)
     if commit:
         db.commit()
         db.refresh(job)
     return job
+
+
+def get_job(db: Session, job_id: UUID) -> GenerationJob | None:
+    return db.get(GenerationJob, job_id)
+
+
+def get_job_by_idempotency_key(db: Session, key: str) -> GenerationJob | None:
+    return (
+        db.query(GenerationJob)
+        .filter(GenerationJob.idempotency_key == key)
+        .one_or_none()
+    )
 
 
 def update_job(db: Session, job_id: UUID, **fields) -> GenerationJob:
