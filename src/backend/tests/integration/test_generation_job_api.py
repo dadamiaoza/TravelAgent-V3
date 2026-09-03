@@ -115,6 +115,27 @@ def test_get_trip_remains_compatible_without_requiring_job_id(
     assert "days" in body
 
 
+def test_progress_stream_includes_job_id_and_closes_on_done(
+    api_client: TestClient,
+) -> None:
+    created = api_client.post("/api/v1/trips", json=_create_payload()).json()
+    _complete_job(created["job_id"])
+
+    with api_client.stream(
+        "GET", f"/api/v1/trips/{created['id']}/progress/stream"
+    ) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        body = "".join(response.iter_text())
+
+    events = _parse_sse_events(body)
+    assert events
+    assert events[0][0] == "progress"
+    assert events[0][1]["job_id"] == created["job_id"]
+    assert events[0][1]["status"] == "succeeded"
+    assert any(name == "done" for name, _payload in events)
+
+
 def test_progress_includes_job_id_for_refresh_recovery(api_client: TestClient) -> None:
     created = api_client.post("/api/v1/trips", json=_create_payload()).json()
 

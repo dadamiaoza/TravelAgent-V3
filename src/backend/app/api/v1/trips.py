@@ -159,18 +159,52 @@ def create_trip(
     return _trip_out_with_job(trip, job.id)
 
 
-@router.get("/{trip_id}/progress")
-def get_generation_progress(trip_id: UUID, db: Session = Depends(get_db)):
-    """查询异步生成进度（从 generation_jobs 读取）。"""
-    job = get_latest_job_for_trip(db, trip_id)
-    if not job:
-        return {"status": "unknown", "progress": 0, "message": "暂无进度信息", "job_id": None}
+def _progress_payload(job: GenerationJob | None) -> dict:
+    if job is None:
+        return {
+            "status": "unknown",
+            "progress": 0,
+            "message": "暂无进度信息",
+            "job_id": None,
+        }
     return {
         "status": job.status or "unknown",
         "progress": job.progress or 0,
         "message": job.message or "",
         "job_id": str(job.id),
     }
+
+
+@router.get("/{trip_id}/progress")
+def get_generation_progress(trip_id: UUID, db: Session = Depends(get_db)):
+    """查询异步生成进度（从 generation_jobs 读取）。"""
+    return _progress_payload(get_latest_job_for_trip(db, trip_id))
+
+
+@router.get("/{trip_id}/progress/stream")
+def get_generation_progress_stream(trip_id: UUID, db: Session = Depends(get_db)):
+    """SSE 实时推送生成进度。Job GET remains the durable source of truth."""
+
+    async def event_generator():
+        import asyncio
+
+        max_seconds = 180
+        elapsed = 0
+        while elapsed < max_seconds:
+            job = get_latest_job_for_trip(db, trip_id)
+            payload = _progress_payload(job)
+            yield f"event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            if job is not None and job.status in ("succeeded", "failed"):
+                yield f"event: done\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                return
+            await asyncio.sleep(1)
+            elapsed += 1
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{trip_id}", response_model=TripOut)
