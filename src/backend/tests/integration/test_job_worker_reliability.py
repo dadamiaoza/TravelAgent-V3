@@ -2,6 +2,8 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+import threading
+import time
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,8 +12,19 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models.trip import GenerationJob, Trip
-from app.services import generation_jobs
+from app.services import generation_jobs, job_worker
 from app.services.job_worker import process_pending_jobs
+
+
+@pytest.fixture(scope="module", autouse=True)
+def suspend_application_worker():
+    """Keep daemon workers from consuming this module's committed DB fixtures."""
+    original = job_worker.process_pending_jobs
+    job_worker.process_pending_jobs = lambda max_jobs=1, **_kwargs: 0
+    try:
+        yield
+    finally:
+        job_worker.process_pending_jobs = original
 
 
 @pytest.fixture
@@ -26,6 +39,7 @@ def job_factory():
         next_run_at: datetime | None = None,
         heartbeat_at: datetime | None = None,
         run_token: UUID | None = None,
+        started_at: datetime | None = None,
     ) -> UUID:
         with SessionLocal() as db:
             trip = Trip(
@@ -43,6 +57,7 @@ def job_factory():
                 next_run_at=next_run_at,
                 heartbeat_at=heartbeat_at,
                 run_token=run_token,
+                started_at=started_at,
                 progress=0,
                 message="test",
             )
@@ -104,6 +119,56 @@ def test_claim_skips_a_locked_eligible_row(job_factory) -> None:
 
     assert result is None
     assert load_job(job_id).status == "pending"
+
+
+def test_claim_skips_locked_row_and_claims_second_eligible_row(job_factory) -> None:
+    locked_id = job_factory()
+    available_id = job_factory()
+
+    with SessionLocal() as locking_db:
+        locking_db.execute(
+            select(GenerationJob)
+            .where(GenerationJob.id == locked_id)
+            .with_for_update()
+        ).scalar_one()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            claim = pool.submit(generation_jobs.claim_next_job).result(timeout=2)
+
+    assert claim is not None
+    assert claim.id == available_id
+    assert load_job(locked_id).status == "pending"
+    assert load_job(available_id).status == "running"
+
+
+def test_claim_does_not_exceed_max_attempts(job_factory) -> None:
+    now = datetime.now(timezone.utc)
+    pending_id = job_factory(status="pending", attempts=3, max_attempts=3)
+    retry_id = job_factory(
+        status="retry_wait",
+        attempts=2,
+        max_attempts=2,
+        next_run_at=now - timedelta(seconds=1),
+    )
+
+    assert generation_jobs.claim_next_job(now=now) is None
+    assert load_job(pending_id).status == "pending"
+    assert load_job(pending_id).attempts == 3
+    assert load_job(retry_id).status == "retry_wait"
+    assert load_job(retry_id).attempts == 2
+
+
+@pytest.mark.parametrize(
+    ("attempts", "expected_seconds"),
+    [(1, 5), (2, 10), (3, 20), (4, 40), (5, 60), (20, 60)],
+)
+def test_retry_delay_uses_literal_bounded_backoff(
+    attempts: int,
+    expected_seconds: int,
+) -> None:
+    assert generation_jobs.retry_delay(attempts) == timedelta(
+        seconds=expected_seconds
+    )
 
 
 def test_retryable_failure_waits_then_exhausts_total_claims(job_factory) -> None:
@@ -175,6 +240,38 @@ def test_stale_recovery_retries_remaining_and_fails_exhausted(job_factory) -> No
     assert failed.status_version == 1
 
 
+def test_stale_recovery_handles_null_heartbeat_orphans(job_factory) -> None:
+    now = datetime(2030, 1, 1, 12, tzinfo=timezone.utc)
+    stale_started = now - timedelta(minutes=11)
+    fresh_started = now - timedelta(minutes=9)
+    never_started_id = job_factory(
+        status="running",
+        attempts=1,
+        heartbeat_at=None,
+        started_at=None,
+        run_token=uuid4(),
+    )
+    stale_started_id = job_factory(
+        status="running",
+        attempts=1,
+        heartbeat_at=None,
+        started_at=stale_started,
+        run_token=uuid4(),
+    )
+    fresh_started_id = job_factory(
+        status="running",
+        attempts=1,
+        heartbeat_at=None,
+        started_at=fresh_started,
+        run_token=uuid4(),
+    )
+
+    assert generation_jobs.recover_stale_jobs(now=now) == 2
+    assert load_job(never_started_id).status == "retry_wait"
+    assert load_job(stale_started_id).status == "retry_wait"
+    assert load_job(fresh_started_id).status == "running"
+
+
 def test_lifecycle_updates_reject_stale_run_token(job_factory) -> None:
     active_token = uuid4()
     job_id = job_factory(
@@ -215,6 +312,64 @@ def test_heartbeat_updates_only_for_active_token(job_factory) -> None:
     assert heartbeat.heartbeat_at == renewed
     assert heartbeat.status == "running"
     assert heartbeat.status_version == 0
+
+
+def test_heartbeat_lifecycle_renews_and_cleans_up_thread(job_factory) -> None:
+    now = datetime.now(timezone.utc)
+    job_id = job_factory()
+    claim = generation_jobs.claim_next_job(now=now)
+    assert claim is not None
+    assert claim.id == job_id
+
+    thread_name = f"generation-heartbeat-{job_id}"
+    with job_worker._heartbeat_during(claim, interval=0.01):
+        deadline = time.monotonic() + 1
+        while load_job(job_id).heartbeat_at == now and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert load_job(job_id).heartbeat_at > now
+
+    assert all(thread.name != thread_name for thread in threading.enumerate())
+
+
+def test_heartbeat_cleanup_does_not_wait_forever_for_hung_renewal(
+    monkeypatch,
+) -> None:
+    renewal_started = threading.Event()
+    release_renewal = threading.Event()
+    claim = generation_jobs.ClaimedGenerationJob(
+        id=uuid4(),
+        trip_id=uuid4(),
+        run_token=uuid4(),
+        attempts=1,
+        max_attempts=3,
+    )
+
+    def hanging_renewal(_job_id, _run_token) -> bool:
+        renewal_started.set()
+        release_renewal.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr(job_worker, "renew_heartbeat", hanging_renewal)
+
+    started = time.monotonic()
+    with job_worker._heartbeat_during(
+        claim,
+        interval=0.001,
+        join_timeout=0.05,
+    ):
+        assert renewal_started.wait(timeout=1)
+    elapsed = time.monotonic() - started
+    release_renewal.set()
+
+    assert elapsed < 0.5
+    deadline = time.monotonic() + 1
+    thread_name = f"generation-heartbeat-{claim.id}"
+    while (
+        any(thread.name == thread_name for thread in threading.enumerate())
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+    assert all(thread.name != thread_name for thread in threading.enumerate())
 
 
 def test_programming_error_is_permanent(job_factory) -> None:

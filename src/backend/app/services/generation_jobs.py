@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -65,6 +65,7 @@ def claim_next_job(
             job = db.execute(
                 select(GenerationJob)
                 .where(
+                    GenerationJob.attempts < GenerationJob.max_attempts,
                     or_(
                         GenerationJob.status == GenerationJobStatus.PENDING.value,
                         (
@@ -271,7 +272,16 @@ def recover_stale_jobs(
                 select(GenerationJob)
                 .where(
                     GenerationJob.status == GenerationJobStatus.RUNNING.value,
-                    GenerationJob.heartbeat_at < cutoff,
+                    or_(
+                        GenerationJob.heartbeat_at < cutoff,
+                        and_(
+                            GenerationJob.heartbeat_at.is_(None),
+                            or_(
+                                GenerationJob.started_at.is_(None),
+                                GenerationJob.started_at < cutoff,
+                            ),
+                        ),
+                    ),
                 )
                 .order_by(GenerationJob.created_at.asc())
                 .with_for_update(skip_locked=True)

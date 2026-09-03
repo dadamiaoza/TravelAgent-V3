@@ -29,6 +29,7 @@ from app.services.trip_editor import regenerate_trip
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SECONDS = 30.0
+HEARTBEAT_JOIN_TIMEOUT_SECONDS = 1.0
 Regenerate = Callable[[Session, Trip], object]
 
 
@@ -77,6 +78,7 @@ def classify_generation_error(exc: Exception) -> ErrorDisposition:
 def _heartbeat_during(
     claim: ClaimedGenerationJob,
     interval: float = HEARTBEAT_INTERVAL_SECONDS,
+    join_timeout: float = HEARTBEAT_JOIN_TIMEOUT_SECONDS,
 ) -> Iterator[None]:
     stop = threading.Event()
 
@@ -98,7 +100,13 @@ def _heartbeat_during(
         yield
     finally:
         stop.set()
-        thread.join()
+        thread.join(timeout=join_timeout)
+        if thread.is_alive():
+            logger.warning(
+                "heartbeat thread did not stop within %.1f seconds for job %s",
+                join_timeout,
+                claim.id,
+            )
 
 
 def _execute_claim(claim: ClaimedGenerationJob, regenerate: Regenerate) -> None:
