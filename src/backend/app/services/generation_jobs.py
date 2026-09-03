@@ -1,10 +1,20 @@
 """Generation job persistence helpers."""
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from uuid import UUID
+from typing import Callable
+from uuid import UUID, uuid4
 
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.trip import GenerationJob
+
+
+SessionFactory = Callable[[], Session]
+STALE_HEARTBEAT_AFTER = timedelta(minutes=10)
+STALE_RETRY_DELAY = timedelta(seconds=5)
 
 
 class GenerationJobStatus(str, Enum):
@@ -26,6 +36,267 @@ _ALLOWED_TRANSITIONS = {
     (GenerationJobStatus.RUNNING, GenerationJobStatus.SUCCEEDED),
     (GenerationJobStatus.RUNNING, GenerationJobStatus.FAILED),
 }
+
+
+@dataclass(frozen=True)
+class ClaimedGenerationJob:
+    """Immutable ownership data for one claimed generation attempt."""
+
+    id: UUID
+    trip_id: UUID
+    run_token: UUID
+    attempts: int
+    max_attempts: int
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def claim_next_job(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> ClaimedGenerationJob | None:
+    """Atomically claim the oldest eligible job without waiting on other workers."""
+    claimed_at = now or _now()
+    with session_factory() as db:
+        with db.begin():
+            job = db.execute(
+                select(GenerationJob)
+                .where(
+                    or_(
+                        GenerationJob.status == GenerationJobStatus.PENDING.value,
+                        (
+                            (
+                                GenerationJob.status
+                                == GenerationJobStatus.RETRY_WAIT.value
+                            )
+                            & (GenerationJob.next_run_at <= claimed_at)
+                        ),
+                    )
+                )
+                .order_by(GenerationJob.created_at.asc())
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).scalar_one_or_none()
+            if job is None:
+                return None
+
+            run_token = uuid4()
+            job.status = GenerationJobStatus.RUNNING.value
+            job.attempts = (job.attempts or 0) + 1
+            job.run_token = run_token
+            job.heartbeat_at = claimed_at
+            job.next_run_at = None
+            job.progress = 10
+            job.message = "正在准备生成行程..."
+            job.started_at = claimed_at
+            job.finished_at = None
+            job.status_version = (job.status_version or 0) + 1
+            return ClaimedGenerationJob(
+                id=job.id,
+                trip_id=job.trip_id,
+                run_token=run_token,
+                attempts=job.attempts,
+                max_attempts=job.max_attempts,
+            )
+
+
+def _update_running_job(
+    job_id: UUID,
+    run_token: UUID,
+    fields: dict,
+    *,
+    increment_version: bool,
+    session_factory: SessionFactory,
+) -> bool:
+    values = dict(fields)
+    if increment_version:
+        values["status_version"] = GenerationJob.status_version + 1
+
+    with session_factory() as db:
+        result = db.execute(
+            update(GenerationJob)
+            .where(
+                GenerationJob.id == job_id,
+                GenerationJob.status == GenerationJobStatus.RUNNING.value,
+                GenerationJob.run_token == run_token,
+            )
+            .values(**values)
+        )
+        db.commit()
+        return result.rowcount == 1
+
+
+def update_job_progress(
+    job_id: UUID,
+    run_token: UUID,
+    *,
+    progress: int,
+    message: str,
+    session_factory: SessionFactory = SessionLocal,
+) -> bool:
+    """Update progress only while the caller still owns the running attempt."""
+    return _update_running_job(
+        job_id,
+        run_token,
+        {"progress": progress, "message": message},
+        increment_version=False,
+        session_factory=session_factory,
+    )
+
+
+def renew_heartbeat(
+    job_id: UUID,
+    run_token: UUID,
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> bool:
+    """Renew only the active attempt's heartbeat in a short transaction."""
+    return _update_running_job(
+        job_id,
+        run_token,
+        {"heartbeat_at": now or _now()},
+        increment_version=False,
+        session_factory=session_factory,
+    )
+
+
+def retry_delay(attempts: int) -> timedelta:
+    """Return bounded exponential retry delay for a completed attempt."""
+    seconds = min(5 * (2 ** max(attempts - 1, 0)), 60)
+    return timedelta(seconds=seconds)
+
+
+def schedule_job_retry(
+    claim: ClaimedGenerationJob,
+    *,
+    error_code: str,
+    error: str,
+    message: str,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> bool:
+    """Move an owned running attempt to retry_wait."""
+    failed_at = now or _now()
+    return _update_running_job(
+        claim.id,
+        claim.run_token,
+        {
+            "status": GenerationJobStatus.RETRY_WAIT.value,
+            "progress": 0,
+            "message": message,
+            "error": error,
+            "error_code": error_code,
+            "next_run_at": failed_at + retry_delay(claim.attempts),
+            "heartbeat_at": None,
+            "run_token": None,
+        },
+        increment_version=True,
+        session_factory=session_factory,
+    )
+
+
+def mark_job_failed(
+    claim: ClaimedGenerationJob,
+    *,
+    error_code: str,
+    error: str,
+    message: str,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> bool:
+    """Fail an owned running attempt with safe public and detailed internal text."""
+    return _update_running_job(
+        claim.id,
+        claim.run_token,
+        {
+            "status": GenerationJobStatus.FAILED.value,
+            "progress": 100,
+            "message": message,
+            "error": error,
+            "error_code": error_code,
+            "next_run_at": None,
+            "heartbeat_at": None,
+            "run_token": None,
+            "finished_at": now or _now(),
+        },
+        increment_version=True,
+        session_factory=session_factory,
+    )
+
+
+def mark_job_succeeded(
+    job_id: UUID,
+    run_token: UUID,
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> bool:
+    """Complete a job only if the caller still owns its running attempt."""
+    return _update_running_job(
+        job_id,
+        run_token,
+        {
+            "status": GenerationJobStatus.SUCCEEDED.value,
+            "progress": 100,
+            "message": "行程生成完成",
+            "error": None,
+            "error_code": None,
+            "next_run_at": None,
+            "heartbeat_at": None,
+            "run_token": None,
+            "finished_at": now or _now(),
+        },
+        increment_version=True,
+        session_factory=session_factory,
+    )
+
+
+def recover_stale_jobs(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> int:
+    """Recover running attempts whose worker heartbeat has expired."""
+    recovered_at = now or _now()
+    cutoff = recovered_at - STALE_HEARTBEAT_AFTER
+    recovered = 0
+
+    with session_factory() as db:
+        with db.begin():
+            jobs = db.execute(
+                select(GenerationJob)
+                .where(
+                    GenerationJob.status == GenerationJobStatus.RUNNING.value,
+                    GenerationJob.heartbeat_at < cutoff,
+                )
+                .order_by(GenerationJob.created_at.asc())
+                .with_for_update(skip_locked=True)
+            ).scalars()
+
+            for job in jobs:
+                job.error_code = "WORKER_LOST"
+                job.error = "Worker heartbeat expired"
+                job.heartbeat_at = None
+                job.run_token = None
+                job.status_version = (job.status_version or 0) + 1
+                if (job.attempts or 0) < job.max_attempts:
+                    job.status = GenerationJobStatus.RETRY_WAIT.value
+                    job.progress = 0
+                    job.message = "生成任务中断，正在准备重试"
+                    job.next_run_at = recovered_at + STALE_RETRY_DELAY
+                else:
+                    job.status = GenerationJobStatus.FAILED.value
+                    job.progress = 100
+                    job.message = "行程生成失败，请稍后重试"
+                    job.next_run_at = None
+                    job.finished_at = recovered_at
+                recovered += 1
+
+    return recovered
 
 
 def transition_job(
