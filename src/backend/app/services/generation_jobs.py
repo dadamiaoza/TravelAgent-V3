@@ -61,13 +61,11 @@ def _terminalize_eligible_exhausted_jobs(
         select(GenerationJob)
         .where(
             GenerationJob.attempts >= GenerationJob.max_attempts,
-            or_(
-                GenerationJob.status == GenerationJobStatus.PENDING.value,
-                and_(
-                    GenerationJob.status
-                    == GenerationJobStatus.RETRY_WAIT.value,
-                    GenerationJob.next_run_at <= terminalized_at,
-                ),
+            GenerationJob.status.in_(
+                (
+                    GenerationJobStatus.PENDING.value,
+                    GenerationJobStatus.RETRY_WAIT.value,
+                )
             ),
         )
         .order_by(GenerationJob.created_at.asc())

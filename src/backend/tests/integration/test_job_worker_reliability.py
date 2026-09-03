@@ -141,7 +141,7 @@ def test_claim_skips_locked_row_and_claims_second_eligible_row(job_factory) -> N
     assert load_job(available_id).status == "running"
 
 
-def test_claim_terminalizes_eligible_exhausted_jobs_before_selecting_work(
+def test_claim_immediately_terminalizes_all_exhausted_active_jobs(
     job_factory,
 ) -> None:
     now = datetime.now(timezone.utc)
@@ -167,11 +167,11 @@ def test_claim_terminalizes_eligible_exhausted_jobs_before_selecting_work(
         max_attempts=2,
         next_run_at=now + timedelta(minutes=1),
     )
-    pending_trip_id = load_job(pending_id).trip_id
+    future_retry_trip_id = load_job(future_retry_id).trip_id
 
     assert generation_jobs.claim_next_job(now=now) is None
 
-    for job_id in (pending_id, retry_id):
+    for job_id in (pending_id, retry_id, future_retry_id):
         exhausted = load_job(job_id)
         assert exhausted.status == "failed"
         assert exhausted.progress == 100
@@ -184,11 +184,9 @@ def test_claim_terminalizes_eligible_exhausted_jobs_before_selecting_work(
         assert exhausted.next_run_at is None
         assert exhausted.status_version == 1
 
-    assert load_job(future_retry_id).status == "retry_wait"
-
     with SessionLocal() as db:
         replacement = GenerationJob(
-            trip_id=pending_trip_id,
+            trip_id=future_retry_trip_id,
             status="pending",
             progress=0,
             message="replacement",
