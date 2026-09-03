@@ -141,21 +141,61 @@ def test_claim_skips_locked_row_and_claims_second_eligible_row(job_factory) -> N
     assert load_job(available_id).status == "running"
 
 
-def test_claim_does_not_exceed_max_attempts(job_factory) -> None:
+def test_claim_terminalizes_eligible_exhausted_jobs_before_selecting_work(
+    job_factory,
+) -> None:
     now = datetime.now(timezone.utc)
-    pending_id = job_factory(status="pending", attempts=3, max_attempts=3)
+    pending_id = job_factory(
+        status="pending",
+        attempts=3,
+        max_attempts=3,
+        next_run_at=now,
+        heartbeat_at=now,
+        run_token=uuid4(),
+    )
     retry_id = job_factory(
         status="retry_wait",
         attempts=2,
         max_attempts=2,
         next_run_at=now - timedelta(seconds=1),
+        heartbeat_at=now,
+        run_token=uuid4(),
     )
+    future_retry_id = job_factory(
+        status="retry_wait",
+        attempts=2,
+        max_attempts=2,
+        next_run_at=now + timedelta(minutes=1),
+    )
+    pending_trip_id = load_job(pending_id).trip_id
 
     assert generation_jobs.claim_next_job(now=now) is None
-    assert load_job(pending_id).status == "pending"
-    assert load_job(pending_id).attempts == 3
-    assert load_job(retry_id).status == "retry_wait"
-    assert load_job(retry_id).attempts == 2
+
+    for job_id in (pending_id, retry_id):
+        exhausted = load_job(job_id)
+        assert exhausted.status == "failed"
+        assert exhausted.progress == 100
+        assert exhausted.attempts == exhausted.max_attempts
+        assert exhausted.finished_at == now
+        assert exhausted.error_code == "RETRY_EXHAUSTED"
+        assert exhausted.message == "行程生成失败，请稍后重试"
+        assert exhausted.run_token is None
+        assert exhausted.heartbeat_at is None
+        assert exhausted.next_run_at is None
+        assert exhausted.status_version == 1
+
+    assert load_job(future_retry_id).status == "retry_wait"
+
+    with SessionLocal() as db:
+        replacement = GenerationJob(
+            trip_id=pending_trip_id,
+            status="pending",
+            progress=0,
+            message="replacement",
+        )
+        db.add(replacement)
+        db.commit()
+        assert replacement.status == "pending"
 
 
 @pytest.mark.parametrize(

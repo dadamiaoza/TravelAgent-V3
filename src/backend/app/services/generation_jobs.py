@@ -53,6 +53,55 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _terminalize_eligible_exhausted_jobs(
+    db: Session,
+    terminalized_at: datetime,
+) -> int:
+    jobs = db.execute(
+        select(GenerationJob)
+        .where(
+            GenerationJob.attempts >= GenerationJob.max_attempts,
+            or_(
+                GenerationJob.status == GenerationJobStatus.PENDING.value,
+                and_(
+                    GenerationJob.status
+                    == GenerationJobStatus.RETRY_WAIT.value,
+                    GenerationJob.next_run_at <= terminalized_at,
+                ),
+            ),
+        )
+        .order_by(GenerationJob.created_at.asc())
+        .with_for_update(skip_locked=True)
+    ).scalars()
+
+    terminalized = 0
+    for job in jobs:
+        job.status = GenerationJobStatus.FAILED.value
+        job.progress = 100
+        job.message = "行程生成失败，请稍后重试"
+        job.error = "Generation job exhausted all retry attempts"
+        job.error_code = "RETRY_EXHAUSTED"
+        job.next_run_at = None
+        job.heartbeat_at = None
+        job.run_token = None
+        job.finished_at = terminalized_at
+        job.status_version = (job.status_version or 0) + 1
+        terminalized += 1
+    return terminalized
+
+
+def terminalize_exhausted_jobs(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> int:
+    """Fail eligible exhausted active jobs through an explicit recovery path."""
+    terminalized_at = now or _now()
+    with session_factory() as db:
+        with db.begin():
+            return _terminalize_eligible_exhausted_jobs(db, terminalized_at)
+
+
 def claim_next_job(
     *,
     session_factory: SessionFactory = SessionLocal,
@@ -62,6 +111,7 @@ def claim_next_job(
     claimed_at = now or _now()
     with session_factory() as db:
         with db.begin():
+            _terminalize_eligible_exhausted_jobs(db, claimed_at)
             job = db.execute(
                 select(GenerationJob)
                 .where(
