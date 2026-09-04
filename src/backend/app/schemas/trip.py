@@ -6,6 +6,17 @@ from pydantic import BaseModel, Field
 
 # ── Request schemas ──
 
+class SelectedEntity(BaseModel):
+    """User-checked POI used as Job fill input. Not search entry C."""
+
+    poi_name: str = Field(..., min_length=1, max_length=256)
+    day_index: int = Field(default=1, ge=1, le=30)
+    seq: int = Field(default=1, ge=0)
+    lat: float | None = None
+    lng: float | None = None
+    suggested_duration_h: float | None = Field(default=None, ge=0, le=24)
+
+
 class TripCreate(BaseModel):
     destination: str = Field(..., min_length=1, max_length=128, examples=["北京"])
     city: str | None = Field(default=None, max_length=128)
@@ -19,6 +30,7 @@ class TripCreate(BaseModel):
     user_prompt: str | None = None
     # 用户明确指定的必去地点
     must_visit: list[str] | None = None
+    selected_entities: list[SelectedEntity] | None = None
 
 
 class TripGenerate(BaseModel):

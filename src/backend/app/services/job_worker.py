@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 from app.db.session import SessionLocal
-from app.models.trip import Trip
+from app.models.trip import Trip, GenerationJob
 from app.services.generation_jobs import (
     ClaimedGenerationJob,
     append_job_stage,
@@ -25,7 +25,8 @@ from app.services.generation_jobs import (
     renew_heartbeat,
     schedule_job_retry,
 )
-from app.services.trip_editor import generate_draft
+from app.services.itinerary import fill_itinerary_draft, route_itinerary_draft
+from app.services.fact_verify import verify_itinerary_draft
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class GenerationInput:
     budget_max: int | None
     user_prompt: str | None
     must_visit: tuple[str, ...]
+    selected_entities: tuple[dict, ...]
     thread_id: str
 
 
@@ -134,6 +136,9 @@ def _load_generation_input(claim: ClaimedGenerationJob) -> GenerationInput:
         trip = db.get(Trip, claim.trip_id)
         if trip is None:
             raise MissingTripError(f"Trip {claim.trip_id} not found")
+        job = db.get(GenerationJob, claim.id)
+        payload = (job.payload if job is not None else None) or {}
+        entities = payload.get("selected_entities") or []
         return GenerationInput(
             trip_id=trip.id,
             destination=trip.destination,
@@ -145,6 +150,7 @@ def _load_generation_input(claim: ClaimedGenerationJob) -> GenerationInput:
             budget_max=trip.budget_max,
             user_prompt=trip.user_prompt,
             must_visit=tuple(trip.must_visit or ()),
+            selected_entities=tuple(entities),
             thread_id=f"trip-{trip.id}",
         )
 
@@ -153,7 +159,7 @@ def _default_generate(
     generation_input: GenerationInput,
     on_stage: Callable[[str, int, str], bool | None] | None = None,
 ) -> dict:
-    return generate_draft(
+    filled = fill_itinerary_draft(
         destination=generation_input.destination,
         city=generation_input.city,
         start_date=generation_input.start_date,
@@ -163,9 +169,27 @@ def _default_generate(
         budget_max=generation_input.budget_max,
         user_prompt=generation_input.user_prompt,
         must_visit=list(generation_input.must_visit) or None,
+        selected_entities=list(generation_input.selected_entities) or None,
         thread_id=generation_input.thread_id,
-        on_stage=on_stage,
     )
+    if on_stage is not None:
+        on_stage("route", 70, "正在补路线...")
+    routed = route_itinerary_draft(filled)
+    if on_stage is not None:
+        on_stage("verify", 90, "正在核对开放时间/天气...")
+    try:
+        outcome = verify_itinerary_draft(
+            routed,
+            city=generation_input.city or generation_input.destination,
+            start_date=generation_input.start_date,
+        )
+        if outcome.warnings and on_stage is not None:
+            on_stage("warning", 95, outcome.summary[:500])
+    except Exception:
+        logger.exception("generation verify failed for trip %s", generation_input.trip_id)
+        if on_stage is not None:
+            on_stage("warning", 95, "时效核对未完成，行程已按路线生成")
+    return routed
 
 
 def _stage_reporter(claim: ClaimedGenerationJob):
@@ -185,7 +209,12 @@ def _execute_claim(claim: ClaimedGenerationJob, regenerate: Regenerate) -> None:
     try:
         generation_input = _load_generation_input(claim)
         report = _stage_reporter(claim)
-        if not report("plan", 30, "正在规划景点..."):
+        fill_message = (
+            "正在按勾选排行程..."
+            if generation_input.selected_entities
+            else "正在规划景点..."
+        )
+        if not report("fill", 30, fill_message):
             return
 
         with _heartbeat_during(claim):

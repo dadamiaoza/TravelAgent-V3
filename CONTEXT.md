@@ -211,3 +211,10 @@ _Avoid_: 历史记录、备份
 - **Supervisor Memory**：PostgresSaver（聊天本身就是多轮对话，需记忆）
 - **入口**：新增 `POST /api/v1/chat` 统一入口，原有独立端点保留
 - **服务层下沉**：编排决策上移至 Supervisor，服务层退为"执行者"（JSON 解析、ORM 映射、DB 读写）
+
+### 2026-09 产品形态修正（V3）
+
+- **生成**：`GenerationJob` 任务图 fill → `optimize_itinerary()` → verify。不是 Supervisor，也不是 `itinerary_gen` Agent 再 handoff 路线 Agent。
+- **协作**：产品聊天为 `POST /trips/{id}/chat`（建议经用户采纳后 `apply_delta`）。`POST /api/v1/chat` 为学习遗留入口。
+- **入口**：攻略勾选与从零规划汇入同一排路器；勾选后不得先跑一遍从零生成。
+- 完整需求与阶段：[requirements-v3.md](.ad/specs/ai-travel-assistant/requirements-v3.md)、[technical-roadmap-v3.md](.ad/specs/ai-travel-assistant/technical-roadmap-v3.md)

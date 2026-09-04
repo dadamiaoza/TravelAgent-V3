@@ -20,3 +20,10 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Interview prep (local only)
+interview-recap.md
+tech-stack-study-guide.md
+
+# TypeScript incremental cache
+*.tsbuildinfo

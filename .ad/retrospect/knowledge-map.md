@@ -1,12 +1,17 @@
 # 知识地图：AI 旅行规划助手 全栈学习笔记
 
 > 持续生长的知识地图。随学习深入不断补充、修正、拓展。
-> 最后更新：2026-05-21
+> 最后更新：2026-09-04
+>
+> **完整复盘从 [§0](#0-先看这个项目现在实际怎么跑) 读起。** §1–13 是 5 月学习笔记（教学形状）；§14–16 是 9 月纠正。两套不要混成「当前架构」。
+>
+> 产品需求与开发路线（2026-09）：[requirements-v3.md](../specs/ai-travel-assistant/requirements-v3.md)、[technical-roadmap-v3.md](../specs/ai-travel-assistant/technical-roadmap-v3.md)。与 V1/V2 冲突时以 V3 为准。
 
 ---
 
 ## 目录
 
+- [0. 先看这个：项目现在实际怎么跑](#0-先看这个项目现在实际怎么跑)
 - [1. LangChain 基础角色](#1-langchain-基础角色)
 - [2. 模型：invoke / stream、参数与初始化](#2-模型invoke--stream参数与初始化)
 - [3. 消息与提示词](#3-消息与提示词谁说话怎么说)
@@ -20,6 +25,133 @@
 - [11. 路线优化：从 mock 到真实 API 路径排序](#11-路线优化从-mock-到真实-api-路径排序)
 - [12. MVP 后规划：记忆架构与外部集成](#12-mvp-后规划记忆架构与外部集成)
 - [13. LLM 优势边界与设计决策树](#13-llm-优势边界与设计决策树)
+- [14. 可靠异步生成：Job 才是真源](#14-可靠异步生成job-才是真源)
+- [15. 一次规划：什么时候不该再开 Agent](#15-一次规划什么时候不该再开-agent)
+- [16. 复盘如何变成面试题](#16-复盘如何变成面试题)
+
+---
+
+## 0. 先看这个：项目现在实际怎么跑
+
+> 9 月 vibe coding 里最清楚的一次感觉：把固定步骤包成 Agent，系统会变慢、变难测、变难讲。完整调用链对照代码，不对照 5 月的学习目标。盘点见 [过度包装复盘](2026-09-04_Agent-Overwrap-Inventory.md)。
+
+### 三种调用形态（先立标准）
+
+仓库里凡是打了 MiniMax 的地方，只可能是下面三种之一。面试和复盘都用这张表，不要用「我们是多智能体系统」一笔带过。
+
+| 形态 | 模型做什么 | 步骤谁决定 | 现在该用在哪 |
+|------|------------|------------|--------------|
+| **Workflow** | 最多一次 `model.invoke`，或不调模型 | **你写死的顺序** | 建议参数、排路、合并去重、行程聊天出 Delta、Job 状态机 |
+| **单 Agent** | 自己决定调哪些 Tool、调几次 | 模型 + 工具循环 | 只有「选哪些点 / 从非结构化文本抽出什么」这种不确定步骤 |
+| **Supervisor** | 再决定把话交给哪个 Agent | 模型调 Agent | 一个入口吃所有自然语言。**前端没有这个入口** |
+
+判断句：
+
+```
+这段逻辑每次都必须发生，且顺序固定？
+  → Workflow（函数 / Service / Worker）
+用户一句话里，工具集合和次数事先不知道？
+  → 单 Agent
+用户一句话可能是完全不同的产品功能，且没有各自的页面？
+  → 才需要 Supervisor
+```
+
+5 月为了学习，很多 Workflow 被做成了第三种。9 月生成变快，本质是把生成主路径从「假 Supervisor 管道」收成 Workflow。
+
+### 前端真实有三条路
+
+```
+首页 /                         攻略 /sources                      行程 /trips/:id
+  │                              │                                  │
+  ├ POST /trips/suggest          ├ POST /sources                    ├ 节点增删改排
+  │   一次 LLM，不是 Agent       │   存文本                         │   trip_editor，无模型
+  ├ POST /trips                  ├ POST .../parse                   ├ POST .../reoptimize
+  │   建 Trip + Job              │   guide_parser Agent             │   直调 optimize_itinerary
+  └ 跳到行程页等 SSE             ├ 用户勾选 POI                     ├ POST .../chat/stream
+                                 └ 导入已有行程                     │   一次 LLM 出 Delta
+                                   或带 selected_entities 创建 Job   └ 用户点采纳 → apply_delta
+                                   （fill 按勾选拼天，不再从零套娃）
+```
+
+**主路径 B（首页从零生成）——这是你测过变快的那条：**
+
+```
+浏览器
+  → POST /trips/suggest          ChatOpenAI 填表（Workflow）
+  → POST /trips                  写 Trip(generating) + Job(pending)
+  → GET /jobs/{id}/events        SSE 通知，真源仍是 Job 行
+后台 Worker
+  → SKIP LOCKED 领取，run_token fencing
+  → fill                         无候选则 itinerary_gen（最多搜一次）；有候选则按 day_index 拼 JSON
+  → optimize_itinerary()         函数：geocode → 矩阵 → 贪心 → 回填路时
+  → verify                       规则 + 天气/开放时间；失败只打 warning，Job 仍可 succeeded
+  → persist_itinerary            写库
+  → Job succeeded                stages: prepare → fill → route → verify → done
+```
+
+这里只有 **一个** Agent（选点排天）。排路不是 Agent。Job 不是 Agent。
+
+**路径 A（贴攻略）——P1 已按勾选 fill：**
+
+```
+贴文本 → 存 Source → guide_parser 抽 POI → 勾选
+  → 导入已有行程的候选列表
+  或「根据勾选创建」：POST /trips 带 selected_entities → Job fill 跳过 itinerary_gen
+```
+
+**路径 C（行程内改）——已经是 Workflow，这是对的：**
+
+```
+聊天：一次 LLM → {reply, suggestions[]}
+用户采纳 → apply_delta → 必要时 reoptimize_day（函数）
+时效：POST /facts/check 存在，前端行程页未接
+统一聊天：POST /api/v1/chat 存在，前端未接
+```
+
+### 五个「Agent 文件」对照现实
+
+| 名字 | 文件 | 前端主路径用不用 | 实际形态 | 结论 |
+|------|------|------------------|----------|------|
+| `itinerary_gen` | `agents/itinerary_gen.py` | 用。生成 Job 里 | 单 Agent，工具只剩搜景点 | **该留**：选哪些点、怎么分天是不确定的 |
+| `guide_parser` | `agents/guide_parser.py` | 用。`/sources/:id/parse` | 单 Agent；还挂了 Tavily/Firecrawl MCP | **半过度**：UI 只贴文本时，MCP 搜抓不会发生，却仍按「会搜会抓的 Agent」来包 |
+| `route_optimizer` | `agents/route_optimizer.py` | **不用** | Agent 包一层「必须调用已经写好的函数」 | **教学遗留**。生成和重算都直调 `tools/route_optimizer.py` |
+| `fact_checker` | `agents/fact_checker.py` | **行程页不用** | 单 Agent + 规则引擎预计算 | 生成 Job.verify 已走 Service（`fact_verify`），不 HTTP 自调用。行程聊天接核验是 P2 |
+| `supervisor` | `agents/supervisor.py` | **不用** | Agent 调上面四个 | **教学遗留**。`POST /api/v1/chat`。prompt 仍写「先 itinerary_gen 再 route_optimizer Agent」——和生成主路径已经矛盾 |
+
+另外两个 **一次 LLM、不是 Agent**：
+
+- `POST /trips/suggest`：自然语言 → 表单字段
+- `POST /trips/{id}/chat`：行程 JSON → 回复 + Delta
+- `merge_candidates()`：多源 POI 语义去重
+- `POST /sources/{id}/infer-trip`：攻略 → 目的地和天数
+
+这些才是「一条标准 workflow」：代码定顺序，模型当函数用。
+
+### 你感觉繁琐，对应的就是这些层
+
+```
+用户要的：目的地 → 一份可改行程
+学习时加的：
+  Supervisor（UI 没有）
+    → itinerary_gen Agent
+    → route_optimizer Agent（生成已绕开）
+        → optimize_itinerary 函数（真正干活）
+  再加 Job / SSE / Checkpointer / MCP
+```
+
+Checkpointer、Job、高德函数各自有用。繁琐来自 **中间多出来的、不参与决策的 Agent 壳**。
+
+9 月已经拆掉生成路径上的路线 Agent 壳，P1 解开了攻略创建套娃。还没拆的：Supervisor 入口、`route_optimizer` Agent 文件、guide_parser 对「纯文本粘贴」过厚。
+
+### 读后面章节时怎么对照
+
+| 章节 | 把它当成 | 不要当成 |
+|------|----------|----------|
+| §1–7 | 组件入门 | 当前产品架构 |
+| §8 链式 Agent | 5 月教学：两个黑盒怎么串 | 生成主路径（已改成函数） |
+| §9 Supervisor | 5 月教学：handoff 是什么 | 首页 / 行程页的真实入口 |
+| §10–13 | 原则仍然对 | 「itinerary_gen 会调 get_travel_time」等过时例子已在 §10 改正 |
+| §14–15 | 9 月生产纠正 | 和 §8/§9 冲突时，以这两节和 §0 为准 |
 
 ---
 
@@ -218,11 +350,13 @@ flowchart LR
 
 - **上下文膨胀**：只传关键字段，别把 Agent A 的完整消息历史塞给 Agent B。长期解决方案见 [§12](#12-mvp-后规划记忆架构与外部集成)（上下文修剪 + 结构化状态分离）。
 - **错误传播**：Service 层做格式校验，A 输出不合法就不传给 B
-- **延迟叠加**：链式 = 延迟相加，非关键阶段考虑异步
+- **延迟叠加**：链式 = 延迟相加。2026-09 补充：生成主路径上「规划 Agent → 路线 Agent」这一跳没有意图分支，第二跳改成服务层直调函数，少付一次模型税。详见 [§15](#15-一次规划什么时候不该再开-agent)。非关键阶段仍可考虑异步。
 
 ---
 
 ## 9. Supervisor 多 Agent 编排
+
+> **前端没有走这个入口。** 产品聊天是 `POST /trips/{id}/chat/stream`（一次 LLM 出 Delta）。本节是 Step 6 的学习记录。Supervisor 的 prompt 仍要求「规划后再调 route_optimizer Agent」，与生成主路径 [§0](#0-先看这个项目现在实际怎么跑) / [§15](#15-一次规划什么时候不该再开-agent) 不一致。
 
 ### 是什么
 
@@ -368,8 +502,8 @@ flowchart TD
     Decide -->|"检查天气"| FC[Handoff → fact_checker]
 
     GP --> Tool1[geocode_poi]
-    IG --> Tool2[search_attractions / get_travel_time]
-    RO --> Tool3[optimize_itinerary]
+    IG --> Tool2[search_attractions；生成主路径不再调 get_travel_time]
+    RO --> Tool3[optimize_itinerary；生成主路径由 Service 直调函数]
     FC --> Tool4[get_weather / get_opening_hours]
 
     Tool1 --> Reply1[子 Agent 结果]
@@ -387,6 +521,8 @@ flowchart TD
 ```
 
 > 链式调用 = Service 层硬编码"先 A 后 B"。Supervisor = LLM 动态决定"谁来干、怎么干"。两种模式各有用处，可共存。
+>
+> **2026-09 修正（生成主路径）**：首页 `POST /trips` 不再走「itinerary_gen Agent → route_optimizer Agent」。规划 Agent 只搜景点并输出 JSON，服务层直调 `optimize_itinerary()`。聊天 / Supervisor 仍可能 handoff 到 `route_optimizer` Agent。教学上的链式调用没有作废，生成管道从「学习支架」收成了确定性函数调用。
 
 ---
 
@@ -400,8 +536,8 @@ flowchart TD
 
 | Agent | 它做什么（决策） | 它不做什么（执行） |
 |-------|-----------------|-------------------|
-| `itinerary_gen` | 理解偏好 → 决定调哪些 Tool → 组装 JSON | **不**自己拼坐标、**不**自己算距离 |
-| `route_optimizer` | 收 JSON → 调一次 Tool → 返回带坐标的 JSON | **不**逐个 geocode POI（Tool 内部循环） |
+| `itinerary_gen` | 理解偏好 → 最多搜一次景点池 → 排天 JSON | **不**查路时、**不**拼坐标、**不**写库 |
+| `route_optimizer` | 聊天路径：收 JSON → 调一次 Tool | **不**逐个 geocode（Tool 内部循环）。生成主路径已不经过这个 Agent |
 | `guide_parser` | 收文本 → 调一次 Tool → 返回结构化列表 | **不**逐行解析（Tool 内部完成） |
 | `fact_checker` | 收行程 → 调 Tool 查天气/开放时间 | **不**自己算风险等级 |
 | `supervisor` | 读用户消息 → **一次路由决策** | **不**理解业务细节 |
@@ -415,9 +551,9 @@ Agent 的职责边界可以用一张图概括：
 ```
 Agent 的职责边界：
   ├── ✅ 理解用户意图（"他想要杭州3日自然风光游"）
-  ├── ✅ 决定调哪个 Tool（调 search_attractions + get_travel_time）
+  ├── ✅ 决定调哪个 Tool（生成主路径只留 search_attractions）
   ├── ✅ 把 Tool 返回整合成业务结果（组装行程 JSON）
-  └── ❌ 不做确定性计算（geocode、算距离、循环处理——这些在 Tool 里）
+  └── ❌ 不做确定性计算（geocode、路时、循环处理——这些在 Tool / Service 里）
 ```
 
 **一句话**：Agent 是"决策者"不是"执行者"——它决定做什么，但具体怎么做在 Tool 里。
@@ -495,7 +631,7 @@ Step 7.3 的 `search_attractions` 用 A 方案（preference → keywords 直传�
 
 | 反模式 | 为什么错 | 正确做法 | 正面案例 |
 |--------|---------|---------|---------|
-| Agent 内部循环调 Tool | LLM 调用次数爆炸，延迟叠加 | Tool 内部做循环，Agent 只调一次 | [§11](#11-路线优化从-mock-到真实-api-路径排序) `optimize_itinerary` 一次处理所有 POI |
+| Agent 内部循环调 Tool | LLM 调用次数爆炸，延迟叠加 | Tool 内部做循环，Agent 只调一次 | 2026-09 生产案例：规划 Agent 循环 `get_travel_time` 导致进度停在 30%。见 [一次规划复盘](2026-09-04_One-Shot-Generation.md) |
 | Agent 之间直接传消息 | 耦合，一个改动影响全局 | Service 层做胶水，Agent 互不知晓 | [§8](#8-链式-agent-调用) 链式调用模式 |
 | 一开始就用 B 方案 | 引入不必要的复杂度 | 先用最简单方案跑通流程 | [§11](#11-路线优化从-mock-到真实-api-路径排序) 贪心而非最优 TSP |
 | Tool 暴露中间步骤给 Agent | Agent 需要理解实现细节 | Tool 内部闭环，对外只暴露结果 | [§11](#11-路线优化从-mock-到真实-api-路径排序) geocode → 矩阵 → 排序全部封装 |
@@ -663,3 +799,61 @@ LLM 在**语义空间**工作，规则在**符号空间**。语义空间的容�
 - [§10](#10-agent-设计原则定位粒度与边界) — 原则 1（确定性留给 Tool）+ 原则 5（语义判断留给 LLM）构成完整的"谁做什么"决策框架
 - [§12](#12-mvp-后规划记忆架构与外部集成) — S9/S10 是"抄作业增强"的前两步，S10 的设计转向是本章立论来源
 - [S9-S10 复盘](2026-05-21_S9-S10-Design-Pivot.md) — 完整的问题发现→纠正→沉淀过程
+- [2026-09-04 一次规划](2026-09-04_One-Shot-Generation.md) — 同一棵树的另一片叶子：路时是计算，生成路径不该为了「学习链式 Agent」再付一轮模型税
+
+---
+
+## 14. 可靠异步生成：Job 才是真源
+
+> 源自 2026-09-03。详见 [可靠任务复盘](2026-09-03_Reliable-Generation-Jobs.md)。
+
+Web 请求不能一边开着 HTTP 一边等 MiniMax + 高德。生成要进后台。后台如果只是「另起一个线程碰运气」，刷新、崩溃、双 Worker 都会让用户看见一个假进度。
+
+**真源**：`generation_jobs` 行。SSE 只通知 `status_version` 变了；回查走 `GET /jobs/{id}`。
+
+| 能力 | 做法 | 刻意不做 |
+|------|------|----------|
+| 状态 | 五态 + 非法转换拒绝 | 字符串随手改 status |
+| 领取 | `FOR UPDATE SKIP LOCKED` | Redis 队列「显得更分布式」 |
+| 作废旧尝试 | `run_token` fencing | 只靠进程内取消 |
+| 卡死 | 心跳 + stale recovery + 有限退避 | 失败立刻改回 pending 打满 CPU |
+| 缺数据 | `TRIP_NOT_FOUND` 终端失败 | 永远 running |
+
+和 [§5](#5-命令行-vs-web谁控制主循环) 的关系：浏览器没有 `while True`；Worker 的循环才是生成主循环。和 [§7](#7-工程分层schemas--services--agents--tools) 的关系：生命周期在 Service，Agent 仍然不写库。
+
+---
+
+## 15. 一次规划：什么时候不该再开 Agent
+
+> 源自 2026-09-04。详见 [一次规划复盘](2026-09-04_One-Shot-Generation.md)。
+
+[§8](#8-链式-agent-调用) 的教学形状是 `itinerary_gen` Agent → `route_optimizer` Agent。生成管道每次都必须走「JSON → 补路」，没有「按用户一句话决定做不做」的分支。第二跳 Agent 只在决定调用一个函数，变成延迟。
+
+**生成主路径（当前）**：
+
+```
+POST /trips → Job(pending)
+  → Worker claim (prepare)
+  → itinerary_gen：最多 search_attractions 一次，路时填 0（plan）
+  → optimize_itinerary() 函数：geocode / 矩阵 / 贪心 / 回填（route）
+  → persist + Job succeeded（done）
+```
+
+**决策树补丁**（接 [§13](#13-llm-优势边界与设计决策树)）：
+
+```
+这段逻辑每次都必须发生，且没有意图分支？
+  ├── 是 → Service 直调函数（或粗粒度 Tool，不再包 Agent）
+  └── 否 → 才配得上 Agent / Supervisor handoff
+```
+
+产品上两条入口汇入同一候选池，不是套娃。见一次规划复盘「入口 A / B」。
+
+---
+
+## 16. 复盘如何变成面试题
+
+学习文档里的坑，只有写成「现象 → 误判 → 原则 → 下一问」才能带面试节奏。手法和题库见 [interview-steering.md](interview-steering.md)。
+
+主钩子只用一个：进度条停在 30%。可靠任务是「后来还遇到」的第二问，不要开场并讲。
+

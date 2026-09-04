@@ -68,9 +68,14 @@ export default function SourcePage() {
     });
   }
 
+  function getSelectedEntities() {
+    return (source?.entities ?? []).filter((e) =>
+      selectedIds.has(`${e.day_index}-${e.seq}-${e.poi_name}`),
+    );
+  }
+
   function getSelectedEntityIds(): string[] {
-    return (source?.entities ?? [])
-      .filter((e) => selectedIds.has(`${e.day_index}-${e.seq}-${e.poi_name}`))
+    return getSelectedEntities()
       .map((e) => e.id)
       .filter((id): id is string => Boolean(id));
   }
@@ -110,8 +115,8 @@ export default function SourcePage() {
       setError("请先解析攻略");
       return;
     }
-    const entityIds = getSelectedEntityIds();
-    if (entityIds.length === 0) {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) {
       setError("请至少勾选一个 POI");
       return;
     }
@@ -119,35 +124,49 @@ export default function SourcePage() {
     setLoading(true);
     setError(null);
     try {
-      // 1. 根据攻略内容自动推断目的地和天数
-      const inferred = await api.post<{ destination: string; city?: string | null; day_count: number }>(
-        `/sources/${source.id}/infer-trip`,
-        {},
-      );
+      let destination = title.trim() || source.title || "未命名目的地";
+      let city: string | undefined;
+      let dayCount = Math.max(...selected.map((entity) => entity.day_index), 1);
+      try {
+        const inferred = await api.post<{ destination: string; city?: string | null; day_count: number }>(
+          `/sources/${source.id}/infer-trip`,
+          {},
+        );
+        destination = inferred.destination || destination;
+        city = inferred.city ?? undefined;
+        dayCount = inferred.day_count || dayCount;
+      } catch {
+        // Infer is helpful but optional: candidates already have day_index.
+      }
 
-      // 2. 创建新行程：默认从今天开始
       const today = new Date();
       const startDate = today.toISOString().slice(0, 10);
-      const endDate = new Date(today.getTime() + (inferred.day_count - 1) * 86400000)
+      const endDate = new Date(today.getTime() + (dayCount - 1) * 86400000)
         .toISOString()
         .slice(0, 10);
 
       const newTrip = await api.post<Trip>("/trips", {
-        destination: inferred.destination,
-          city: inferred.city ?? undefined,
+        destination,
+        city,
         start_date: startDate,
         end_date: endDate,
         people_count: 1,
+        selected_entities: selected.map((entity) => ({
+          poi_name: entity.poi_name,
+          day_index: entity.day_index,
+          seq: entity.seq,
+          lat: entity.lat ?? null,
+          lng: entity.lng ?? null,
+          suggested_duration_h: entity.suggested_duration_h ?? null,
+        })),
       });
 
       await waitForGenerationJob(newTrip);
-
-      // 3. 把选中的 POI 导入新行程
-      await importToTrip(newTrip.id, entityIds);
+      setImportedTrip(newTrip);
       setTripId(newTrip.id);
       setTrips((prev) => [newTrip, ...prev.filter((t) => t.id !== newTrip.id)]);
     } catch {
-      setError("创建新行程并导入失败，请稍后重试");
+      setError("根据勾选创建行程失败，请稍后重试");
     } finally {
       setLoading(false);
     }
@@ -271,13 +290,13 @@ export default function SourcePage() {
                 disabled={loading || selectedIds.size === 0}
                 className="rounded bg-green-600 px-4 py-2 text-sm text-white disabled:opacity-60"
               >
-                {loading ? "正在生成并导入…" : `根据攻略创建新行程并导入 ${selectedIds.size} 个 POI`}
+                {loading ? "正在按勾选创建行程…" : `根据勾选创建行程（${selectedIds.size} 个地点）`}
               </button>
             )}
 
             {importedTrip && (
               <p className="text-sm text-green-700">
-                已导入到行程：
+                已按勾选创建行程：
                 <Link
                   to={`/trips/${importedTrip.id}`}
                   className="ml-1 text-blue-600 hover:underline"

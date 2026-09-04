@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import type { GenerationJob, GenerationProgress, Trip } from "@/lib/types";
+import type { GenerationJob, GenerationJobStage, GenerationProgress, Trip } from "@/lib/types";
 
 export function isTerminalJobStatus(status: string | undefined): boolean {
   return status === "succeeded" || status === "failed";
@@ -7,6 +7,14 @@ export function isTerminalJobStatus(status: string | undefined): boolean {
 
 export function isActiveJobStatus(status: string | undefined): boolean {
   return status === "pending" || status === "running" || status === "retry_wait";
+}
+
+export function warningStages(
+  job?: GenerationJob | null,
+  progress?: GenerationProgress | null,
+): GenerationJobStage[] {
+  const stages = job?.stages?.length ? job.stages : progress?.stages ?? [];
+  return stages.filter((stage) => stage.key === "warning");
 }
 
 export async function waitForGenerationJob(
