@@ -34,6 +34,11 @@ class InvalidGenerationJobTransitionError(ValueError):
     """Raised when a generation job lifecycle transition is not allowed."""
 
 
+RETRY_EXHAUSTED = "RETRY_EXHAUSTED"
+DEADLINE_EXPIRED = "DEADLINE_EXPIRED"
+PERMANENT_ERROR = "PERMANENT_ERROR"
+WORKER_LOST = "WORKER_LOST"
+
 _ALLOWED_TRANSITIONS = {
     (GenerationJobStatus.PENDING, GenerationJobStatus.RUNNING),
     (GenerationJobStatus.RETRY_WAIT, GenerationJobStatus.RUNNING),
@@ -41,6 +46,63 @@ _ALLOWED_TRANSITIONS = {
     (GenerationJobStatus.RUNNING, GenerationJobStatus.SUCCEEDED),
     (GenerationJobStatus.RUNNING, GenerationJobStatus.FAILED),
 }
+_TERMINAL_FAIL_TRANSITIONS = {
+    (GenerationJobStatus.PENDING, GenerationJobStatus.FAILED),
+    (GenerationJobStatus.RETRY_WAIT, GenerationJobStatus.FAILED),
+}
+_TERMINAL_FAIL_REASONS = {
+    RETRY_EXHAUSTED,
+    DEADLINE_EXPIRED,
+    PERMANENT_ERROR,
+    WORKER_LOST,
+}
+
+
+def _coerce_status(value: GenerationJobStatus | str) -> GenerationJobStatus:
+    try:
+        return value if isinstance(value, GenerationJobStatus) else GenerationJobStatus(value)
+    except ValueError as exc:
+        raise InvalidGenerationJobTransitionError(
+            f"Invalid generation job transition: {value}"
+        ) from exc
+
+
+def validate_job_transition(
+    current: GenerationJobStatus | str,
+    target: GenerationJobStatus | str,
+    *,
+    reason: str | None = None,
+) -> None:
+    """Raise if a lifecycle transition is not allowed."""
+    try:
+        current_status = _coerce_status(current)
+        target_status = _coerce_status(target)
+    except InvalidGenerationJobTransitionError as exc:
+        raise InvalidGenerationJobTransitionError(
+            f"Invalid generation job transition: {current} -> {target}"
+        ) from exc
+
+    pair = (current_status, target_status)
+    if pair in _ALLOWED_TRANSITIONS:
+        return
+    if pair in _TERMINAL_FAIL_TRANSITIONS and reason in _TERMINAL_FAIL_REASONS:
+        return
+    raise InvalidGenerationJobTransitionError(
+        f"Invalid generation job transition: {current_status.value} -> {target_status.value}"
+    )
+
+
+def apply_job_transition(
+    job: GenerationJob,
+    new_status: GenerationJobStatus | str,
+    *,
+    reason: str | None = None,
+) -> None:
+    """Validate and mutate status/version without committing."""
+    target = _coerce_status(new_status)
+    validate_job_transition(job.status, target, reason=reason)
+    job.status = target.value
+    job.status_version = (job.status_version or 0) + 1
 
 
 @dataclass(frozen=True)
@@ -81,16 +143,19 @@ def _terminalize_eligible_exhausted_jobs(
 
     terminalized = 0
     for job in jobs:
-        job.status = GenerationJobStatus.FAILED.value
+        apply_job_transition(
+            job,
+            GenerationJobStatus.FAILED,
+            reason=RETRY_EXHAUSTED,
+        )
         job.progress = 100
         job.message = "行程生成失败，请稍后重试"
         job.error = "Generation job exhausted all retry attempts"
-        job.error_code = "RETRY_EXHAUSTED"
+        job.error_code = RETRY_EXHAUSTED
         job.next_run_at = None
         job.heartbeat_at = None
         job.run_token = None
         job.finished_at = terminalized_at
-        job.status_version = (job.status_version or 0) + 1
         _mark_trip_generation_failed(db, job.trip_id)
         terminalized += 1
     return terminalized
@@ -141,7 +206,7 @@ def claim_next_job(
                 return None
 
             run_token = uuid4()
-            job.status = GenerationJobStatus.RUNNING.value
+            apply_job_transition(job, GenerationJobStatus.RUNNING)
             job.attempts = (job.attempts or 0) + 1
             job.run_token = run_token
             job.heartbeat_at = claimed_at
@@ -150,7 +215,6 @@ def claim_next_job(
             job.message = "正在准备生成行程..."
             job.started_at = claimed_at
             job.finished_at = None
-            job.status_version = (job.status_version or 0) + 1
             return ClaimedGenerationJob(
                 id=job.id,
                 trip_id=job.trip_id,
@@ -169,6 +233,8 @@ def _update_running_job(
     session_factory: SessionFactory,
 ) -> bool:
     values = dict(fields)
+    if "status" in values:
+        validate_job_transition(GenerationJobStatus.RUNNING, values["status"])
     if increment_version:
         values["status_version"] = GenerationJob.status_version + 1
 
@@ -280,7 +346,7 @@ def mark_job_failed(
             ).scalar_one_or_none()
             if job is None:
                 return False
-            job.status = GenerationJobStatus.FAILED.value
+            apply_job_transition(job, GenerationJobStatus.FAILED)
             job.progress = 100
             job.message = message
             job.error = error
@@ -289,7 +355,6 @@ def mark_job_failed(
             job.heartbeat_at = None
             job.run_token = None
             job.finished_at = failed_at
-            job.status_version = (job.status_version or 0) + 1
             _mark_trip_generation_failed(db, claim.trip_id)
             return True
 
@@ -349,7 +414,7 @@ def finalize_job_success(
                 return False
 
             persist_itinerary(db, trip, draft, trip.start_date, commit=False)
-            job.status = GenerationJobStatus.SUCCEEDED.value
+            apply_job_transition(job, GenerationJobStatus.SUCCEEDED)
             job.progress = 100
             job.message = "行程生成完成"
             job.error = None
@@ -358,7 +423,6 @@ def finalize_job_success(
             job.heartbeat_at = None
             job.run_token = None
             job.finished_at = finished_at
-            job.status_version = (job.status_version or 0) + 1
             return True
 
 
@@ -394,18 +458,21 @@ def recover_stale_jobs(
             ).scalars()
 
             for job in jobs:
-                job.error_code = "WORKER_LOST"
+                job.error_code = WORKER_LOST
                 job.error = "Worker heartbeat expired"
                 job.heartbeat_at = None
                 job.run_token = None
-                job.status_version = (job.status_version or 0) + 1
                 if (job.attempts or 0) < job.max_attempts:
-                    job.status = GenerationJobStatus.RETRY_WAIT.value
+                    apply_job_transition(job, GenerationJobStatus.RETRY_WAIT)
                     job.progress = 0
                     job.message = "生成任务中断，正在准备重试"
                     job.next_run_at = recovered_at + STALE_RETRY_DELAY
                 else:
-                    job.status = GenerationJobStatus.FAILED.value
+                    apply_job_transition(
+                        job,
+                        GenerationJobStatus.FAILED,
+                        reason=WORKER_LOST,
+                    )
                     job.progress = 100
                     job.message = "行程生成失败，请稍后重试"
                     job.next_run_at = None
@@ -420,23 +487,11 @@ def transition_job(
     db: Session,
     job: GenerationJob,
     new_status: GenerationJobStatus | str,
+    *,
+    reason: str | None = None,
 ) -> GenerationJob:
     """Apply and persist one valid generation job status transition."""
-    try:
-        current = GenerationJobStatus(job.status)
-        target = GenerationJobStatus(new_status)
-    except ValueError as exc:
-        raise InvalidGenerationJobTransitionError(
-            f"Invalid generation job transition: {job.status} -> {new_status}"
-        ) from exc
-
-    if (current, target) not in _ALLOWED_TRANSITIONS:
-        raise InvalidGenerationJobTransitionError(
-            f"Invalid generation job transition: {current.value} -> {target.value}"
-        )
-
-    job.status = target.value
-    job.status_version = (job.status_version or 0) + 1
+    apply_job_transition(job, new_status, reason=reason)
     db.commit()
     db.refresh(job)
     return job
@@ -479,6 +534,9 @@ def update_job(db: Session, job_id: UUID, **fields) -> GenerationJob:
     job = db.query(GenerationJob).filter(GenerationJob.id == job_id).first()
     if not job:
         raise ValueError("job not found")
+    status = fields.pop("status", None)
+    if status is not None:
+        apply_job_transition(job, status)
     for key, value in fields.items():
         setattr(job, key, value)
     db.commit()
