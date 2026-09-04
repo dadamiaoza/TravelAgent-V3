@@ -132,6 +132,12 @@ class GenerationJob(Base):
     )
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     message: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    stages: Mapped[list] = mapped_column(
+        JSONB(),
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     error: Mapped[str | None] = mapped_column(Text(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

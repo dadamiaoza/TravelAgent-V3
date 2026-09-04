@@ -12,19 +12,18 @@ import httpx
 import requests
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.trip import Trip
 from app.services.generation_jobs import (
     ClaimedGenerationJob,
+    append_job_stage,
     claim_next_job,
     finalize_job_success,
     mark_job_failed,
     recover_stale_jobs,
     renew_heartbeat,
     schedule_job_retry,
-    update_job_progress,
 )
 from app.services.trip_editor import generate_draft
 
@@ -150,7 +149,10 @@ def _load_generation_input(claim: ClaimedGenerationJob) -> GenerationInput:
         )
 
 
-def _default_generate(generation_input: GenerationInput) -> dict:
+def _default_generate(
+    generation_input: GenerationInput,
+    on_stage: Callable[[str, int, str], bool | None] | None = None,
+) -> dict:
     return generate_draft(
         destination=generation_input.destination,
         city=generation_input.city,
@@ -162,22 +164,35 @@ def _default_generate(generation_input: GenerationInput) -> dict:
         user_prompt=generation_input.user_prompt,
         must_visit=list(generation_input.must_visit) or None,
         thread_id=generation_input.thread_id,
+        on_stage=on_stage,
     )
+
+
+def _stage_reporter(claim: ClaimedGenerationJob):
+    def report(key: str, progress: int, message: str) -> bool:
+        return append_job_stage(
+            claim.id,
+            claim.run_token,
+            key=key,
+            progress=progress,
+            message=message,
+        )
+
+    return report
 
 
 def _execute_claim(claim: ClaimedGenerationJob, regenerate: Regenerate) -> None:
     try:
         generation_input = _load_generation_input(claim)
-        if not update_job_progress(
-            claim.id,
-            claim.run_token,
-            progress=30,
-            message="AI 正在生成行程...",
-        ):
+        report = _stage_reporter(claim)
+        if not report("plan", 30, "正在规划景点..."):
             return
 
         with _heartbeat_during(claim):
-            draft = regenerate(generation_input)
+            if regenerate is _default_generate:
+                draft = _default_generate(generation_input, on_stage=report)
+            else:
+                draft = regenerate(generation_input)
 
         if not finalize_job_success(claim, draft):
             logger.warning("stale generation owner could not complete job %s", claim.id)

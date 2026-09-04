@@ -278,21 +278,25 @@ def generate_draft(
     must_visit: list[str] | None = None,
     thread_id: str = "itinerary",
     generator: TripGenerator | None = None,
+    on_stage=None,
 ) -> dict:
     """Generate a pure itinerary draft without opening a business transaction."""
     generator = generator or _generator
-    return generator.generate(
-        destination=destination,
-        city=city,
-        start_date=start_date,
-        end_date=end_date,
-        people_count=people_count,
-        budget_min=budget_min,
-        budget_max=budget_max,
-        user_prompt=user_prompt,
-        must_visit=must_visit,
-        thread_id=thread_id,
-    )
+    kwargs = {
+        "destination": destination,
+        "city": city,
+        "start_date": start_date,
+        "end_date": end_date,
+        "people_count": people_count,
+        "budget_min": budget_min,
+        "budget_max": budget_max,
+        "user_prompt": user_prompt,
+        "must_visit": must_visit,
+        "thread_id": thread_id,
+    }
+    if on_stage is not None:
+        kwargs["on_stage"] = on_stage
+    return generator.generate(**kwargs)
 
 
 def regenerate_trip(

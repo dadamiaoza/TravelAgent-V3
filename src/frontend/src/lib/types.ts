@@ -110,10 +110,18 @@ export interface TripChatOut {
 }
 
 
+export interface GenerationJobStage {
+  key: string;
+  progress: number;
+  message: string;
+  at: string;
+}
+
 export interface GenerationProgress {
   status: string;
   progress: number;
   message: string;
+  stages?: GenerationJobStage[];
   job_id?: string | null;
 }
 
@@ -130,6 +138,7 @@ export interface GenerationJob {
   status: GenerationJobStatus;
   progress: number;
   message?: string | null;
+  stages?: GenerationJobStage[];
   error_code?: string | null;
   attempts: number;
   max_attempts: number;

@@ -165,12 +165,14 @@ def _progress_payload(job: GenerationJob | None) -> dict:
             "status": "unknown",
             "progress": 0,
             "message": "暂无进度信息",
+            "stages": [],
             "job_id": None,
         }
     return {
         "status": job.status or "unknown",
         "progress": job.progress or 0,
         "message": job.message or "",
+        "stages": list(job.stages or []),
         "job_id": str(job.id),
     }
 

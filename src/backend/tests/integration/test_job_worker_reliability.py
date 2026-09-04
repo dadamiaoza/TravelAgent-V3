@@ -100,6 +100,9 @@ def test_claim_selects_pending_not_future_retry_and_sets_lease(job_factory) -> N
     assert claimed.heartbeat_at == now
     assert claimed.next_run_at is None
     assert claimed.progress == 10
+    assert claimed.message == "正在准备生成行程..."
+    assert claimed.stages[0]["key"] == "prepare"
+    assert claimed.stages[0]["progress"] == 10
     assert claimed.status_version == 1
     assert future_retry.status == "retry_wait"
 
@@ -514,3 +517,80 @@ def test_invalid_input_is_permanent(job_factory) -> None:
     assert failed.status == "failed"
     assert failed.attempts == 1
     assert failed.error_code == "INVALID_INPUT"
+
+
+_MINIMAL_DRAFT = {
+    "days": [
+        {
+            "day_index": 1,
+            "theme": "测试",
+            "route_type": "city",
+            "items": [
+                {
+                    "seq": 1,
+                    "poi_name": "西湖",
+                    "duration_h": 2,
+                    "travel_minutes_from_prev": 0,
+                }
+            ],
+        }
+    ]
+}
+
+
+def test_successful_generation_records_prepare_plan_and_done_stages(job_factory) -> None:
+    job_id = job_factory()
+
+    def regen(_generation_input):
+        return _MINIMAL_DRAFT
+
+    assert process_pending_jobs(regenerate=regen) == 1
+
+    job = load_job(job_id)
+    keys = [stage["key"] for stage in (job.stages or [])]
+    assert keys[0] == "prepare"
+    assert "plan" in keys
+    assert keys[-1] == "done"
+    assert job.status == "succeeded"
+    assert job.progress == 100
+    assert job.status_version >= 3
+
+
+def test_append_job_stage_rejects_stale_token_and_bumps_version(job_factory) -> None:
+    active_token = uuid4()
+    job_id = job_factory(
+        status="running",
+        attempts=1,
+        heartbeat_at=datetime.now(timezone.utc),
+        run_token=active_token,
+    )
+
+    assert (
+        generation_jobs.append_job_stage(
+            job_id,
+            uuid4(),
+            key="plan",
+            progress=30,
+            message="正在规划景点...",
+        )
+        is False
+    )
+    unchanged = load_job(job_id)
+    assert unchanged.progress == 0
+    assert unchanged.status_version == 0
+
+    assert (
+        generation_jobs.append_job_stage(
+            job_id,
+            active_token,
+            key="plan",
+            progress=30,
+            message="正在规划景点...",
+        )
+        is True
+    )
+    updated = load_job(job_id)
+    assert updated.progress == 30
+    assert updated.message == "正在规划景点..."
+    assert updated.stages[-1]["key"] == "plan"
+    assert updated.status_version == 1

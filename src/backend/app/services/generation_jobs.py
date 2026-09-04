@@ -22,6 +22,27 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _stage_entry(key: str, progress: int, message: str, at: datetime) -> dict:
+    return {
+        "key": key,
+        "progress": progress,
+        "message": message,
+        "at": at.isoformat(),
+    }
+
+
+def _with_stage(
+    stages: list | None,
+    key: str,
+    progress: int,
+    message: str,
+    at: datetime,
+) -> list:
+    updated = list(stages or [])
+    updated.append(_stage_entry(key, progress, message, at))
+    return updated
+
+
 class GenerationJobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -213,6 +234,9 @@ def claim_next_job(
             job.next_run_at = None
             job.progress = 10
             job.message = "正在准备生成行程..."
+            job.stages = [
+                _stage_entry("prepare", 10, "正在准备生成行程...", claimed_at)
+            ]
             job.started_at = claimed_at
             job.finished_at = None
             return ClaimedGenerationJob(
@@ -268,6 +292,36 @@ def update_job_progress(
         increment_version=False,
         session_factory=session_factory,
     )
+
+
+def append_job_stage(
+    job_id: UUID,
+    run_token: UUID,
+    *,
+    key: str,
+    progress: int,
+    message: str,
+    session_factory: SessionFactory = SessionLocal,
+    now: datetime | None = None,
+) -> bool:
+    """Append a visible generation stage and bump status_version for SSE."""
+    occurred_at = now or _now()
+    with session_factory() as db:
+        job = db.execute(
+            select(GenerationJob).where(
+                GenerationJob.id == job_id,
+                GenerationJob.status == GenerationJobStatus.RUNNING.value,
+                GenerationJob.run_token == run_token,
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.stages = _with_stage(job.stages, key, progress, message, occurred_at)
+        job.progress = progress
+        job.message = message
+        job.status_version = (job.status_version or 0) + 1
+        db.commit()
+        return True
 
 
 def renew_heartbeat(
@@ -426,6 +480,9 @@ def finalize_job_success(
             apply_job_transition(job, GenerationJobStatus.SUCCEEDED)
             job.progress = 100
             job.message = "行程生成完成"
+            job.stages = _with_stage(
+                job.stages, "done", 100, "行程生成完成", finished_at
+            )
             job.error = None
             job.error_code = None
             job.next_run_at = None
@@ -518,6 +575,7 @@ def create_job(
         status="pending",
         progress=0,
         message="等待生成",
+        stages=[],
         idempotency_key=idempotency_key,
     )
     db.add(job)

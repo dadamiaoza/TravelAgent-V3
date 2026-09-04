@@ -3,11 +3,12 @@ import { useTrip } from "@/hooks/useTrip";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import TripDetail from "@/components/TripDetail";
 import ChatPanel from "@/components/ChatPanel";
+import GenerationProgressBanner from "@/components/GenerationProgressBanner";
 
 export default function TripPage() {
   const { tripId } = useParams<{ tripId: string }>();
   const { data: trip, isLoading, isError } = useTrip(tripId ?? "");
-  const { job } = useGenerationJob(tripId, trip?.status);
+  const { job, progress } = useGenerationJob(tripId, trip?.status);
   const isGenerating = trip?.status === "generating";
   const isFailed =
     trip?.status === "generation_failed" || job?.status === "failed";
@@ -30,22 +31,10 @@ export default function TripPage() {
         </p>
       )}
       {trip && isGenerating && (
-        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
-          <p className="text-sm text-blue-700">{job?.message ?? "正在生成行程…"}</p>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded bg-blue-100">
-            <div
-              className="h-full rounded bg-blue-600 transition-all"
-              style={{ width: `${job?.progress ?? 0}%` }}
-            />
-          </div>
-        </div>
+        <GenerationProgressBanner job={job} progress={progress} />
       )}
       {trip && isFailed && !isGenerating && (
-        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
-          <p className="text-sm text-red-700">
-            {job?.message ?? "行程生成失败，请稍后重试"}
-          </p>
-        </div>
+        <GenerationProgressBanner job={job} progress={progress} failed />
       )}
 
       {trip && (
