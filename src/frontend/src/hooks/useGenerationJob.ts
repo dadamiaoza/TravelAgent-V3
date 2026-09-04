@@ -9,15 +9,18 @@ export function useGenerationJob(
   tripStatus: string | undefined,
 ) {
   const queryClient = useQueryClient();
-  const shouldTrack =
+  const isGenerating = tripStatus === "generating";
+  const shouldLoad =
     !!tripId &&
-    (tripStatus === "generating" || tripStatus === "generation_failed");
+    (isGenerating ||
+      tripStatus === "generation_failed" ||
+      tripStatus === "generated");
 
   const progressQuery = useQuery({
     queryKey: ["progress", tripId],
     queryFn: () => api.get<GenerationProgress>(`/trips/${tripId}/progress`),
-    enabled: shouldTrack,
-    refetchInterval: tripStatus === "generating" ? 2000 : false,
+    enabled: shouldLoad,
+    refetchInterval: isGenerating ? 2000 : false,
   });
 
   const jobId = progressQuery.data?.job_id ?? null;
@@ -25,13 +28,13 @@ export function useGenerationJob(
   const jobQuery = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => api.get<GenerationJob>(`/jobs/${jobId}`),
-    enabled: shouldTrack && !!jobId,
+    enabled: shouldLoad && !!jobId,
     refetchInterval: (query) =>
-      isTerminalJobStatus(query.state.data?.status) ? false : 1000,
+      isGenerating && !isTerminalJobStatus(query.state.data?.status) ? 1000 : false,
   });
 
   useEffect(() => {
-    if (!shouldTrack || !jobId || isTerminalJobStatus(jobQuery.data?.status)) {
+    if (!isGenerating || !jobId || isTerminalJobStatus(jobQuery.data?.status)) {
       return;
     }
     const source = new EventSource(`/api/v1/jobs/${jobId}/events`);
@@ -50,7 +53,7 @@ export function useGenerationJob(
     return () => {
       source.close();
     };
-  }, [shouldTrack, jobId, jobQuery.data?.status, queryClient]);
+  }, [isGenerating, jobId, jobQuery.data?.status, queryClient]);
 
   useEffect(() => {
     if (jobQuery.data?.status === "succeeded") {

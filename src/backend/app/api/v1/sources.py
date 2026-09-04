@@ -58,9 +58,6 @@ def get_source(source_id: UUID, db: Session = Depends(get_db)):
     return doc
 
 
-@router.post("/{source_id}/parse", response_model=SourceDocumentDetailOut)
-
-
 @router.post("/{source_id}/infer-trip", response_model=InferredTripOut)
 def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
     """从攻略内容中自动推断目的地和天数，用于创建新行程。"""
@@ -82,6 +79,10 @@ def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
     )
     response = model.invoke(prompt)
     content = response.content.strip()
+    content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+    fence = re.search(r"```json\s*(.*?)```", content, flags=re.DOTALL)
+    if fence:
+        content = fence.group(1)
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end <= start:
@@ -92,6 +93,9 @@ def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
           city=str(data.get("city") or "").strip() or None,
         day_count=max(1, int(data.get("day_count", 1))),
     )
+
+
+@router.post("/{source_id}/parse", response_model=SourceDocumentDetailOut)
 def parse_source_persist(source_id: UUID, db: Session = Depends(get_db)):
     """对已保存的攻略执行 Agent 解析，并将候选实体持久化。"""
     doc = db.query(SourceDocument).filter(SourceDocument.id == source_id).first()

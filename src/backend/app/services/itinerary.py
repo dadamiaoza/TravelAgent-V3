@@ -50,7 +50,51 @@ def _emit_stage(on_stage: StageCallback | None, key: str, progress: int, message
         on_stage(key, progress, message)
 
 
-def generate_itinerary_draft(
+def assemble_days_from_entities(
+    entities: list[dict],
+    *,
+    city: str,
+) -> dict:
+    """Build itinerary JSON from user-selected candidates. No LLM."""
+    grouped: dict[int, list[dict]] = {}
+    for entity in entities:
+        name = (entity.get("poi_name") or "").strip()
+        if not name:
+            continue
+        day_index = int(entity.get("day_index") or 1)
+        grouped.setdefault(day_index, []).append(entity)
+
+    days = []
+    for day_index in sorted(grouped):
+        ordered = sorted(
+            grouped[day_index],
+            key=lambda item: int(item.get("seq") or 0),
+        )
+        items = []
+        for seq, item in enumerate(ordered, start=1):
+            entry = {
+                "seq": seq,
+                "poi_name": item["poi_name"].strip(),
+                "duration_h": item.get("suggested_duration_h") or 1.5,
+                "travel_minutes_from_prev": 0,
+            }
+            if item.get("lat") is not None:
+                entry["lat"] = item["lat"]
+            if item.get("lng") is not None:
+                entry["lng"] = item["lng"]
+            items.append(entry)
+        days.append(
+            {
+                "day_index": day_index,
+                "theme": "攻略勾选",
+                "route_type": "city",
+                "items": items,
+            }
+        )
+    return {"city": city, "days": days}
+
+
+def fill_itinerary_draft(
     *,
     destination: str,
     city: str = "",
@@ -61,13 +105,14 @@ def generate_itinerary_draft(
     budget_max: int | None = None,
     user_prompt: str | None = None,
     must_visit: list[str] | None = None,
+    selected_entities: list[dict] | None = None,
     thread_id: str = "itinerary",
-    on_stage: StageCallback | None = None,
 ) -> dict:
-    """Generate a pure itinerary draft. Does NOT touch the database.
+    """Fill days JSON: selected candidates skip the planner agent."""
+    resolved_city = city or destination
+    if selected_entities:
+        return assemble_days_from_entities(selected_entities, city=resolved_city)
 
-    This is the generator strategy used by the application orchestrator.
-    """
     agent = create_itinerary_gen()
 
     day_count = (end_date - start_date).days + 1
@@ -94,12 +139,50 @@ def generate_itinerary_draft(
     )
 
     itinerary = _parse_agent_output(result["messages"])
+    itinerary["city"] = resolved_city
+    return itinerary
 
-    # 把目的地城市写入行程 JSON，让路线优化地理编码时消除同名 POI 歧义
-    itinerary["city"] = city or destination
 
-    _emit_stage(on_stage, "route", 70, "正在补坐标与路线...")
+def route_itinerary_draft(itinerary: dict) -> dict:
+    """Always run the Python route optimizer. Never an agent."""
     return json.loads(optimize_itinerary(json.dumps(itinerary, ensure_ascii=False)))
+
+
+def generate_itinerary_draft(
+    *,
+    destination: str,
+    city: str = "",
+    start_date: date,
+    end_date: date,
+    people_count: int = 1,
+    budget_min: int | None = None,
+    budget_max: int | None = None,
+    user_prompt: str | None = None,
+    must_visit: list[str] | None = None,
+    selected_entities: list[dict] | None = None,
+    thread_id: str = "itinerary",
+    on_stage: StageCallback | None = None,
+) -> dict:
+    """Generate a pure itinerary draft. Does NOT touch the database.
+
+    This is the generator strategy used by the application orchestrator.
+    """
+    itinerary = fill_itinerary_draft(
+        destination=destination,
+        city=city,
+        start_date=start_date,
+        end_date=end_date,
+        people_count=people_count,
+        budget_min=budget_min,
+        budget_max=budget_max,
+        user_prompt=user_prompt,
+        must_visit=must_visit,
+        selected_entities=selected_entities,
+        thread_id=thread_id,
+    )
+
+    _emit_stage(on_stage, "route", 70, "正在补路线...")
+    return route_itinerary_draft(itinerary)
 
 
 def generate_itinerary(db: Session, trip: Trip) -> Trip:

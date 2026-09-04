@@ -142,7 +142,18 @@ def create_trip(
     db.add(trip)
     db.flush()
     try:
-        job = create_job(db, trip.id, commit=False, idempotency_key=key)
+        job_payload = None
+        if body.selected_entities:
+            job_payload = {
+                "selected_entities": [entity.model_dump() for entity in body.selected_entities]
+            }
+        job = create_job(
+            db,
+            trip.id,
+            commit=False,
+            idempotency_key=key,
+            payload=job_payload,
+        )
         db.commit()
     except IntegrityError:
         db.rollback()

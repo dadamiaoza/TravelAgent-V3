@@ -538,7 +538,7 @@ _MINIMAL_DRAFT = {
 }
 
 
-def test_successful_generation_records_prepare_plan_and_done_stages(job_factory) -> None:
+def test_successful_generation_records_prepare_fill_and_done_stages(job_factory) -> None:
     job_id = job_factory()
 
     def regen(_generation_input):
@@ -549,7 +549,7 @@ def test_successful_generation_records_prepare_plan_and_done_stages(job_factory)
     job = load_job(job_id)
     keys = [stage["key"] for stage in (job.stages or [])]
     assert keys[0] == "prepare"
-    assert "plan" in keys
+    assert "fill" in keys
     assert keys[-1] == "done"
     assert job.status == "succeeded"
     assert job.progress == 100

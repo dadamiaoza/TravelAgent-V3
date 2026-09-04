@@ -138,6 +138,12 @@ class GenerationJob(Base):
         default=list,
         server_default=text("'[]'::jsonb"),
     )
+    payload: Mapped[dict] = mapped_column(
+        JSONB(),
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     error: Mapped[str | None] = mapped_column(Text(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

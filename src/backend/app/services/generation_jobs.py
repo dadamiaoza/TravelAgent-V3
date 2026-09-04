@@ -569,6 +569,7 @@ def create_job(
     *,
     commit: bool = True,
     idempotency_key: str | None = None,
+    payload: dict | None = None,
 ) -> GenerationJob:
     job = GenerationJob(
         trip_id=trip_id,
@@ -576,6 +577,7 @@ def create_job(
         progress=0,
         message="等待生成",
         stages=[],
+        payload=payload or {},
         idempotency_key=idempotency_key,
     )
     db.add(job)
