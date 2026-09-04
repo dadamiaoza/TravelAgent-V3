@@ -215,6 +215,60 @@ def test_claim_immediately_terminalizes_all_exhausted_active_jobs(
         assert replacement.status == "pending"
 
 
+def test_exhausted_claim_path_uses_shared_transition_validator(
+    job_factory,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, str, str | None]] = []
+    original = generation_jobs.validate_job_transition
+
+    def tracking_validate(current, target, *, reason=None):
+        calls.append(
+            (
+                generation_jobs.GenerationJobStatus(current).value,
+                generation_jobs.GenerationJobStatus(target).value,
+                reason,
+            )
+        )
+        return original(current, target, reason=reason)
+
+    monkeypatch.setattr(generation_jobs, "validate_job_transition", tracking_validate)
+
+    now = datetime.now(timezone.utc)
+    pending_id = job_factory(status="pending", attempts=3, max_attempts=3)
+    retry_id = job_factory(
+        status="retry_wait",
+        attempts=2,
+        max_attempts=2,
+        next_run_at=now - timedelta(seconds=1),
+    )
+
+    assert generation_jobs.claim_next_job(now=now) is None
+
+    fail_calls = {(current, target, reason) for current, target, reason in calls if target == "failed"}
+    assert ("pending", "failed", generation_jobs.RETRY_EXHAUSTED) in fail_calls
+    assert ("retry_wait", "failed", generation_jobs.RETRY_EXHAUSTED) in fail_calls
+    assert load_job(pending_id).status == "failed"
+    assert load_job(retry_id).status == "failed"
+
+
+def test_exhausted_claim_rolls_back_when_transition_validator_rejects(
+    job_factory,
+    monkeypatch,
+) -> None:
+    def reject(*_args, **_kwargs):
+        raise generation_jobs.InvalidGenerationJobTransitionError("blocked")
+
+    monkeypatch.setattr(generation_jobs, "validate_job_transition", reject)
+    now = datetime.now(timezone.utc)
+    job_id = job_factory(status="pending", attempts=3, max_attempts=3)
+
+    with pytest.raises(generation_jobs.InvalidGenerationJobTransitionError, match="blocked"):
+        generation_jobs.claim_next_job(now=now)
+
+    assert load_job(job_id).status == "pending"
+
+
 @pytest.mark.parametrize(
     ("attempts", "expected_seconds"),
     [(1, 5), (2, 10), (3, 20), (4, 40), (5, 60), (20, 60)],
