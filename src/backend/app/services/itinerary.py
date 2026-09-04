@@ -5,14 +5,17 @@ Replaces the mock template generator with real AI-generated itineraries.
 
 import json
 import re
+from collections.abc import Callable
 from datetime import date, time
 
 from sqlalchemy.orm import Session
 
 from app.agents.itinerary_gen import create_itinerary_gen
-from app.agents.route_optimizer import create_route_optimizer
+from app.agents.tools.route_optimizer import optimize_itinerary
 from app.models.trip import Trip
 from app.services.itinerary_persistence import persist_itinerary
+
+StageCallback = Callable[[str, int, str], None]
 
 
 def _item_duration_minutes(item, default_h: float = 1.5) -> int:
@@ -42,6 +45,11 @@ def recalculate_day_schedule(day, start_minute: int = 9 * 60):
     return day
 
 
+def _emit_stage(on_stage: StageCallback | None, key: str, progress: int, message: str) -> None:
+    if on_stage is not None:
+        on_stage(key, progress, message)
+
+
 def generate_itinerary_draft(
     *,
     destination: str,
@@ -54,6 +62,7 @@ def generate_itinerary_draft(
     user_prompt: str | None = None,
     must_visit: list[str] | None = None,
     thread_id: str = "itinerary",
+    on_stage: StageCallback | None = None,
 ) -> dict:
     """Generate a pure itinerary draft. Does NOT touch the database.
 
@@ -89,7 +98,8 @@ def generate_itinerary_draft(
     # 把目的地城市写入行程 JSON，让路线优化地理编码时消除同名 POI 歧义
     itinerary["city"] = city or destination
 
-    return _run_route_optimizer(itinerary)
+    _emit_stage(on_stage, "route", 70, "正在补坐标与路线...")
+    return json.loads(optimize_itinerary(json.dumps(itinerary, ensure_ascii=False)))
 
 
 def generate_itinerary(db: Session, trip: Trip) -> Trip:
@@ -111,19 +121,6 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
     )
     persist_itinerary(db, trip, draft, trip.start_date)
     return trip
-
-
-def _run_route_optimizer(itinerary: dict) -> dict:
-    """Pass the itinerary through the route_optimizer Agent to fill lat/lng."""
-    agent = create_route_optimizer()
-    itinerary_json = json.dumps(itinerary, ensure_ascii=False)
-    prompt = (
-        "请调用 optimize_itinerary 工具处理以下行程数据。\n"
-        f"行程 JSON：\n{itinerary_json}\n\n"
-        "将工具返回的 JSON 直接输出，不要添加任何其他文字。"
-    )
-    result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
-    return _parse_agent_output(result["messages"])
 
 
 def _parse_agent_output(messages: list) -> dict:

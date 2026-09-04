@@ -2,7 +2,14 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class GenerationJobStage(BaseModel):
+    key: str
+    progress: int
+    message: str
+    at: str
 
 
 class GenerationJobOut(BaseModel):
@@ -11,6 +18,7 @@ class GenerationJobOut(BaseModel):
     status: str
     progress: int
     message: str | None = None
+    stages: list[GenerationJobStage] = Field(default_factory=list)
     error_code: str | None = None
     attempts: int
     max_attempts: int

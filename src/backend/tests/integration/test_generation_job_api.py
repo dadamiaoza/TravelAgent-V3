@@ -147,6 +147,7 @@ def test_progress_includes_job_id_for_refresh_recovery(api_client: TestClient) -
     assert body["status"] == "pending"
     assert body["progress"] == 0
     assert body["message"]
+    assert body["stages"] == []
 
 
 def test_get_job_returns_public_snapshot_and_hides_internal_fields(
@@ -167,6 +168,7 @@ def test_get_job_returns_public_snapshot_and_hides_internal_fields(
     assert body["max_attempts"] == 3
     assert body["error_code"] is None
     assert "status_version" in body
+    assert body["stages"] == []
     assert "created_at" in body
     assert "run_token" not in body
     assert "error" not in body
@@ -317,6 +319,7 @@ def test_progress_without_job_keeps_compatible_unknown_payload(
             "status": "unknown",
             "progress": 0,
             "message": "暂无进度信息",
+            "stages": [],
             "job_id": None,
         }
     finally:
