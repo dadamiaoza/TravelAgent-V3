@@ -1,10 +1,12 @@
 """Integration coverage for atomic generation creation and finalization."""
 
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.api.v1 import trips as trips_api
 from app.db.session import SessionLocal
@@ -209,6 +211,76 @@ def test_stale_token_cannot_mutate_itinerary_or_trip(
     assert poi_names == ["旧景点"]
     assert job["status"] == "running"
     assert job["progress"] == 30
+
+
+@contextmanager
+def _hide_trips():
+    original_get = Session.get
+
+    def get(self, entity, ident, **kwargs):
+        if entity is Trip:
+            return None
+        return original_get(self, entity, ident, **kwargs)
+
+    Session.get = get
+    try:
+        yield
+    finally:
+        Session.get = original_get
+
+
+def test_missing_trip_fails_fenced_job_without_persisting_itinerary(
+    generation_record_factory,
+) -> None:
+    trip_id, job_id, token = generation_record_factory()
+    finished_at = datetime(2030, 1, 1, 12, tzinfo=timezone.utc)
+
+    with _hide_trips():
+        result = generation_jobs.finalize_job_success(
+            _claim_for(job_id, trip_id, token),
+            GENERATED_DRAFT,
+            now=finished_at,
+        )
+
+    assert result is False
+
+    trip_status, poi_names, job = _load_result(trip_id, job_id)
+    assert trip_status == "generating"
+    assert poi_names == ["旧景点"]
+    assert job["status"] == "failed"
+    assert job["error_code"] == "TRIP_NOT_FOUND"
+    assert job["message"] == "关联的行程不存在"
+    assert job["error"] == "Trip missing at finalization"
+    assert "Traceback" not in (job["error"] or "")
+    assert job["progress"] == 100
+    assert job["run_token"] is None
+    assert job["heartbeat_at"] is None
+    assert job["next_run_at"] is None
+    assert job["finished_at"] == finished_at
+    assert job["status_version"] == 1
+
+
+def test_stale_token_cannot_fail_taken_over_job_when_trip_is_missing(
+    generation_record_factory,
+) -> None:
+    active_token = uuid4()
+    trip_id, job_id, _token = generation_record_factory(run_token=active_token)
+
+    with _hide_trips():
+        result = generation_jobs.finalize_job_success(
+            _claim_for(job_id, trip_id, uuid4()),
+            GENERATED_DRAFT,
+        )
+
+    assert result is False
+
+    trip_status, poi_names, job = _load_result(trip_id, job_id)
+    assert trip_status == "generating"
+    assert poi_names == ["旧景点"]
+    assert job["status"] == "running"
+    assert job["run_token"] == active_token
+    assert job["progress"] == 30
+    assert job["error_code"] == "OLD_ERROR"
 
 
 def test_finalization_failure_rolls_back_itinerary_and_terminal_status(

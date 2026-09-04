@@ -411,6 +411,15 @@ def finalize_job_success(
 
             trip = db.get(Trip, claim.trip_id)
             if trip is None:
+                apply_job_transition(job, GenerationJobStatus.FAILED)
+                job.progress = 100
+                job.message = "关联的行程不存在"
+                job.error = "Trip missing at finalization"
+                job.error_code = "TRIP_NOT_FOUND"
+                job.next_run_at = None
+                job.heartbeat_at = None
+                job.run_token = None
+                job.finished_at = finished_at
                 return False
 
             persist_itinerary(db, trip, draft, trip.start_date, commit=False)
