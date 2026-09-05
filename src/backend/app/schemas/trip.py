@@ -320,6 +320,7 @@ class TripChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     thread_id: str | None = None
     context: TripChatContext | None = None
+    write_mode: str = Field(default="propose", examples=["propose", "auto_apply"])
 
 
 class ItineraryDeltaTarget(BaseModel):
@@ -350,6 +351,7 @@ class TripChatOut(BaseModel):
     reply: str
     thread_id: str
     suggestions: list[ItineraryDelta] = []
+    applied: list[ItineraryDelta] = []
 
 
 class DeltaApplyRequest(BaseModel):

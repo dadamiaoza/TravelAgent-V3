@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useTripStore } from "@/stores/tripStore";
-import type { ItineraryDelta, Trip } from "@/lib/types";
+import type { ItineraryDelta, Trip, TripChatWriteMode } from "@/lib/types";
 
 interface ChatMessage {
   id: string;
@@ -60,6 +60,7 @@ async function streamTripChat(
   payload: {
     message: string;
     thread_id?: string;
+    write_mode?: TripChatWriteMode;
     context?: { day_index?: number; item_id?: string };
   },
   onEvent: (event: string, data: Record<string, unknown>) => void,
@@ -113,8 +114,26 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
+  const [writeMode, setWriteMode] = useState<TripChatWriteMode>("propose");
   const [handled, setHandled] = useState<Record<string, "accepted" | "ignored" | "failed">>({});
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  async function refreshTrip() {
+    const data = await api.get<Trip>(`/trips/${tripId}`);
+    queryClient.setQueryData(["trip", tripId], data);
+    applyServerTrip(data);
+  }
+
+  function markDeltasAccepted(deltas: ItineraryDelta[], messageId: string) {
+    setHandled((prev) => {
+      const next = { ...prev };
+      deltas.forEach((delta, idx) => {
+        const key = delta.suggestion_id ?? `${messageId}-a${idx}`;
+        next[key] = "accepted";
+      });
+      return next;
+    });
+  }
 
   async function handleSend() {
     const text = input.trim();
@@ -132,6 +151,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
         {
           message: text,
           thread_id: threadId,
+          write_mode: writeMode,
           context: {
             day_index: selectedDayIndex + 1,
             item_id: focusItemId ?? undefined,
@@ -145,8 +165,13 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
                 msg.id === aiMessageId ? { ...msg, content: msg.content + chunk } : msg,
               ),
             );
+          } else if (event === "applied") {
+            const applied = (data.deltas as ItineraryDelta[]) ?? [];
+            void refreshTrip().catch(() => undefined);
+            markDeltasAccepted(applied, aiMessageId);
           } else if (event === "done") {
             setThreadId(String(data.thread_id ?? ""));
+            const applied = (data.applied as ItineraryDelta[]) ?? [];
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === aiMessageId
@@ -154,6 +179,10 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
                   : msg,
               ),
             );
+            if (applied.length > 0) {
+              void refreshTrip().catch(() => undefined);
+              markDeltasAccepted(applied, aiMessageId);
+            }
           }
         },
       );
@@ -204,9 +233,44 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
 
   return (
     <aside className="flex h-[70vh] min-h-[500px] max-h-[70vh] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="border-b border-gray-100 px-4 py-3">
-        <h2 className="text-sm font-semibold text-gray-900">AI 行程协作</h2>
-        <p className="mt-0.5 text-xs text-gray-500">当前上下文：Day {selectedDayIndex + 1}</p>
+      <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">AI 行程协作</h2>
+          <p className="mt-0.5 text-xs text-gray-500">当前上下文：Day {selectedDayIndex + 1}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <div
+            className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-0.5"
+            role="group"
+            aria-label="写库模式"
+          >
+            <button
+              type="button"
+              onClick={() => setWriteMode("propose")}
+              className={`rounded px-2 py-1 text-xs ${
+                writeMode === "propose"
+                  ? "bg-white font-medium text-gray-900 shadow-sm"
+                  : "text-gray-500 hover:text-gray-800"
+              }`}
+            >
+              只提议
+            </button>
+            <button
+              type="button"
+              onClick={() => setWriteMode("auto_apply")}
+              className={`rounded px-2 py-1 text-xs ${
+                writeMode === "auto_apply"
+                  ? "bg-white font-medium text-gray-900 shadow-sm"
+                  : "text-gray-500 hover:text-gray-800"
+              }`}
+            >
+              授权后自动采纳
+            </button>
+          </div>
+          <p className="mt-1 text-[11px] text-gray-400">
+            {writeMode === "propose" ? "改行程需你点采纳" : "本会话允许助手直接改行程"}
+          </p>
+        </div>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
