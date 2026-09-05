@@ -14,6 +14,7 @@ from app.agents.itinerary_gen import create_itinerary_gen
 from app.agents.tools.route_optimizer import optimize_itinerary
 from app.models.trip import Trip
 from app.services.itinerary_persistence import persist_itinerary
+from app.services.visit_fields import copy_visit_fields
 
 StageCallback = Callable[[str, int, str], None]
 
@@ -82,6 +83,7 @@ def assemble_days_from_entities(
                 entry["lat"] = item["lat"]
             if item.get("lng") is not None:
                 entry["lng"] = item["lng"]
+            entry.update(copy_visit_fields(item))
             items.append(entry)
         days.append(
             {

@@ -68,6 +68,12 @@ class ItineraryItem(Base):
     poi_address: Mapped[str | None] = mapped_column(Text(), nullable=True)
     poi_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cost_estimate: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    suggested_duration_h: Mapped[float | None] = mapped_column(Float(), nullable=True)
+    best_time: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cost_note: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    opening_hours: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    visit_tips: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    fact_warning: Mapped[str | None] = mapped_column(Text(), nullable=True)
     # 该段路线是否来自高德真实路径；景区索道/接驳车等属于建议，不标记为已核实
     route_verified: Mapped[bool | None] = mapped_column(Boolean(), nullable=True)
     # 无法核实的景区交通建议文案（如“以景区现场指引/官方班次为准”）

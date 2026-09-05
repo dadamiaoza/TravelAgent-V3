@@ -50,7 +50,7 @@ def create_guide_parser():
             "2. User **asks to SEARCH** for guides (e.g. 'search for Hangzhou 3-day guide') -> SEARCH -> CONFIRM -> SCRAPE -> PARSE\n\n"
             "## Parsing Workflow (when you have guide text)\n"
             "1. Extract all POIs (attractions) mentioned in the text\n"
-            "2. For each POI, also extract suggested_duration_h, best_time, cost_estimate when the text provides evidence (see field rules below)\n"
+            "2. For each POI, also extract suggested_duration_h, best_time, cost_estimate, visit_tips when the text provides evidence (see field rules below)\n"
             "3. Infer which day each POI belongs to (day_index starting from 1); number them by appearance order within each day (seq)\n"
             "4. Call geocode_poi for each POI to get coordinates\n"
             "5. After collecting all results, output as a JSON array\n\n"
@@ -61,7 +61,7 @@ def create_guide_parser():
             "4. Once you have the text, switch to Parsing Workflow\n\n"
             "Output JSON format (no other text):\n"
             '[{"poi_name": "...", "day_index": 1, "seq": 1, "lat": 0.0, "lng": 0.0,\n'
-            '  "suggested_duration_h": null, "best_time": null, "cost_estimate": null}, ...]\n\n'
+            '  "suggested_duration_h": null, "best_time": null, "cost_estimate": null, "visit_tips": null}, ...]\n\n'
             "## Field Rules\n"
             "### suggested_duration_h (float | null)\n"
             "- MUST be a float, never a string like \"3-4\" or \"约2小时\"\n"
@@ -88,11 +88,15 @@ def create_guide_parser():
             '  - \"便宜\" / \"略贵\" / \"性价比高\" -> null (no numeric value)\n'
             '  - \"几十块钱\" -> null (not specific)\n'
             '- No explicit price mentioned -> null\n\n'
+            "### visit_tips (string | null)\n"
+            "- One short Chinese sentence on how to visit, ONLY when the text gives evidence\n"
+            '- Example: \"建议早上八点前入园，避开旅行团。\"\n'
+            "- Do NOT invent ticket prices, opening hours, or tips absent from the text -> null\n\n"
             "Rules:\n"
             "- If the text does not explicitly separate days, all POIs belong to day_index=1\n"
             "- If the same POI appears multiple times, keep only the first occurrence\n"
             "- Use the coordinates returned by geocode_poi\n"
             "- When user pastes text directly, do NOT search - parse directly\n"
-            "- All three new fields default to null; only fill when evidence exists in the text"
+            "- All extra fields default to null; only fill when evidence exists in the text"
         ),
     )

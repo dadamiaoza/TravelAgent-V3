@@ -9,6 +9,7 @@ from datetime import date, time, timedelta
 from sqlalchemy.orm import Session
 
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
+from app.services.visit_fields import copy_visit_fields
 
 
 def persist_itinerary(
@@ -47,6 +48,7 @@ def persist_itinerary(
             start_t = time(start_minutes // 60 % 24, start_minutes % 60)
             end_t = time((start_minutes + duration_m) // 60 % 24, (start_minutes + duration_m) % 60)
 
+            visit = copy_visit_fields(item_data)
             item = ItineraryItem(
                 day_id=day.id,
                 seq=item_data["seq"],
@@ -63,6 +65,12 @@ def persist_itinerary(
                 poi_type=item_data.get("poi_type"),
                 route_verified=item_data.get("route_verified"),
                 travel_advice=item_data.get("travel_advice"),
+                suggested_duration_h=visit.get("suggested_duration_h"),
+                best_time=visit.get("best_time"),
+                cost_note=visit.get("cost_note"),
+                opening_hours=visit.get("opening_hours"),
+                visit_tips=visit.get("visit_tips"),
+                fact_warning=visit.get("fact_warning"),
             )
             db.add(item)
             accumulated_minutes = start_minutes + duration_m

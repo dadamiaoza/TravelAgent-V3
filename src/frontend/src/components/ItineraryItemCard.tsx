@@ -3,7 +3,6 @@ import type { ItineraryItem } from "@/lib/types";
 import { useDeleteItineraryItem } from "@/hooks/useItineraryMutations";
 import { useTripStore } from "@/stores/tripStore";
 
-// 把后端可能返回的英文交通方式转成中文 + 图标展示
 const TRANSPORT_LABELS: Record<string, string> = {
   walking: "🚶 步行",
   hiking: "🥾 登山/步道",
@@ -13,13 +12,33 @@ const TRANSPORT_LABELS: Record<string, string> = {
   driving: "🚗 驾车",
 };
 
+const BEST_TIME_LABELS: Record<string, string> = {
+  morning: "上午",
+  afternoon: "下午",
+  evening: "晚上",
+  all_day: "全天",
+};
+
 function formatTime(value?: string | null): string {
   if (!value) return "";
-  // 后端返回可能是 "09:00:00" 或 "09:00"
   return value.slice(0, 5);
 }
 
-function buildBrief(item: ItineraryItem): string {
+function shortHours(value?: string | null): string | null {
+  if (!value) return null;
+  const compact = value.replace(/\s+/g, " ").trim();
+  const match = compact.match(/\d{1,2}:\d{2}\s*[-–~至到]\s*\d{1,2}:\d{2}/);
+  if (match) return match[0].replace(/[至到]/, "-");
+  return compact.length > 40 ? `${compact.slice(0, 39)}…` : compact;
+}
+
+function formatDuration(hours?: number | null): string | null {
+  if (hours == null || Number.isNaN(hours) || hours <= 0) return null;
+  const label = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  return `建议 ${label}h`;
+}
+
+function buildSummary(item: ItineraryItem): string {
   const parts: string[] = [];
   const transport = item.transport_mode
     ? TRANSPORT_LABELS[item.transport_mode] ?? item.transport_mode
@@ -33,12 +52,24 @@ function buildBrief(item: ItineraryItem): string {
     parts.push(`预计交通 ${item.travel_minutes} 分钟`);
   }
 
-  if (item.cost_estimate != null) {
+  const duration = formatDuration(item.suggested_duration_h);
+  if (duration) parts.push(duration);
+
+  const best = item.best_time ? BEST_TIME_LABELS[item.best_time] ?? item.best_time : null;
+  if (best) parts.push(best);
+
+  if (item.cost_note) {
+    parts.push(item.cost_note);
+  } else if (item.cost_estimate != null) {
     parts.push(`预计花费 ¥${item.cost_estimate}`);
   }
 
-  // 没有结构化补充信息时，也不显示“简介：无”这类生硬文案
-  return parts.length > 0 ? parts.join(" · ") : "待补充详细信息";
+  if (item.opening_hours) {
+    const hours = shortHours(item.opening_hours);
+    if (hours) parts.push(hours);
+  }
+
+  return parts.join(" · ");
 }
 
 function isScenicItem(item: ItineraryItem): boolean {
@@ -110,6 +141,8 @@ export default function ItineraryItemCard({
   }
 
   const isScenic = isScenicItem(item);
+  const summary = buildSummary(item);
+  const hasDetails = Boolean(item.visit_tips || item.travel_advice || item.notes);
 
   const inputClass =
     "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
@@ -145,12 +178,30 @@ export default function ItineraryItemCard({
                     </span>
                   )}
                 </p>
-                <p className="mt-1 text-xs text-gray-500">{buildBrief(item)}</p>
-              {item.travel_advice && (
-                <p className="mt-1 text-xs text-amber-700">提示：{item.travel_advice}</p>
-              )}
-                {item.notes && (
-                  <p className="mt-1 text-xs text-gray-600">备注：{item.notes}</p>
+                {summary && <p className="mt-1 text-xs text-gray-500">{summary}</p>}
+                {item.fact_warning && (
+                  <p className="mt-1 text-xs text-amber-700">⚠ {item.fact_warning}</p>
+                )}
+                {hasDetails && (
+                  <details
+                    className="mt-1"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <summary className="cursor-pointer text-xs text-blue-600 hover:underline">
+                      怎么玩
+                    </summary>
+                    <div className="mt-1 space-y-1">
+                      {item.visit_tips && (
+                        <p className="text-xs text-gray-700">{item.visit_tips}</p>
+                      )}
+                      {item.travel_advice && (
+                        <p className="text-xs text-amber-700">交通：{item.travel_advice}</p>
+                      )}
+                      {item.notes && (
+                        <p className="text-xs text-gray-600">备注：{item.notes}</p>
+                      )}
+                    </div>
+                  </details>
                 )}
               </div>
             </div>

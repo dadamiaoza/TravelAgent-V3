@@ -46,7 +46,22 @@ def _context() -> dict:
                         "travel_minutes": 20,
                     },
                 ],
-            }
+            },
+            {
+                "day_index": 2,
+                "date": "2026-06-02",
+                "route_type": "city",
+                "items": [
+                    {
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "seq": 1,
+                        "poi_name": "灵隐寺",
+                        "start_time": "09:00:00",
+                        "end_time": "12:00:00",
+                        "travel_minutes": 0,
+                    },
+                ],
+            },
         ],
     }
 
@@ -66,12 +81,12 @@ def _tools(session: TripChatSession) -> dict:
 
 def test_propose_mode_does_not_expose_apply_delta() -> None:
     names = set(_tools(_session(WRITE_MODE_PROPOSE)))
-    assert names == {"propose_delta", "check_facts"}
+    assert names == {"propose_delta", "check_facts", "parse_guide"}
 
 
 def test_auto_mode_exposes_apply_delta() -> None:
     names = set(_tools(_session(WRITE_MODE_AUTO)))
-    assert names == {"propose_delta", "check_facts", "apply_delta"}
+    assert names == {"propose_delta", "check_facts", "parse_guide", "apply_delta"}
 
 
 def test_propose_delete_by_name_records_delta_without_writing() -> None:
@@ -181,3 +196,133 @@ def test_run_trip_chat_collects_tool_suggestions() -> None:
     assert len(out.suggestions) == 1
     assert out.suggestions[0].action == "delete"
     assert out.applied == []
+
+
+def test_run_trip_chat_passes_plain_user_message() -> None:
+    captured: dict = {}
+    item = SimpleNamespace(
+        id=LEIFENG,
+        seq=1,
+        poi_name="雷峰塔",
+        start_time=None,
+        end_time=None,
+        travel_minutes=0,
+        is_locked=False,
+    )
+    trip = SimpleNamespace(
+        id=uuid4(),
+        destination="杭州",
+        city="杭州",
+        start_date=date(2026, 6, 1),
+        days=[
+            SimpleNamespace(day_index=1, date=date(2026, 6, 1), route_type="city", items=[item]),
+        ],
+    )
+
+    def fake_invoke(*, message: str, context: dict, **_kwargs) -> str:
+        captured["message"] = message
+        captured["context"] = context
+        return "好的"
+
+    run_trip_chat(
+        trip=trip,
+        body=TripChatRequest(message="删掉雷峰塔"),
+        thread_id="trip-chat-test",
+        db=None,
+        invoker=fake_invoke,
+    )
+
+    assert captured["message"] == "删掉雷峰塔"
+    assert "days" in captured["context"]
+    assert '"poi_name"' not in captured["message"]
+
+
+def test_propose_move_sets_destination_day() -> None:
+    session = _session()
+    result = _tools(session)["propose_delta"]("move", poi_name="雷峰塔", day_index=2)
+    delta = session.suggestions[0]
+    assert delta.action == "move"
+    assert delta.target is not None
+    assert delta.target.day_index == 2
+    assert delta.target.item_id == LEIFENG
+    assert delta.preview_before
+    assert "第1天" in (delta.preview_before or "")
+    assert "第2天" in (delta.preview_after or "")
+    assert "雷峰塔" in result
+
+
+def test_propose_replace_uses_new_name() -> None:
+    session = _session()
+    _tools(session)["propose_delta"](
+        "replace",
+        poi_name="雷峰塔",
+        new_poi_name="河坊街",
+    )
+    delta = session.suggestions[0]
+    assert delta.action == "replace"
+    assert delta.payload is not None
+    assert delta.payload.poi_name == "河坊街"
+    assert "河坊街" in (delta.preview_after or "")
+
+
+def test_propose_update_sets_visit_tips() -> None:
+    session = _session()
+    _tools(session)["propose_delta"](
+        "update",
+        poi_name="雷峰塔",
+        visit_tips="傍晚登塔看西湖。",
+    )
+    delta = session.suggestions[0]
+    assert delta.action == "update"
+    assert delta.payload is not None
+    assert delta.payload.visit_tips == "傍晚登塔看西湖。"
+
+
+def test_parse_guide_adds_new_pois_and_skips_existing() -> None:
+    session = _session()
+    entities = [
+        {"poi_name": "西湖", "day_index": 1, "seq": 1},
+        {"poi_name": "断桥", "day_index": 1, "seq": 2, "visit_tips": "清晨人少。", "cost_estimate": "免费"},
+    ]
+    with patch("app.services.guide_extract.extract_guide_entities", return_value=entities):
+        result = _tools(session)["parse_guide"]("第一天西湖和断桥")
+    names = [d.payload.poi_name for d in session.suggestions if d.payload]
+    assert "断桥" in names
+    assert "西湖" not in names
+    assert "1 个" in result
+    added = next(d for d in session.suggestions if d.payload and d.payload.poi_name == "断桥")
+    assert added.payload is not None
+    assert added.payload.visit_tips == "清晨人少。"
+    assert added.payload.cost_note == "免费"
+
+
+def test_check_facts_still_returns_weather_when_poi_missing() -> None:
+    session = _session()
+    with (
+        patch("app.services.trip_chat.get_weather", return_value="杭州 2026-06-01：小雨"),
+        patch("app.services.trip_chat.get_opening_hours", return_value="09:00-17:00"),
+        patch(
+            "app.services.trip_chat.evaluate_closure_rule",
+            return_value={"matched": False, "risk": "low", "reason": "", "source": ""},
+        ),
+    ):
+        result = _tools(session)["check_facts"](poi_name="不存在的馆", day_index=1)
+    assert "小雨" in result
+    assert "找不到" in result
+
+
+def test_progress_callback_fires_for_tools() -> None:
+    seen: list[tuple[str, str]] = []
+    session = _session()
+    session.progress = lambda tool, message: seen.append((tool, message))
+    with (
+        patch("app.services.trip_chat.get_weather", return_value="晴"),
+        patch("app.services.trip_chat.get_opening_hours", return_value="09:00-17:00"),
+        patch(
+            "app.services.trip_chat.evaluate_closure_rule",
+            return_value={"matched": False, "risk": "low"},
+        ),
+    ):
+        _tools(session)["check_facts"](day_index=1)
+    assert seen
+    assert seen[0][0] == "check_facts"

@@ -22,8 +22,7 @@ dist/
 Thumbs.db
 
 # Interview prep (local only)
-interview-recap.md
-tech-stack-study-guide.md
+.inter/
 
 # TypeScript incremental cache
 *.tsbuildinfo

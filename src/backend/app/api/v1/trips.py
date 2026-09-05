@@ -1,6 +1,8 @@
 """Trip CRUD + itinerary generation API endpoints."""
 import json
+import queue
 import re
+import threading
 import uuid
 from datetime import timedelta
 from typing import Annotated
@@ -355,6 +357,10 @@ def import_entities_to_trip(
             poi_name=entity.poi_name,
             lat=entity.lat,
             lng=entity.lng,
+            suggested_duration_h=entity.suggested_duration_h,
+            best_time=entity.best_time,
+            cost_note=entity.cost_estimate,
+            visit_tips=entity.visit_tips,
         ))
         imported_count += 1
 
@@ -383,9 +389,17 @@ def update_trip(
     db.commit()
     db.refresh(trip)
     return trip
-def _run_trip_chat(trip, body: TripChatRequest, thread_id: str, db: Session) -> TripChatOut:
+
+
+def _run_trip_chat(
+    trip,
+    body: TripChatRequest,
+    thread_id: str,
+    db: Session,
+    progress=None,
+) -> TripChatOut:
     """Run the trip assistant graph and return reply + suggestions."""
-    return run_trip_chat(trip=trip, body=body, thread_id=thread_id, db=db)
+    return run_trip_chat(trip=trip, body=body, thread_id=thread_id, db=db, progress=progress)
 
 
 @router.post("/{trip_id}/chat", response_model=TripChatOut)
@@ -409,26 +423,57 @@ def trip_chat_stream(
     body: TripChatRequest,
     db: Session = Depends(get_db),
 ):
-    """SSE 流式返回 AI 对话：先发思考状态，再逐段输出回复，最后附建议。"""
+    """SSE：思考/工具进度事件，再整段回复，最后附建议。"""
     trip = db.query(Trip).filter(Trip.id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
+    # Load collections on the request thread before the worker starts.
+    for day in trip.days:
+        _ = list(day.items)
 
     thread_id = body.thread_id or chat_thread_id(trip_id)
 
     async def event_generator():
         import asyncio
 
-        yield 'event: status\ndata: {"status":"thinking"}\n\n'
-        result = await asyncio.to_thread(_run_trip_chat, trip, body, thread_id, db)
+        events: queue.Queue = queue.Queue()
+        holder: dict = {}
 
+        def progress(tool: str, message: str) -> None:
+            events.put(("status", {"status": "tool", "tool": tool, "message": message}))
+
+        def worker() -> None:
+            try:
+                holder["result"] = _run_trip_chat(trip, body, thread_id, db, progress)
+            except Exception as exc:
+                holder["error"] = exc
+            finally:
+                events.put(("finished", None))
+
+        yield 'event: status\ndata: {"status":"thinking","message":"AI 正在思考…"}\n\n'
+        threading.Thread(target=worker, daemon=True).start()
+        while True:
+            kind, payload = await asyncio.to_thread(events.get)
+            if kind == "status":
+                yield f"event: status\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            else:
+                break
+
+        error = holder.get("error")
+        if error:
+            fail = {
+                "reply": "AI 对话服务暂时不可用，请稍后再试。",
+                "thread_id": thread_id,
+                "suggestions": [],
+                "applied": [],
+            }
+            yield f"event: done\ndata: {json.dumps(fail, ensure_ascii=False)}\n\n"
+            return
+
+        result = holder["result"]
         reply = result.reply or ""
-        step = 3
-        for i in range(0, len(reply), step):
-            chunk = reply[i:i + step]
-            import json as _json
-            yield f'event: delta\ndata: {_json.dumps({"text": chunk}, ensure_ascii=False)}\n\n'
-            await asyncio.sleep(0.03)
+        if reply:
+            yield f"event: delta\ndata: {json.dumps({'text': reply}, ensure_ascii=False)}\n\n"
 
         if result.applied:
             yield (
@@ -446,7 +491,7 @@ def trip_chat_stream(
             "suggestions": [s.model_dump(mode="json") for s in result.suggestions],
             "applied": [s.model_dump(mode="json") for s in result.applied],
         }
-        yield f'event: done\ndata: {json.dumps(final_payload, ensure_ascii=False)}\n\n'
+        yield f"event: done\ndata: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),

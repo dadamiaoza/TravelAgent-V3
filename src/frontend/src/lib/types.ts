@@ -41,7 +41,13 @@ export interface ItineraryItem {
   poi_address?: string | null;
   poi_type?: string | null;
   notes?: string | null;
+  suggested_duration_h?: number | null;
+  best_time?: string | null;
   cost_estimate?: number | null;
+  cost_note?: string | null;
+  opening_hours?: string | null;
+  visit_tips?: string | null;
+  fact_warning?: string | null;
   is_locked: boolean;
 }
 
@@ -56,6 +62,7 @@ export interface SourceEntity {
   suggested_duration_h?: number | null;
   best_time?: string | null;
   cost_estimate?: string | null;
+  visit_tips?: string | null;
 }
 
 export interface SourceDocument {
@@ -91,6 +98,9 @@ export interface ItineraryDeltaPayload {
   end_time?: string | null;
   duration_h?: number | null;
   notes?: string | null;
+  visit_tips?: string | null;
+  best_time?: string | null;
+  cost_note?: string | null;
   lat?: number | null;
   lng?: number | null;
   item_ids?: string[] | null;
@@ -98,9 +108,11 @@ export interface ItineraryDeltaPayload {
 
 export interface ItineraryDelta {
   suggestion_id?: string | null;
-  action: "add" | "update" | "delete" | "move" | "reorder" | string;
+  action: "add" | "update" | "delete" | "move" | "reorder" | "replace" | string;
   target?: ItineraryDeltaTarget | null;
   payload?: ItineraryDeltaPayload | null;
+  preview_before?: string | null;
+  preview_after?: string | null;
 }
 
 export interface TripChatOut {

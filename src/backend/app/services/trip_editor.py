@@ -165,6 +165,10 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
             start_time=payload.start_time,
             end_time=payload.end_time,
             notes=payload.notes,
+            visit_tips=payload.visit_tips,
+            best_time=payload.best_time,
+            cost_note=payload.cost_note,
+            suggested_duration_h=payload.duration_h,
             lat=payload.lat,
             lng=payload.lng,
         ))
@@ -180,7 +184,7 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
                 reorder_day(db, trip_id, day.id, ItineraryDayReorder(item_ids=ordered))
         return reoptimize_day(db, trip_id, day.id)
 
-    if action == "update":
+    if action == "update" or action == "replace":
         if not target or not target.item_id:
             raise HTTPException(status_code=400, detail="update delta requires target.item_id")
         update_kwargs = {}
@@ -193,7 +197,18 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
                 update_kwargs["end_time"] = payload.end_time
             if payload.notes is not None:
                 update_kwargs["notes"] = payload.notes
-        update_item(db, trip_id, target.item_id, ItineraryItemUpdate(**update_kwargs))
+            if payload.visit_tips is not None:
+                update_kwargs["visit_tips"] = payload.visit_tips
+            if payload.best_time is not None:
+                update_kwargs["best_time"] = payload.best_time
+            if payload.cost_note is not None:
+                update_kwargs["cost_note"] = payload.cost_note
+            if payload.duration_h is not None:
+                update_kwargs["suggested_duration_h"] = payload.duration_h
+        item = update_item(db, trip_id, target.item_id, ItineraryItemUpdate(**update_kwargs))
+        if action == "replace":
+            day = _get_day(db, trip_id, item.day_id)
+            return reoptimize_day(db, trip_id, day.id)
         return _get_trip(db, trip_id)
 
     if action == "delete":
@@ -209,9 +224,64 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
         return reoptimize_day(db, trip_id, day.id)
 
     if action == "move":
-        raise HTTPException(status_code=400, detail="move delta is not supported in C1 yet")
+        if not target or not target.item_id or not target.day_index:
+            raise HTTPException(
+                status_code=400,
+                detail="move delta requires target.item_id and target.day_index",
+            )
+        return _move_item(
+            db,
+            trip_id,
+            item_id=target.item_id,
+            dest_day_index=target.day_index,
+            dest_seq=target.seq,
+        )
 
     raise HTTPException(status_code=400, detail=f"Unsupported delta action: {action}")
+
+
+def _move_item(db: Session, trip_id: UUID, *, item_id: UUID, dest_day_index: int, dest_seq: int | None):
+    """Move an existing node to another day (or another slot on the same day)."""
+    item = _get_item(db, trip_id, item_id)
+    src_day = _get_day(db, trip_id, item.day_id)
+    dest_day = _day_by_index(db, trip_id, dest_day_index)
+
+    if dest_day.id != src_day.id and _day_has_poi(dest_day, item.poi_name):
+        raise HTTPException(status_code=400, detail="destination day already has this POI")
+
+    src_id = src_day.id
+    dest_id = dest_day.id
+    src_ids = [existing.id for existing in sorted(src_day.items, key=lambda it: it.seq) if existing.id != item.id]
+    dest_ids = [existing.id for existing in sorted(dest_day.items, key=lambda it: it.seq) if existing.id != item.id]
+
+    if dest_id == src_id:
+        pos = min(max((dest_seq or len(src_ids) + 1) - 1, 0), len(src_ids))
+        src_ids.insert(pos, item.id)
+        _renumber_by_ids(db, src_ids)
+        db.flush()
+        src_day = _get_day(db, trip_id, src_id)
+        _scheduler.recalculate(src_day)
+        db.commit()
+        return reoptimize_day(db, trip_id, src_id)
+
+    item.day_id = dest_id
+    pos = min(max((dest_seq or len(dest_ids) + 1) - 1, 0), len(dest_ids))
+    dest_ids.insert(pos, item.id)
+    _renumber_by_ids(db, dest_ids)
+    _renumber_by_ids(db, src_ids)
+    db.flush()
+    src_day = _get_day(db, trip_id, src_id)
+    dest_day = _get_day(db, trip_id, dest_id)
+    _scheduler.recalculate(src_day)
+    _scheduler.recalculate(dest_day)
+    db.commit()
+    reoptimize_day(db, trip_id, src_id)
+    return reoptimize_day(db, trip_id, dest_id)
+
+
+def _renumber_by_ids(db: Session, item_ids: list) -> None:
+    for seq, item_id in enumerate(item_ids, start=1):
+        db.query(ItineraryItem).filter(ItineraryItem.id == item_id).update({"seq": seq})
 
 
 def create_day(db: Session, trip_id: UUID, body: ItineraryDayCreate) -> Trip:
@@ -337,6 +407,10 @@ def create_item(db: Session, trip_id: UUID, body: ItineraryItemCreate) -> Trip:
         start_time=body.start_time,
         end_time=body.end_time,
         notes=body.notes,
+        visit_tips=body.visit_tips,
+        best_time=body.best_time,
+        cost_note=body.cost_note,
+        suggested_duration_h=body.suggested_duration_h,
         lat=body.lat,
         lng=body.lng,
     )
@@ -436,7 +510,7 @@ def reoptimize_day(
         {
             "seq": item.seq,
             "poi_name": item.poi_name,
-            "duration_h": 1.5,
+            "duration_h": item.suggested_duration_h or 1.5,
             "travel_minutes_from_prev": item.travel_minutes or 0,
         }
         for item in sorted(day.items, key=lambda it: it.seq)

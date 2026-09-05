@@ -98,6 +98,7 @@ def _verify_sync(draft: dict, *, city: str, start_date: date) -> VerifyOutcome:
             outcome.results.append(
                 {
                     "poi_name": poi_name,
+                    "day_index": day_index,
                     "date": date_key,
                     "risk": risk,
                     "risk_type": rule.get("rule_type"),
@@ -111,3 +112,28 @@ def _verify_sync(draft: dict, *, city: str, start_date: date) -> VerifyOutcome:
     if outcome.degraded and not any("未完成" in warning for warning in outcome.warnings):
         outcome.warnings.append("时效核对未完成，行程已按路线生成")
     return outcome
+
+
+def apply_verify_to_draft(draft: dict, outcome: VerifyOutcome) -> dict:
+    """Stamp opening hours and short risk warnings onto draft items. Does not invent tips."""
+    by_key: dict[tuple, dict] = {}
+    for result in getattr(outcome, "results", None) or []:
+        name = (result.get("poi_name") or "").strip()
+        day_index = int(result.get("day_index") or 0)
+        if name and day_index:
+            by_key[(day_index, name)] = result
+
+    for day in draft.get("days") or []:
+        day_index = int(day.get("day_index") or 0)
+        for item in day.get("items") or []:
+            name = (item.get("poi_name") or "").strip()
+            result = by_key.get((day_index, name))
+            if not result:
+                continue
+            hours = (result.get("opening_hours") or "").strip()
+            if hours:
+                item["opening_hours"] = hours
+            risk = result.get("risk") or "low"
+            if risk in {"medium", "high"}:
+                item["fact_warning"] = (result.get("reason") or "").strip() or "存在时效风险"
+    return draft

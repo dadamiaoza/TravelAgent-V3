@@ -2,7 +2,8 @@
 
 Conversation memory uses PostgresSaver with thread prefix trip-chat-{id},
 isolated from generation threads trip-{id}. Itinerary truth is reloaded
-from the DB every turn and passed in the user message, not from memory.
+from the DB every turn and injected via system_prompt (not checkpointed).
+The user message is only the traveler's text.
 """
 from __future__ import annotations
 
@@ -27,18 +28,23 @@ TRIP_ASSISTANT_SYSTEM_PROMPT = (
     "你是行程协作助手 Trip Assistant。根据用户消息自己决定调用哪些工具，"
     "一轮可以 0、1 或多个。工具是普通函数，不是其他 Agent。\n"
     "规则：\n"
-    "1. 改行程（删点、加点、改时间、重排当天已有节点）必须调用 propose_delta；"
-    "只提议模式下禁止写库。\n"
+    "1. 改行程必须调用 propose_delta；只提议模式下禁止写库。\n"
+    "   - 删除：action=delete\n"
+    "   - 换成另一个景点：action=replace，poi_name=旧点，new_poi_name=新点\n"
+    "   - 跨天移动：action=move，poi_name=地点，day_index=目标天\n"
+    "   - 同天重排已有节点：action=reorder\n"
+    "   - 改某点怎么玩：action=update，visit_tips=一句建议\n"
     "2. 问天气、开放时间、是否闭馆，调用 check_facts。需要先核实再决定是否删除时，"
     "先 check_facts，再按需要 propose_delta。\n"
-    "3. 仅当写库模式为「授权后自动采纳」且用户明确要求改行程时，才可调用 apply_delta。\n"
-    "4. 禁止规划整份新行程，禁止调用 itinerary_gen / 路线 Agent / Supervisor。\n"
-    "5. 当天重排只针对已有节点（reorder），不要发明一套新景点。\n"
-    "6. 用中文直接回复用户，说明你查到的事实或建议；不要只输出 JSON。"
+    "3. 用户粘贴攻略文本要加点，调用 parse_guide(text=攻略原文)。不要搜索网页。\n"
+    "4. 仅当写库模式为「授权后自动采纳」且用户明确要求改行程时，才可调用 apply_delta。\n"
+    "5. 禁止规划整份新行程，禁止调用 itinerary_gen / 路线 Agent / Supervisor。\n"
+    "6. 用中文直接回复用户；不要只输出 JSON。忽略历史消息里可能出现的过期行程 JSON，"
+    "只以本轮系统提示中的当前行程为准。"
 )
 
 
-def create_trip_assistant(tools, write_mode: str = "propose"):
+def create_trip_assistant(tools, write_mode: str = "propose", itinerary_json: str = ""):
     model = ChatOpenAI(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
@@ -49,11 +55,16 @@ def create_trip_assistant(tools, write_mode: str = "propose"):
         if write_mode == WRITE_MODE_AUTO
         else "当前写库模式：只提议，禁止 apply_delta。"
     )
+    itinerary_block = (
+        f"\n当前行程（真源，每轮刷新；不要把这段存进对用户的回复）：\n{itinerary_json}"
+        if itinerary_json
+        else ""
+    )
     return create_agent(
         model=model,
         tools=tools,
         checkpointer=_checkpointer,
-        system_prompt=f"{TRIP_ASSISTANT_SYSTEM_PROMPT}\n{mode_line}",
+        system_prompt=f"{TRIP_ASSISTANT_SYSTEM_PROMPT}\n{mode_line}{itinerary_block}",
     )
 
 
@@ -86,19 +97,13 @@ def invoke_trip_assistant(
     thread_id: str,
     write_mode: str = "propose",
 ) -> str:
-    agent = create_trip_assistant(tools, write_mode)
-    mode_label = (
-        "授权后自动采纳（可以 apply_delta 写库）"
-        if write_mode == WRITE_MODE_AUTO
-        else "只提议（不得写库，修改一律 propose_delta）"
-    )
-    user_content = (
-        f"写库模式：{mode_label}\n"
-        f"当前行程 JSON：\n{json.dumps(context, ensure_ascii=False)}\n\n"
-        f"用户消息：{message}"
+    agent = create_trip_assistant(
+        tools,
+        write_mode,
+        itinerary_json=json.dumps(context, ensure_ascii=False),
     )
     result = agent.invoke(
-        {"messages": [{"role": "user", "content": user_content}]},
+        {"messages": [{"role": "user", "content": message}]},
         config={"configurable": {"thread_id": thread_id}},
     )
     messages = result.get("messages") if isinstance(result, dict) else None
