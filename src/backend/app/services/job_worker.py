@@ -26,7 +26,7 @@ from app.services.generation_jobs import (
     schedule_job_retry,
 )
 from app.services.itinerary import fill_itinerary_draft, route_itinerary_draft
-from app.services.fact_verify import verify_itinerary_draft
+from app.services.fact_verify import apply_verify_to_draft, verify_itinerary_draft
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +183,7 @@ def _default_generate(
             city=generation_input.city or generation_input.destination,
             start_date=generation_input.start_date,
         )
+        apply_verify_to_draft(routed, outcome)
         if outcome.warnings and on_stage is not None:
             on_stage("warning", 95, outcome.summary[:500])
     except Exception:

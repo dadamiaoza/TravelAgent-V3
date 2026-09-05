@@ -55,6 +55,32 @@ def test_fill_with_candidates_skips_planner() -> None:
     assert draft["days"][1]["items"][0]["poi_name"] == "灵隐寺"
 
 
+def test_fill_with_candidates_copies_visit_fields() -> None:
+    entities = [
+        {
+            "poi_name": "西湖",
+            "day_index": 1,
+            "seq": 1,
+            "suggested_duration_h": 3,
+            "best_time": "morning",
+            "cost_estimate": "门票免费",
+            "visit_tips": "沿湖慢走，避开中午阳光。",
+        }
+    ]
+    draft = itinerary_service.fill_itinerary_draft(
+        destination="杭州",
+        city="杭州",
+        start_date=date(2030, 1, 1),
+        end_date=date(2030, 1, 1),
+        selected_entities=entities,
+    )
+    item = draft["days"][0]["items"][0]
+    assert item["suggested_duration_h"] == 3
+    assert item["best_time"] == "morning"
+    assert item["cost_note"] == "门票免费"
+    assert item["visit_tips"] == "沿湖慢走，避开中午阳光。"
+
+
 def test_fill_without_candidates_calls_planner() -> None:
     class FakePlanner:
         def invoke(self, *_args, **_kwargs):

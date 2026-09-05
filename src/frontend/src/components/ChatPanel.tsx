@@ -17,6 +17,7 @@ const ACTION_LABELS: Record<string, string> = {
   delete: "删除地点",
   move: "移动地点",
   reorder: "调整顺序",
+  replace: "换成新地点",
 };
 
 function deltaSummary(delta: ItineraryDelta): string {
@@ -29,6 +30,12 @@ function deltaSummary(delta: ItineraryDelta): string {
   if (delta.action === "delete") {
     return `${action}：${payload?.poi_name ?? "该地点"}（Day${target?.day_index ?? "?"}）`;
   }
+  if (delta.action === "replace") {
+    return `${action}：改为 ${payload?.poi_name ?? "新地点"}（Day${target?.day_index ?? "?"}）`;
+  }
+  if (delta.action === "move") {
+    return `${action}：${payload?.poi_name ?? "该地点"} → Day${target?.day_index ?? "?"}`;
+  }
   if (delta.action === "reorder") {
     return `${action}：Day${target?.day_index ?? "?"} 共 ${payload?.item_ids?.length ?? 0} 个节点`;
   }
@@ -38,12 +45,22 @@ function deltaSummary(delta: ItineraryDelta): string {
   return action;
 }
 
+function deltaContrast(delta: ItineraryDelta): string | null {
+  if (delta.preview_before && delta.preview_after && delta.preview_before !== delta.preview_after) {
+    return `原：${delta.preview_before}\n新：${delta.preview_after}`;
+  }
+  return null;
+}
+
 function deltaImpact(delta: ItineraryDelta): string {
   if (delta.action === "delete") {
     return "删除后当天节点数减少，后续时间会重新计算。";
   }
   if (delta.action === "add") {
     return `将插入 Day${delta.target?.day_index ?? "?"}，当天时间线会重新计算。`;
+  }
+  if (delta.action === "replace") {
+    return "更换景点后，当天路线和时间会重新计算。";
   }
   if (delta.action === "reorder" || delta.action === "move") {
     return "排序变化后，交通时间和地图连线会更新。";
@@ -116,6 +133,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const [writeMode, setWriteMode] = useState<TripChatWriteMode>("propose");
   const [handled, setHandled] = useState<Record<string, "accepted" | "ignored" | "failed">>({});
+  const [toolStatus, setToolStatus] = useState<string>("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   async function refreshTrip() {
@@ -144,6 +162,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     setMessages((prev) => [...prev, { id: aiMessageId, role: "ai", content: "", suggestions: [] }]);
     setInput("");
     setLoading(true);
+    setToolStatus("AI 正在思考…");
 
     try {
       await streamTripChat(
@@ -158,7 +177,10 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
           },
         },
         (event, data) => {
-          if (event === "delta") {
+          if (event === "status") {
+            const message = String(data.message ?? "");
+            if (message) setToolStatus(message);
+          } else if (event === "delta") {
             const chunk = String(data.text ?? "");
             setMessages((prev) =>
               prev.map((msg) =>
@@ -170,12 +192,17 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             void refreshTrip().catch(() => undefined);
             markDeltasAccepted(applied, aiMessageId);
           } else if (event === "done") {
+            setToolStatus("");
             setThreadId(String(data.thread_id ?? ""));
             const applied = (data.applied as ItineraryDelta[]) ?? [];
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === aiMessageId
-                  ? { ...msg, suggestions: (data.suggestions as ItineraryDelta[]) ?? [] }
+                  ? {
+                      ...msg,
+                      content: msg.content || String(data.reply ?? ""),
+                      suggestions: (data.suggestions as ItineraryDelta[]) ?? [],
+                    }
                   : msg,
               ),
             );
@@ -196,6 +223,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
       );
     } finally {
       setLoading(false);
+      setToolStatus("");
       inputRef.current?.focus();
     }
   }
@@ -275,8 +303,12 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
 
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && (
-          <div className="text-center text-sm text-gray-400">
-            试试对我说：“把第三天改轻松一点”
+          <div className="space-y-1 text-center text-sm text-gray-400">
+            <p>可以这样说：</p>
+            <p>「删掉雷峰塔」</p>
+            <p>「第二天会下雨吗」</p>
+            <p>「把雷峰塔换成灵隐寺」或「挪到第 2 天」</p>
+            <p>「按这段攻略加点：…」</p>
           </div>
         )}
         {messages.map((msg) => (
@@ -327,6 +359,11 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
                   return (
                     <div key={key} className="rounded-md border border-orange-200 bg-orange-50 p-3">
                       <p className="text-xs font-semibold text-orange-800">{deltaSummary(delta)}</p>
+                      {deltaContrast(delta) && (
+                        <pre className="mt-1 whitespace-pre-wrap text-xs text-orange-800">
+                          {deltaContrast(delta)}
+                        </pre>
+                      )}
                       <p className="mt-1 text-xs text-orange-700">{deltaImpact(delta)}</p>
                       <div className="mt-2 flex gap-2">
                         <button
@@ -351,7 +388,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             )}
           </div>
         ))}
-        {loading && <p className="text-xs text-gray-400">AI 正在思考…</p>}
+        {loading && <p className="text-xs text-gray-400">{toolStatus || "AI 正在思考…"}</p>}
       </div>
 
       <div className="border-t border-gray-100 p-3">
@@ -366,7 +403,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             }
           }}
           rows={2}
-          placeholder="例如：把第三天改轻松一点"
+          placeholder="例如：删掉雷峰塔 / 第二天会下雨吗"
           className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
         />
         <button

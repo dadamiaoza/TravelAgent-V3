@@ -158,6 +158,9 @@ export default function SourcePage() {
           lat: entity.lat ?? null,
           lng: entity.lng ?? null,
           suggested_duration_h: entity.suggested_duration_h ?? null,
+          best_time: entity.best_time ?? null,
+          cost_estimate: entity.cost_estimate ?? null,
+          visit_tips: entity.visit_tips ?? null,
         })),
       });
 

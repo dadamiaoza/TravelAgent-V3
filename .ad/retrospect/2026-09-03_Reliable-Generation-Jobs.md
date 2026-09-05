@@ -109,7 +109,7 @@
 - 误判：「我以为要上 Redis 队列才算异步。」
 - 开门：「如果你问多 Worker 抢同一条任务，我可以讲 SKIP LOCKED 和 run_token 为什么要拆开。」
 
-完整引导顺序见 [interview-steering.md](interview-steering.md)。
+完整引导顺序见本地 `.inter/interview-steering.md`（不入库）。
 
 ---
 

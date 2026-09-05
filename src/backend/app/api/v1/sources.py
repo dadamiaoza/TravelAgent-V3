@@ -121,6 +121,7 @@ def parse_source_persist(source_id: UUID, db: Session = Depends(get_db)):
             suggested_duration_h=item.get("suggested_duration_h"),
             best_time=item.get("best_time"),
             cost_estimate=item.get("cost_estimate"),
+            visit_tips=item.get("visit_tips"),
         ))
 
     db.commit()
@@ -147,6 +148,7 @@ def parse_source(body: SourceParseRequest):
             suggested_duration_h=item.get("suggested_duration_h"),
             best_time=item.get("best_time"),
             cost_estimate=item.get("cost_estimate"),
+            visit_tips=item.get("visit_tips"),
         ))
 
     return SourceParseOut(entities=entities)

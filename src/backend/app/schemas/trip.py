@@ -15,6 +15,9 @@ class SelectedEntity(BaseModel):
     lat: float | None = None
     lng: float | None = None
     suggested_duration_h: float | None = Field(default=None, ge=0, le=24)
+    best_time: str | None = Field(default=None, max_length=32)
+    cost_estimate: str | None = Field(default=None, max_length=256)
+    visit_tips: str | None = None
 
 
 class TripCreate(BaseModel):
@@ -68,6 +71,10 @@ class ItineraryItemUpdate(BaseModel):
     start_time: time | None = None
     end_time: time | None = None
     notes: str | None = None
+    visit_tips: str | None = None
+    best_time: str | None = Field(default=None, max_length=32)
+    cost_note: str | None = Field(default=None, max_length=256)
+    suggested_duration_h: float | None = Field(default=None, ge=0, le=24)
 
 
 class ItineraryDayCreate(BaseModel):
@@ -82,6 +89,10 @@ class ItineraryItemCreate(BaseModel):
     start_time: time | None = None
     end_time: time | None = None
     notes: str | None = None
+    visit_tips: str | None = None
+    best_time: str | None = Field(default=None, max_length=32)
+    cost_note: str | None = Field(default=None, max_length=256)
+    suggested_duration_h: float | None = Field(default=None, ge=0, le=24)
     lat: float | None = None
     lng: float | None = None
 
@@ -125,6 +136,7 @@ class SourceEntityOut(BaseModel):
     suggested_duration_h: float | None = None
     best_time: str | None = None
     cost_estimate: str | None = None
+    visit_tips: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -190,6 +202,7 @@ class MergedEntityOut(BaseModel):
     suggested_duration_h: float | None = None
     best_time: str | None = None
     cost_estimate: str | None = None
+    visit_tips: str | None = None
     mention_count: int
     source_names: list[str]
 
@@ -247,6 +260,12 @@ class ItineraryItemOut(BaseModel):
     poi_address: str | None = None
     poi_type: str | None = None
     cost_estimate: int | None = None
+    suggested_duration_h: float | None = None
+    best_time: str | None = None
+    cost_note: str | None = None
+    opening_hours: str | None = None
+    visit_tips: str | None = None
+    fact_warning: str | None = None
     route_verified: bool | None = None
     travel_advice: str | None = None
     is_scenic: bool = False
@@ -335,6 +354,9 @@ class ItineraryDeltaPayload(BaseModel):
     end_time: time | None = None
     duration_h: float | None = None
     notes: str | None = None
+    visit_tips: str | None = None
+    best_time: str | None = None
+    cost_note: str | None = None
     lat: float | None = None
     lng: float | None = None
     item_ids: list[UUID] | None = None
@@ -342,9 +364,11 @@ class ItineraryDeltaPayload(BaseModel):
 
 class ItineraryDelta(BaseModel):
     suggestion_id: UUID | None = None
-    action: str = Field(..., examples=["add", "update", "delete", "move", "reorder"])
+    action: str = Field(..., examples=["add", "update", "delete", "move", "reorder", "replace"])
     target: ItineraryDeltaTarget | None = None
     payload: ItineraryDeltaPayload | None = None
+    preview_before: str | None = None
+    preview_after: str | None = None
 
 
 class TripChatOut(BaseModel):

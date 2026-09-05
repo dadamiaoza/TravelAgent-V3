@@ -26,7 +26,8 @@ ITINERARY_GEN_SYSTEM_PROMPT = (
     "5. 多轮对话时，查看历史记录避免与已规划天重复使用景点\n\n"
     "输出 JSON 格式（不要包含其他文字）：\n"
     '{"days": [{"day_index": 1, "theme": "主题概括", "route_type": "city", "items": ['
-    '{"seq": 1, "poi_name": "...", "city": "所在城市", "duration_h": 0, "travel_minutes_from_prev": 0}, ...]}]}\n\n'
+    '{"seq": 1, "poi_name": "...", "city": "所在城市", "duration_h": 0, '
+    '"best_time": null, "cost_note": null, "tips": null, "travel_minutes_from_prev": 0}, ...]}]}\n\n'
     "规则：\n"
     "- theme 用简短中文概括当天主题（如「西湖经典一日」「皇城文化深度」）\n"
     "- route_type 只能是 city 或 scenic：city = 城市常规景点，按城市道路/公交可达；scenic = 景区内部（如山地景区、森林公园），内部需要步道/索道/接驳车往返\n"
@@ -36,6 +37,9 @@ ITINERARY_GEN_SYSTEM_PROMPT = (
     "- 同一天尽量安排地理上相邻的景点；如果两个景点距离很远，不要硬塞在同一天\n"
     "- 如果当天需要从上一个城市/景区转场，请在 theme 中简单说明，例如“Day3 武功山（从市区约1.5小时车程）”\n"
     "- city 填写该景点实际所在城市；与行程目的地相同可省略，跨城景点必须填写\n"
+    "- best_time 只能是 morning / afternoon / evening / all_day 或 null，不要猜\n"
+    "- cost_note 仅在确知门票/花费时填写短中文，否则 null；不要编造价格\n"
+    "- tips 一句中文怎么玩（亮点或注意），不要写成段落，不要把开馆时间写进 tips\n"
     "- travel_minutes_from_prev 一律填 0\n"
     "- 如果用户分多次规划（多轮对话），务必检查历史消息已分配的景点，不要重复"
 )

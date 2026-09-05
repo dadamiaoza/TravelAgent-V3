@@ -45,5 +45,6 @@ class SourceEntity(Base):
     suggested_duration_h: Mapped[float | None] = mapped_column(Float(), nullable=True)
     best_time: Mapped[str | None] = mapped_column(String(32), nullable=True)
     cost_estimate: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    visit_tips: Mapped[str | None] = mapped_column(Text(), nullable=True)
 
     source: Mapped["SourceDocument"] = relationship(back_populates="entities")
