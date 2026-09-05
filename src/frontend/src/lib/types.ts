@@ -107,7 +107,10 @@ export interface TripChatOut {
   reply: string;
   thread_id: string;
   suggestions: ItineraryDelta[];
+  applied?: ItineraryDelta[];
 }
+
+export type TripChatWriteMode = "propose" | "auto_apply";
 
 
 export interface GenerationJobStage {

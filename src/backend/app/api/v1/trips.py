@@ -3,7 +3,7 @@ import json
 import re
 import uuid
 from datetime import timedelta
-from typing import Annotated, Dict
+from typing import Annotated
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
@@ -33,7 +33,6 @@ from app.schemas.trip import (
     TripChatRequest,
     TripChatOut,
     DeltaApplyRequest,
-    ItineraryDelta,
     EntityImportRequest,
 )
 from app.services.trip_editor import (
@@ -49,6 +48,7 @@ from app.services.trip_editor import (
     apply_delta,
     regenerate_trip,
 )
+from app.services.trip_chat import chat_thread_id, run_trip_chat
 from app.services.generation_jobs import (
     create_job,
     get_job_by_idempotency_key,
@@ -383,81 +383,9 @@ def update_trip(
     db.commit()
     db.refresh(trip)
     return trip
-def _build_trip_context(trip) -> Dict:
-    """Compact itinerary context for the chat prompt (no heavy route polylines)."""
-    return {
-        "destination": trip.destination,
-        "city": trip.city or "",
-        "days": [
-            {
-                "day_index": day.day_index,
-                "route_type": day.route_type or "city",
-                "items": [
-                    {
-                        "id": str(item.id),
-                        "seq": item.seq,
-                        "poi_name": item.poi_name,
-                        "start_time": str(item.start_time) if item.start_time else None,
-                        "end_time": str(item.end_time) if item.end_time else None,
-                        "travel_minutes": item.travel_minutes,
-                    }
-                    for item in sorted(day.items, key=lambda it: it.seq)
-                ],
-            }
-            for day in sorted(trip.days, key=lambda d: d.day_index)
-        ],
-    }
-
-
-def _run_trip_chat(trip, body: TripChatRequest, thread_id: str) -> TripChatOut:
-    """Run the trip chat LLM call and return structured output."""
-    context = _build_trip_context(trip)
-    if body.context:
-        context["current_day_index"] = body.context.day_index
-        if body.context.item_id:
-            context["current_item_id"] = str(body.context.item_id)
-
-    prompt = (
-        "你是旅行行程协作助手。根据当前行程 JSON 和用户消息，给出中文回复和可执行的结构化建议。\n"
-        "只输出 JSON，格式：\n"
-        '{"reply": "...", "suggestions": [{"action": "add|update|delete|move|reorder", '
-        '"target": {"day_index": 1, "item_id": "uuid", "seq": 2}, '
-        '"payload": {"poi_name": "...", "start_time": "09:00:00", "end_time": "10:00:00"}}]}\n'
-        "如果没有建议，suggestions 返回空数组。不要修改行程，只给建议。\n\n"
-        f"当前行程：\n{json.dumps(context, ensure_ascii=False)}\n\n"
-        f"用户消息：{body.message}\n"
-    )
-
-    try:
-        model = ChatOpenAI(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-        )
-        response = model.invoke(prompt)
-        content = response.content.strip()
-        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
-        fence = re.search(r"```json\s*(.*?)```", content, flags=re.DOTALL)
-        if fence:
-            content = fence.group(1)
-        start = content.find("{")
-        end = content.rfind("}")
-        data = json.loads(content[start:end + 1]) if start != -1 and end > start else {}
-        reply = data.get("reply") or "抱歉，我暂时没有理解你的需求。"
-        raw_suggestions = data.get("suggestions") or []
-        suggestions = []
-        for raw in raw_suggestions:
-            try:
-                suggestions.append(ItineraryDelta(**raw))
-            except Exception:
-                continue
-        return TripChatOut(reply=reply, thread_id=thread_id, suggestions=suggestions)
-    except Exception:
-        return TripChatOut(
-            reply="AI 对话服务暂时不可用，请稍后再试。",
-            thread_id=thread_id,
-            suggestions=[],
-        )
+def _run_trip_chat(trip, body: TripChatRequest, thread_id: str, db: Session) -> TripChatOut:
+    """Run the trip assistant graph and return reply + suggestions."""
+    return run_trip_chat(trip=trip, body=body, thread_id=thread_id, db=db)
 
 
 @router.post("/{trip_id}/chat", response_model=TripChatOut)
@@ -471,8 +399,8 @@ def trip_chat(
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
 
-    thread_id = body.thread_id or f"trip-{trip_id}"
-    return _run_trip_chat(trip, body, thread_id)
+    thread_id = body.thread_id or chat_thread_id(trip_id)
+    return _run_trip_chat(trip, body, thread_id, db)
 
 
 @router.post("/{trip_id}/chat/stream")
@@ -486,17 +414,15 @@ def trip_chat_stream(
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
 
-    thread_id = body.thread_id or f"trip-{trip_id}"
+    thread_id = body.thread_id or chat_thread_id(trip_id)
 
     async def event_generator():
         import asyncio
 
         yield 'event: status\ndata: {"status":"thinking"}\n\n'
-        # 模拟/真实计算放在这里，避免阻塞第一个事件
-        result = await asyncio.to_thread(_run_trip_chat, trip, body, thread_id)
+        result = await asyncio.to_thread(_run_trip_chat, trip, body, thread_id, db)
 
         reply = result.reply or ""
-        # 按2-4个字符切块，形成流式输出效果
         step = 3
         for i in range(0, len(reply), step):
             chunk = reply[i:i + step]
@@ -504,10 +430,21 @@ def trip_chat_stream(
             yield f'event: delta\ndata: {_json.dumps({"text": chunk}, ensure_ascii=False)}\n\n'
             await asyncio.sleep(0.03)
 
+        if result.applied:
+            yield (
+                "event: applied\ndata: "
+                + json.dumps(
+                    {"deltas": [s.model_dump(mode="json") for s in result.applied]},
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+
         final_payload = {
             "reply": reply,
             "thread_id": result.thread_id,
             "suggestions": [s.model_dump(mode="json") for s in result.suggestions],
+            "applied": [s.model_dump(mode="json") for s in result.applied],
         }
         yield f'event: done\ndata: {json.dumps(final_payload, ensure_ascii=False)}\n\n'
 
