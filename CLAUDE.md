@@ -6,7 +6,7 @@
 - React Vite frontend at `src/frontend/`
 - PostgreSQL 16 via Docker at `src/docker-compose.yml`
 - LangChain agents for AI orchestration at `src/backend/app/agents/`
-- MiniMax M2.7 as the LLM provider (OpenAI-compatible API)
+- MiniMax M3 as the LLM provider (OpenAI-compatible API)
 - Spec documents at `.ad/specs/ai-travel-assistant/`
 
 ## Agent skills

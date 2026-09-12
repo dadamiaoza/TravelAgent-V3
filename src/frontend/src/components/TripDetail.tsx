@@ -7,6 +7,9 @@ import { useTripStore } from "@/stores/tripStore";
 import { useTripDraftSync } from "@/hooks/useTripDraftSync";
 import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
+import PhotoArchivePanel from "@/components/PhotoArchivePanel";
+import { photosForItem } from "@/lib/photos";
+import { useTripPhotos, useUploadTripPhotos } from "@/hooks/useTripPhotos";
 
 export default function TripDetail({ trip }: { trip: Trip }) {
   const { dirtyTrip, isDirty } = useTripDraftSync(trip.id, trip);
@@ -50,6 +53,19 @@ export default function TripDetail({ trip }: { trip: Trip }) {
   }
 
   const currentDay = days[selectedDayIndex];
+  const { photos, summary } = useTripPhotos(trip.id);
+  const upload = useUploadTripPhotos(trip.id);
+  const photoByItem = Object.fromEntries(
+    (summary.data ?? []).map((row) => [
+      row.item_id,
+      {
+        count: row.count,
+        thumbUrl: row.thumbnail_photo_id
+          ? `/api/v1/trips/${trip.id}/photos/${row.thumbnail_photo_id}/file?variant=thumbnail`
+          : null,
+      },
+    ]),
+  );
 
   return (
     <div className="space-y-6">
@@ -116,11 +132,13 @@ export default function TripDetail({ trip }: { trip: Trip }) {
 
       {days.length > 0 && (
         <TripMap
+          variant="route"
           days={days}
           selectedDayIndex={selectedDayIndex}
           onSelectDay={handleSelectDay}
           focusItemId={focusItemId}
           onSelectItem={handleSelectItem}
+          photoByItem={photoByItem}
         />
       )}
 
@@ -132,6 +150,14 @@ export default function TripDetail({ trip }: { trip: Trip }) {
             tripId={trip.id}
             focusedItemId={focusItemId}
             onSelectItem={handleSelectItem}
+            photosByItemId={Object.fromEntries(
+              (currentDay.items ?? []).map((item) => [
+                item.id,
+                photosForItem(photos.data, item.id),
+              ]),
+            )}
+            onUploadToItem={(itemId, files) => upload.mutate({ files, itemId })}
+            uploading={upload.isPending}
           />
         </div>
       ) : (
@@ -139,6 +165,8 @@ export default function TripDetail({ trip }: { trip: Trip }) {
           该行程暂无内容
         </p>
       )}
+
+      <PhotoArchivePanel trip={displayTrip} />
 
     </div>
   );

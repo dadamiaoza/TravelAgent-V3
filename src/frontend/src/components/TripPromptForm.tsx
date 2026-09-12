@@ -34,8 +34,18 @@ export default function TripPromptForm() {
       setPeopleCount(String(result.people_count ?? 1));
       setOptimizedPrompt(result.optimized_prompt ?? "");
       setMustVisit((result.must_visit ?? []).join("，"));
-    } catch {
-      setError("提示词优化失败，请稍后重试");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "";
+      try {
+        const parsed = JSON.parse(raw) as { detail?: unknown };
+        setError(
+          typeof parsed.detail === "string"
+            ? parsed.detail
+            : "提示词优化失败，请稍后重试",
+        );
+      } catch {
+        setError("提示词优化失败，请稍后重试");
+      }
     } finally {
       setLoading(false);
     }

@@ -104,12 +104,12 @@ def test_geocode_with_fallback_prefers_item_city():
         mock_geocode.assert_called_once_with("玉湖湿地公园", city="萍乡", mock_fallback=False, nearby=None)
 
 
-def test_geocode_with_fallback_falls_back_to_no_city():
-    """指定城市搜不到时，放开城市限制，兼容跨城景点。"""
+def test_geocode_with_fallback_does_not_search_nationwide_when_city_set():
+    """指定城市搜不到时不要全国搜，避免同名路落到外省。"""
     with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
         mock_geocode.side_effect = [
             None,
-            {"lat": 30.0, "lng": 120.0, "city": "嘉兴"},
+            {"lat": 30.0, "lng": 120.0, "city": "杭州"},
         ]
         result = _geocode_with_fallback("乌镇", "杭州")
         assert result["lat"] == 30.0
@@ -119,24 +119,32 @@ def test_geocode_with_fallback_falls_back_to_no_city():
             "mock_fallback": False,
             "nearby": None,
         }
-        assert mock_geocode.call_args_list[1].kwargs == {
-            "city": "",
-            "mock_fallback": False,
-        }
+        assert mock_geocode.call_args_list[1].kwargs == {"city": "杭州"}
+
+
+def test_geocode_with_fallback_rejects_other_city():
+    """城市偏好命中外省同名路时丢弃，改走下一次同城查询。"""
+    with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
+        mock_geocode.side_effect = [
+            {"lat": 31.280939, "lng": 121.528057, "city": "上海市"},
+            {"lat": 28.1917, "lng": 112.9764, "city": "长沙市"},
+        ]
+        result = _geocode_with_fallback("黄兴路步行街", "长沙")
+        assert abs(result["lat"] - 28.1917) < 0.001
+        assert mock_geocode.call_count == 2
 
 
 def test_geocode_with_fallback_uses_mock_as_last_resort():
-    """所有真实搜索都失败时，才使用 mock 兜底坐标。"""
+    """同城真实搜索失败时，才使用 mock 兜底坐标。"""
     with patch("app.agents.tools.route_optimizer.geocode_poi") as mock_geocode:
         mock_geocode.side_effect = [
-            None,
             None,
             {"lat": 31.0, "lng": 121.0, "city": ""},
         ]
         result = _geocode_with_fallback("一个不存在的跨城POI", "杭州")
         assert result["lat"] == 31.0
-        assert mock_geocode.call_count == 3
-        assert mock_geocode.call_args_list[2].kwargs == {"city": "杭州"}
+        assert mock_geocode.call_count == 2
+        assert mock_geocode.call_args_list[1].kwargs == {"city": "杭州"}
 
 
 # ── Agent 测试（完整 Agent + Tool 管道）──

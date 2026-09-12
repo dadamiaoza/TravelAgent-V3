@@ -4,9 +4,7 @@ from __future__ import annotations
 import json
 import re
 
-from langchain_openai import ChatOpenAI
-
-from app.core.config import settings
+from app.core.llm import chat_model
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -26,11 +24,7 @@ def extract_guide_entities(text: str) -> list[dict]:
     raw = (text or "").strip()
     if not raw:
         return []
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
     response = model.invoke(f"{PARSE_GUIDE_PROMPT}\n\n攻略文本：\n{raw}")
     content = getattr(response, "content", "") or ""
     if isinstance(content, list):

@@ -663,3 +663,74 @@ Nginx 返回给浏览器
   - 小规模（<=4 个点）：仍用完整真实矩阵，保持原有排序行为。
   - 较大规模（>4 个点）：排序改用 Haversine 估算矩阵，不调高德；排序后再只计算相邻真实路段。
 - 效果：大行程从 N×N 次高德请求降为 N-1 次。
+
+
+## 29. 提示词优化 500（httpx2 + brotli）与 MiniMax M3 升级
+
+### 问题
+- 首页「优化提示词」失败，接口 `POST /api/v1/trips/suggest` 返回 500。
+- 日志写 `OpenAIConnectionError: Connection error`，容易误判成没开代理或 API Key 失效。
+- 真实堆栈是 `httpx2` BrotliDecoder：`process() takes no keyword arguments`。
+
+### 原因
+- `openai` 3.x 用 `httpx2`。MiniMax 大响应常用 `Content-Encoding: br`。
+- `httpx2` 把 `output_buffer_limit=` 传给 `brotli.Decompressor.process()`。
+- 本机 Anaconda brotli 1.0.9 不接受关键字参数，解码失败被包装成连接错误。
+
+### 解决方案
+- 新增 `app.core.llm.chat_model()`，所有 LLM 调用走同一 HTTP 客户端。
+- 客户端只声明 `Accept-Encoding: gzip, deflate`，避开 brotli。
+- 连接失败改为 502，前端展示后端 `detail`。
+- 默认模型从 MiniMax-M2.7 升级为 MiniMax-M3（配置、示例 env、项目说明同步）。
+- 故意不开 `reasoning_split`：避免 LangChain 多轮 tool 丢掉思考链字段。JSON 解析仍剥 `<think>`。
+
+### 关键结论
+- 「Connection error」不一定是网络；先看 httpx 解码层。
+- LLM 传输细节（压缩、思考链格式）必须收口到一个工厂，不能每个 `ChatOpenAI(...)` 各写一套。
+
+详细过程：[2026-09-11 复盘](../../.ad/retrospect/2026-09-11_Suggest-500-and-M3.md)。
+
+
+## 30. 批量上传照片 422
+
+### 问题
+- 行程页「批量上传」失败，`POST /api/v1/trips/{id}/photos` 返回 422 Unprocessable Entity。
+- 用 Python 按规范组 multipart 直连后端是 202，所以不是「JPEG 不支持」。
+
+### 原因
+- 接口用 `File(...)` + 可选 `Form(UUID)`。浏览器没选节点时可能带 `item_id=""`，空字符串不是 UUID，校验在进业务代码前就 422。
+- 文件字段名稍有偏差、或给 `FormData` 手写 `Content-Type: application/json`，同样会 422。
+
+### 解决方案
+- 改为 `request.form()` 自己取文件和 `item_id`；空 `item_id` 当没传。
+- 文件字段兼容 `files` / `file` / `files[]`。
+- 前端遇到 `FormData` 删除 `Content-Type`，把 FastAPI `detail` 展示出来。
+
+### 关键结论
+- 422 是请求体校验，不是 EXIF / HEIC / 匹配逻辑。格式拒绝应走 415 或业务错误码。
+
+详细过程：[2026-09-12 复盘](../../.ad/retrospect/2026-09-12_Photo-Upload-422-and-Huangxing-Geocode.md)。
+
+
+## 31. 黄兴路步行街定位到上海
+
+### 问题
+- 长沙行程里「黄兴路步行街」地图钉在上海（约 `31.28, 121.53`，杨浦黄兴路一带）。
+- 同一天前面的岳麓山、坡子街等点都在长沙。
+
+### 原因
+- 高德 `city` 默认只是搜索偏好，没有 `citylimit=true` 时仍可能返回外省同名路。
+- 名称打分把「黄兴路」（上海）当成「黄兴路步行街」的子串，分高于长沙正式名「黄兴南路步行街」（多一个「南」）。
+- 指定城市搜完后还会全国搜兜底，同名路更容易落到上海。
+
+### 解决方案
+- 有城市则 `citylimit=true`，并按返回的城市/区/地址再过滤。
+- 路名把「南路/北路/东路/西路」折成「路」再比；子串匹配降档。
+- 指定了行程/POI 城市后禁止全国搜；外省结果丢弃。距上一节点超过 250km 也丢弃。
+- 缓存 key 改为 `v2`。该行程已重算，黄兴路步行街为 `28.188, 112.976`。
+
+### 关键结论
+- 同名路/步行街必须用城市硬限制，不能靠「搜得到就用」。
+- 跨城点要写 POI 自己的 `city`，不要用全国搜索猜。
+
+详细过程：[2026-09-12 复盘](../../.ad/retrospect/2026-09-12_Photo-Upload-422-and-Huangxing-Geocode.md)。

@@ -164,3 +164,51 @@ export interface GenerationJob {
   finished_at?: string | null;
   next_run_at?: string | null;
 }
+
+export interface PhotoCandidate {
+  item_id: string;
+  poi_name?: string | null;
+  score?: number | null;
+}
+
+export interface PhotoAssignment {
+  item_id?: string | null;
+  assignment_type: string;
+  confidence: number;
+  is_confirmed: boolean;
+  evidence?: Record<string, unknown> | null;
+}
+
+export interface PhotoAsset {
+  id: string;
+  trip_id: string;
+  original_filename: string;
+  captured_at?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  status: string;
+  error?: string | null;
+  thumbnail_url?: string | null;
+  preview_url?: string | null;
+  assignment?: PhotoAssignment | null;
+  candidates: PhotoCandidate[];
+}
+
+export interface PhotoUploadOut {
+  job_id: string;
+  photos: { id: string; original_filename: string; duplicate: boolean }[];
+}
+
+export interface PhotoJobOut {
+  id: string;
+  status: string;
+  progress: number;
+  error?: string | null;
+}
+
+export interface PhotoMapSummaryItem {
+  item_id: string;
+  count: number;
+  thumbnail_photo_id?: string | null;
+}
+

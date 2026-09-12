@@ -14,10 +14,11 @@ import math
 
 import requests
 
-from app.agents.tools.geo import geocode_poi
+from app.agents.tools.geo import geocode_poi, _result_matches_city
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.cache_store import get_cache, set_cache
+from app.services.geo_convert import haversine_m
 
 logger = logging.getLogger(__name__)
 
@@ -40,38 +41,55 @@ _SCENIC_UNVERIFIED_MODES = {"hiking", "shuttle", "cable_car"}
 # ── 公共接口 ──
 
 
+# 同城一日点之间不应跳到外省同名路；跨城请写 POI 自己的 city
+_CROSS_CITY_JUMP_M = 250_000
+
+
 def _geocode_with_fallback(
     name: str,
     preferred_city: str,
     nearby: tuple[float, float] | None = None,
     route_type: str = "city",
 ) -> dict:
-    """POI 地理编码回退链：周边搜索 → 指定城市 → 无城市 → mock。
+    """POI 地理编码回退链：周边搜索 → 指定城市 → mock。
 
-    route_type=scenic 时优先用上一节点坐标做周边搜索，
-    解决景区内同名地点错配；city 模式不能用周边搜索，
-    否则会把市区场馆错误匹配到上一景点附近的同名场馆。
+    指定了城市时绝不做全国搜索。高德 city 参数默认只是偏好，
+    黄兴路步行街 会命中上海黄兴路，必须 citylimit + 城市校验。
     """
     nearby_ctx = nearby if route_type == "scenic" else None
 
-    # 1. 景区内：有上一节点坐标时，优先周边搜索
-    if nearby_ctx:
-        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby_ctx)
-        if result is not None:
-            return result
-
-    # 2. 再按 POI 自己的城市/行程城市搜索，消除同名歧义
-    if preferred_city:
-        result = geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby_ctx)
-        if result is not None:
-            return result
-
-    # 3. 找不到时放开城市限制，兼容跨城景点
-    result = geocode_poi(name, city="", mock_fallback=False)
-    if result is not None:
+    def _accept(result: dict | None) -> dict | None:
+        if result is None:
+            return None
+        if not _result_matches_city(result, preferred_city):
+            return None
+        if (
+            nearby
+            and route_type == "city"
+            and haversine_m(nearby[0], nearby[1], result["lat"], result["lng"])
+            > _CROSS_CITY_JUMP_M
+        ):
+            return None
         return result
 
-    # 4. 仍找不到才使用 mock 兜底，保证行程始终有可展示坐标
+    if nearby_ctx:
+        accepted = _accept(
+            geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby_ctx)
+        )
+        if accepted is not None:
+            return accepted
+
+    if preferred_city:
+        accepted = _accept(
+            geocode_poi(name, city=preferred_city, mock_fallback=False, nearby=nearby_ctx)
+        )
+        if accepted is not None:
+            return accepted
+        return geocode_poi(name, city=preferred_city)
+
+    accepted = _accept(geocode_poi(name, city="", mock_fallback=False))
+    if accepted is not None:
+        return accepted
     return geocode_poi(name, city=preferred_city)
 
 def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:

@@ -48,6 +48,41 @@ def _normalize_poi_search_name(name: str) -> str:
 
 
 _GEOCODE_CACHE: dict[tuple, dict] = {}
+_CACHE_VERSION = "v2"
+
+
+def _city_token(value: str) -> str:
+    return (value or "").replace("省", "").replace("市", "").strip()
+
+
+def _filter_pois_by_city(pois: list, city: str) -> list:
+    token = _city_token(city)
+    if not token:
+        return list(pois)
+    matched = []
+    for poi in pois:
+        blob = "".join(
+            str(poi.get(key) or "")
+            for key in ("cityname", "adname", "pname", "address")
+        ).replace("市", "")
+        if token in blob:
+            matched.append(poi)
+    return matched
+
+
+def _result_matches_city(result: dict | None, preferred_city: str) -> bool:
+    if not result:
+        return False
+    token = _city_token(preferred_city)
+    if not token:
+        return True
+    blob = "".join(
+        str(result.get(key) or "")
+        for key in ("city", "poi_address", "name")
+    ).replace("市", "")
+    if not blob.strip():
+        return True
+    return token in blob
 
 
 def geocode_poi(
@@ -57,11 +92,11 @@ def geocode_poi(
     nearby: tuple[float, float] | None = None,
 ) -> dict | None:
     """Cached wrapper around Amap geocoding to speed up repeated lookups."""
-    cache_key = (name, city, nearby)
+    cache_key = (_CACHE_VERSION, name, city, nearby)
     if cache_key in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[cache_key]
 
-    db_cache_key = f"{name}|{city}|{nearby}"
+    db_cache_key = f"{_CACHE_VERSION}|{name}|{city}|{nearby}"
     db = SessionLocal()
     try:
         persisted = get_cache(db, "geocode", db_cache_key)
@@ -190,6 +225,7 @@ def _geocode_amap_poi(name: str, city: str = "") -> dict | None:
     }
     if city:
         params["city"] = city
+        params["citylimit"] = "true"
 
     resp = requests.get(AMAP_PLACE_TEXT_URL, params=params, timeout=10)
     resp.raise_for_status()
@@ -199,6 +235,8 @@ def _geocode_amap_poi(name: str, city: str = "") -> dict | None:
         return None
 
     pois = data.get("pois") or []
+    if city:
+        pois = _filter_pois_by_city(pois, city)
     if not pois:
         return None
 
@@ -284,13 +322,23 @@ def _best_match_poi(query_name: str, pois: list) -> dict | None:
     return best if best_score >= 1 else None
 
 
+def _fold_road_name(value: str) -> str:
+    """黄兴南路步行街 与 黄兴路步行街 视为同一路名。"""
+    folded = re.sub(r"[（）()\s]", "", value)
+    return re.sub(r"[东南西北]路", "路", folded)
+
+
 def _name_match_score(query: str, result: str) -> int:
-    """简单名称匹配打分：2=完全/包含，1=单字重叠，0=不匹配。"""
+    """名称匹配打分：4=折叠后全等，3=结果包含查询，2=查询包含结果，1=单字重叠。"""
     q_clean = re.sub(r"[（）()\s]", "", query)
     r_clean = re.sub(r"[（）()\s]", "", result)
-    if q_clean == r_clean:
-        return 2
-    if q_clean in r_clean or r_clean in q_clean:
+    q_fold = _fold_road_name(query)
+    r_fold = _fold_road_name(result)
+    if q_clean == r_clean or q_fold == r_fold:
+        return 4
+    if q_clean in r_clean or q_fold in r_fold:
+        return 3
+    if r_clean in q_clean or r_fold in q_fold:
         return 2
     if any(ch in r_clean for ch in q_clean):
         return 1

@@ -1,11 +1,15 @@
+from pathlib import Path
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
     database_url: str = "postgresql://travel:travel123@localhost:5434/travel_agent"
     llm_provider: str = "minimax"
-    llm_model: str = "MiniMax-M2.7"
+    llm_model: str = "MiniMax-M3"  # OpenAI-compatible model id
     llm_api_key: str = ""
     llm_base_url: str = "https://api.minimaxi.com/v1"
     amap_api_key: str = ""
@@ -16,6 +20,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     firecrawl_api_key: str = ""
     firecrawl_mcp_url: str = ""
+    photo_upload_dir: str = str(_BACKEND_ROOT / "uploads")
 
     @field_validator("database_url")
     @classmethod

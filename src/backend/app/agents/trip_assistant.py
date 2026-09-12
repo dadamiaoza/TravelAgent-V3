@@ -11,12 +11,12 @@ import json
 import re
 
 from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import connect
 from psycopg.rows import dict_row
 
 from app.core.config import settings
+from app.core.llm import chat_model
 from app.services.trip_chat import WRITE_MODE_AUTO
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
@@ -45,11 +45,7 @@ TRIP_ASSISTANT_SYSTEM_PROMPT = (
 
 
 def create_trip_assistant(tools, write_mode: str = "propose", itinerary_json: str = ""):
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
     mode_line = (
         "当前写库模式：授权后自动采纳，允许 apply_delta。"
         if write_mode == WRITE_MODE_AUTO
