@@ -173,6 +173,9 @@ export interface PhotoCandidate {
 
 export interface PhotoAssignment {
   item_id?: string | null;
+  visit_stop_id?: string | null;
+  visit_stop_status?: string | null;
+  visit_stop_name?: string | null;
   assignment_type: string;
   confidence: number;
   is_confirmed: boolean;
@@ -207,8 +210,28 @@ export interface PhotoJobOut {
 }
 
 export interface PhotoMapSummaryItem {
-  item_id: string;
+  kind?: "item" | "visit_stop";
+  item_id?: string | null;
+  visit_stop_id?: string | null;
+  place_name?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   count: number;
   thumbnail_photo_id?: string | null;
+}
+
+export interface VisitStop {
+  id: string;
+  trip_id: string;
+  lat: number;
+  lng: number;
+  place_name: string;
+  linked_item_id?: string | null;
+  linked_item_name?: string | null;
+  status: string;
+  time_start?: string | null;
+  time_end?: string | null;
+  photo_count: number;
+  photos: PhotoAsset[];
 }
 

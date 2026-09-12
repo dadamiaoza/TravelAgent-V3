@@ -10,6 +10,15 @@ import {
   type AMapOverlay,
 } from "@/lib/amap";
 
+interface VisitStopPin {
+  id: string;
+  place_name: string;
+  lat: number;
+  lng: number;
+  count: number;
+  thumbUrl: string | null;
+}
+
 interface TripMapProps {
   selectedDayIndex: number;
   onSelectDay: (index: number) => void;
@@ -19,6 +28,10 @@ interface TripMapProps {
   photoByItem?: Record<string, { count: number; thumbUrl: string | null }>;
   variant?: "route" | "recall";
   hideDaySwitcher?: boolean;
+  visitStops?: VisitStopPin[];
+  focusVisitStopId?: string | null;
+  onSelectVisitStop?: (stopId: string) => void;
+  showPlanLayer?: boolean;
 }
 
 function escapeHtml(value: string): string {
@@ -101,15 +114,36 @@ function seqMarkerContent(seq: number, focused: boolean, isScenic = false): stri
   ">${seq}</div>`;
 }
 
+function visitPinContent(
+  photo: { count: number; thumbUrl: string | null } | undefined,
+  focused: boolean,
+  poiName: string,
+): string {
+  const size = focused ? 52 : 44;
+  const ring = focused ? "#ea580c" : "#d97706";
+  if (!photo?.thumbUrl) {
+    return `<div style="width:${size}px;height:${size}px;border-radius:9999px;background:${ring};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:3px solid #fff;box-shadow:0 4px 14px rgba(15,23,42,0.22);">${escapeHtml(poiName.slice(0, 2))}</div>`;
+  }
+  return `<div style="position:relative;width:${size}px;height:${size}px;cursor:pointer;">
+    <img src="${escapeHtml(photo.thumbUrl)}" alt="${escapeHtml(poiName)}"
+      style="width:${size}px;height:${size}px;border-radius:9999px;object-fit:cover;border:3px solid ${ring};box-shadow:0 4px 14px rgba(15,23,42,0.22);" />
+    <span style="position:absolute;right:-4px;bottom:-4px;min-width:18px;padding:0 5px;border-radius:9999px;background:${ring};color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;border:2px solid #fff;">${photo.count}</span>
+  </div>`;
+}
 function photoPinContent(
   seq: number,
   photo: { count: number; thumbUrl: string | null } | undefined,
   focused: boolean,
   poiName: string,
+  faint = false,
 ): string {
-  if (!photo?.thumbUrl) return seqMarkerContent(seq, focused);
+  if (!photo?.thumbUrl) {
+    const html = seqMarkerContent(seq, focused);
+    return faint ? `<div style="opacity:0.4">${html}</div>` : html;
+  }
   const size = focused ? 52 : 44;
-  return `<div style="position:relative;width:${size}px;height:${size}px;cursor:pointer;">
+  const opacity = faint ? "0.45" : "1";
+  return `<div style="position:relative;width:${size}px;height:${size}px;cursor:pointer;opacity:${opacity};">
     <img src="${escapeHtml(photo.thumbUrl)}" alt="${escapeHtml(poiName)}"
       style="width:${size}px;height:${size}px;border-radius:9999px;object-fit:cover;border:3px solid #fff;box-shadow:0 4px 14px rgba(15,23,42,0.22);" />
     <span style="position:absolute;right:-4px;bottom:-4px;min-width:18px;padding:0 5px;border-radius:9999px;background:#0284c7;color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;border:2px solid #fff;">${photo.count}</span>
@@ -125,6 +159,10 @@ export default function TripMap({
   photoByItem,
   variant = "route",
   hideDaySwitcher = false,
+  visitStops = [],
+  focusVisitStopId = null,
+  onSelectVisitStop,
+  showPlanLayer = true,
 }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlaysRef = useRef<AMapOverlay[]>([]);
@@ -141,7 +179,8 @@ export default function TripMap({
 
   function markerHtml(item: ItineraryItem, focused: boolean): string {
     if (isRecall) {
-      return photoPinContent(item.seq, photoByItem?.[item.id], focused, item.poi_name);
+      const hasPhotos = Boolean(photoByItem?.[item.id]?.count);
+      return photoPinContent(item.seq, photoByItem?.[item.id], focused, item.poi_name, !hasPhotos);
     }
     return seqMarkerContent(item.seq, focused, isScenicItem(item));
   }
@@ -212,8 +251,12 @@ export default function TripMap({
     const validItems = day.items.filter(
       (item) => item.lat != null && item.lng != null,
     );
+    const plannedItems =
+      isRecall && !showPlanLayer
+        ? validItems.filter((item) => Boolean(photoByItem?.[item.id]?.count))
+        : validItems;
 
-    if (validItems.length === 0) {
+    if (validItems.length === 0 && visitStops.length === 0) {
       setError(`Day ${day.day_index} 暂无坐标数据`);
       return;
     }
@@ -223,7 +266,7 @@ export default function TripMap({
     const infoWindow = isRecall ? null : new amap.InfoWindow();
     infoWindowRef.current = infoWindow;
 
-    validItems.forEach((item) => {
+    plannedItems.forEach((item) => {
       const marker = new amap.Marker({
         position: [item.lng!, item.lat!],
         title: item.poi_name,
@@ -241,42 +284,79 @@ export default function TripMap({
       overlaysRef.current.push(marker);
     });
 
+    const drawPlanLine = !isRecall || showPlanLayer;
     const isScenic = day.route_type === "scenic";
-    for (let i = 1; i < validItems.length; i++) {
-      const prev = validItems[i - 1];
-      const curr = validItems[i];
-      const realPath =
-        curr.route_polyline && curr.route_polyline.length > 0
-          ? curr.route_polyline
-          : [
-              [prev.lng!, prev.lat!],
-              [curr.lng!, curr.lat!],
-            ];
-      const isUnverified = isScenic && !curr.route_verified;
-      const isScenicLeg = isScenicItem(prev) && isScenicItem(curr);
-      const strokeColor = isScenicLeg
-        ? "#059669"
-        : curr.transport_mode === "transit"
-          ? "#16a34a"
-          : curr.transport_mode === "cable_car"
-            ? "#ea580c"
-            : curr.transport_mode === "shuttle"
-              ? "#9333ea"
-              : "#0284c7";
+    if (drawPlanLine) {
+      for (let i = 1; i < validItems.length; i++) {
+        const prev = validItems[i - 1];
+        const curr = validItems[i];
+        const realPath =
+          curr.route_polyline && curr.route_polyline.length > 0
+            ? curr.route_polyline
+            : [
+                [prev.lng!, prev.lat!],
+                [curr.lng!, curr.lat!],
+              ];
+        const isUnverified = isScenic && !curr.route_verified;
+        const isScenicLeg = isScenicItem(prev) && isScenicItem(curr);
+        const strokeColor = isScenicLeg
+          ? "#059669"
+          : curr.transport_mode === "transit"
+            ? "#16a34a"
+            : curr.transport_mode === "cable_car"
+              ? "#ea580c"
+              : curr.transport_mode === "shuttle"
+                ? "#9333ea"
+                : "#0284c7";
 
-      const legLine = new amap.Polyline({
-        path: realPath,
-        strokeColor,
-        strokeWeight: isRecall ? 5 : 4,
-        strokeOpacity: isUnverified ? 0.6 : 0.85,
-        strokeStyle: isUnverified ? "dashed" : "solid",
-      });
-      legLine.setMap(map);
-      overlaysRef.current.push(legLine);
+        const legLine = new amap.Polyline({
+          path: realPath,
+          strokeColor,
+          strokeWeight: isRecall ? 5 : 4,
+          strokeOpacity: isRecall ? 0.35 : isUnverified ? 0.6 : 0.85,
+          strokeStyle: isRecall || isUnverified ? "dashed" : "solid",
+        });
+        legLine.setMap(map);
+        overlaysRef.current.push(legLine);
+      }
     }
 
-    map.setFitView(overlaysRef.current);
-  }, [amap, map, selectedDayIndex, days, photoByItem, focusItemId, onSelectItem, isRecall]);
+    visitStops.forEach((stop) => {
+      const marker = new amap.Marker({
+        position: [stop.lng, stop.lat],
+        title: stop.place_name,
+        content: visitPinContent(
+          { count: stop.count, thumbUrl: stop.thumbUrl },
+          focusVisitStopId === stop.id,
+          stop.place_name,
+        ),
+        zIndex: 120,
+      });
+      marker.on("click", () => {
+        onSelectVisitStop?.(stop.id);
+      });
+      marker.setMap(map);
+      markersRef.current.set(`visit:${stop.id}`, marker);
+      overlaysRef.current.push(marker);
+    });
+
+    if (overlaysRef.current.length > 0) {
+      map.setFitView(overlaysRef.current);
+    }
+  }, [
+    amap,
+    map,
+    selectedDayIndex,
+    days,
+    photoByItem,
+    focusItemId,
+    onSelectItem,
+    isRecall,
+    visitStops,
+    focusVisitStopId,
+    onSelectVisitStop,
+    showPlanLayer,
+  ]);
 
   useEffect(() => {
     if (!map || !focusItemId) return;

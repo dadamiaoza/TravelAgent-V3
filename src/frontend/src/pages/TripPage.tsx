@@ -38,14 +38,8 @@ export default function TripPage() {
         行程
       </NavLink>
       <NavLink to={`/trips/${tripId}/map`} className={tabClass}>
-        地图
+        回忆
       </NavLink>
-      <span
-        title="下一期"
-        className="inline-flex min-h-11 cursor-not-allowed items-center rounded-full px-4 text-sm text-slate-400"
-      >
-        照片
-      </span>
     </nav>
   ) : null;
 

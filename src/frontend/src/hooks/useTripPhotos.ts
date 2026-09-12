@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { PhotoAsset, PhotoJobOut, PhotoMapSummaryItem, PhotoUploadOut } from "@/lib/types";
+import type { PhotoAsset, PhotoJobOut, PhotoMapSummaryItem, PhotoUploadOut, VisitStop } from "@/lib/types";
+
+function invalidatePhotoQueries(queryClient: ReturnType<typeof useQueryClient>, tripId: string) {
+  queryClient.invalidateQueries({ queryKey: ["trip-photos", tripId] });
+  queryClient.invalidateQueries({ queryKey: ["trip-photo-summary", tripId] });
+  queryClient.invalidateQueries({ queryKey: ["trip-visit-stops", tripId] });
+}
 
 export function useTripPhotos(tripId: string) {
   const photos = useQuery({
@@ -17,7 +23,12 @@ export function useTripPhotos(tripId: string) {
     queryFn: () => api.get<PhotoMapSummaryItem[]>(`/trips/${tripId}/photos/map-summary`),
     enabled: Boolean(tripId),
   });
-  return { photos, summary };
+  const visitStops = useQuery({
+    queryKey: ["trip-visit-stops", tripId],
+    queryFn: () => api.get<VisitStop[]>(`/trips/${tripId}/visit-stops`),
+    enabled: Boolean(tripId),
+  });
+  return { photos, summary, visitStops };
 }
 
 export function useUploadTripPhotos(tripId: string) {
@@ -38,10 +49,7 @@ export function useUploadTripPhotos(tripId: string) {
       }
       return { uploaded, job: null };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip-photos", tripId] });
-      queryClient.invalidateQueries({ queryKey: ["trip-photo-summary", tripId] });
-    },
+    onSuccess: () => invalidatePhotoQueries(queryClient, tripId),
   });
 }
 
@@ -61,10 +69,7 @@ export function usePatchPhotoAssignment(tripId: string) {
         action,
         item_id: itemId ?? null,
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip-photos", tripId] });
-      queryClient.invalidateQueries({ queryKey: ["trip-photo-summary", tripId] });
-    },
+    onSuccess: () => invalidatePhotoQueries(queryClient, tripId),
   });
 }
 
@@ -72,10 +77,7 @@ export function useDeletePhoto(tripId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (photoId: string) => api.delete(`/trips/${tripId}/photos/${photoId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip-photos", tripId] });
-      queryClient.invalidateQueries({ queryKey: ["trip-photo-summary", tripId] });
-    },
+    onSuccess: () => invalidatePhotoQueries(queryClient, tripId),
   });
 }
 
@@ -84,9 +86,29 @@ export function useBatchAssignPhotos(tripId: string) {
   return useMutation({
     mutationFn: (body: { photo_ids: string[]; item_id: string }) =>
       api.post<PhotoAsset[]>(`/trips/${tripId}/photos/batch-assign`, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trip-photos", tripId] });
-      queryClient.invalidateQueries({ queryKey: ["trip-photo-summary", tripId] });
-    },
+    onSuccess: () => invalidatePhotoQueries(queryClient, tripId),
+  });
+}
+
+export function usePatchVisitStop(tripId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      stopId,
+      action,
+      itemId,
+      placeName,
+    }: {
+      stopId: string;
+      action: "confirm" | "dismiss" | "attach_item";
+      itemId?: string;
+      placeName?: string;
+    }) =>
+      api.patch<VisitStop>(`/trips/${tripId}/visit-stops/${stopId}`, {
+        action,
+        item_id: itemId ?? null,
+        place_name: placeName ?? null,
+      }),
+    onSuccess: () => invalidatePhotoQueries(queryClient, tripId),
   });
 }

@@ -277,20 +277,20 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 | PA6 | 无 GPS：有拍摄时间则当天候选；微信类无时间则待确认 + 按天改挂；禁止用下载时间 | PA5 | 无 EXIF 的夹具进待确认且 `captured_at` 为空；从节点上传视为手动归属 | ✅ 完成（邻图 `batch_neighbor` 未做） |
 | PA7 | 行程 / 地图页拆分 | PA5 | `/trips/:id` 有规划路线图；`/map` 全宽回忆抽屉只读 | ✅ 完成 |
 | PC0 | 计划 vs 实际：方案 + 执行计划冻结 | PA7 | 读文档能讲清两份真源、确认才长钉 | ✅ 完成 |
-| PC1 | Tab「行程 \| 回忆」；去掉照片 Tab；空态文案 | PC0 | 浏览器两个 Tab，无灰掉照片 | ⬜ 未开始 |
-| PC2 | GPS 聚类 + 逆地理 + `visit_stops` + 按簇确认 | PC1 | 合成点：远簇 suggested；确认不改计划节点 | ⬜ 未开始 |
-| PC3 | 回忆地图：计划淡底 + 已确认实际钉 | PC2 | 计划外确认后回忆页出现新钉 | ⬜ 未开始 |
+| PC1 | Tab「行程 \| 回忆」；去掉照片 Tab；空态文案 | PC0 | 浏览器两个 Tab，无灰掉照片 | ✅ 完成 |
+| PC2 | GPS 聚类 + 逆地理 + `visit_stops` + 按簇确认 | PC1 | 合成点：远簇 suggested；确认不改计划节点 | ✅ 完成（`0019` 已 upgrade） |
+| PC3 | 回忆地图：计划淡底 + 已确认实际钉 | PC2 | 计划外确认后回忆页出现新钉 | ✅ 完成 |
 | PC4 | 邻图带动无 EXIF（低置信，仍确认） | PC2 | 无 GPS 图不自动成停留 | ⬜ 有意靠后 |
 | PB1 | 预训练 YOLO 只做 `person` 检测 + 手动画框命名 | PA5 | 合照能标出几个人；用户给框起名；原图仍只一份 | ⬜ 有意推迟 |
 | PB2 | 特征向量聚类 + 用户给「人物组」命名 | PB1 | 同一人多张照片聚成一组，不自动叫「妈妈」 | ⬜ 有意推迟 |
 | PB3 | 行程内人物关系（家人/同伴），不建账号级社交图 | PB2 | 用户手拉关系；共同出镜不自动断言 | ⬜ 有意推迟 |
 
-**建议实现顺序：** PA1–PA7 已完成。下一刀 PC1 → PC2 → PC3，详见 [计划与回忆-执行计划.md](../计划与回忆-执行计划.md)。  
-不要一上来就上 YOLO、人脸向量或对象存储。人物能力从 PB1 另开。
+**建议实现顺序：** PA1–PA7、PC1–PC3 已完成。PC4 / 人物 PB1 另开。
 
 ### 4.1 PA1 已落地的文件
 
-- `src/backend/alembic/versions/0018_photo_archive.py`
+- `src/backend/alembic/versions/0018_photo_archive.py` / `0019_visit_stops.py`
+- `src/backend/app/services/photo_cluster.py` / `geo_regeo.py`
 - `src/backend/app/models/photo.py`
 - `src/backend/app/api/v1/photos.py`
 - `src/backend/uploads/`（gitignore 已覆盖）
@@ -314,7 +314,7 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 
 行程详情页可以批量上传 JPEG/PNG/WebP（HEIC 返回 415）。文件落到 `src/backend/uploads/{trip_id}/{photo_id}/`，同一行程相同 SHA-256 不存第二份原图。EXIF 只读 GPS / `DateTimeOriginal`；没有就不填 `captured_at`。匹配是 Python 打分（WGS-84→GCJ-02），不调 LLM。高置信度自动挂；中置信度挂上待确认；微信类下载图进待确认。节点可「上传到这里」（`manual` + 已确认）。删节点只把 `item_id` SET NULL，原图还在。
 
-页面：`/trips/:id` 保留高德规划路线图 + 节点 PhotoBadge + 底部上传/待确认；`/trips/:id/map` 是全宽只读回忆页（目前钉的仍是**计划节点**）。Tab 文案仍是「行程 | 地图」，照片 Tab 灰掉——PC1 改为「行程 | 回忆」并去掉照片 Tab。
+页面：`/trips/:id` 规划路线图 + 节点徽章 + 底部上传/待确认/**建议停留**；Tab 为 **行程 | 回忆**（无照片 Tab）。`/trips/:id/map` 回忆页：计划淡底 + 已确认实际停留实心钉。计划外 GPS 簇需用户确认后才写入 `visit_stops`，不改 `itinerary_items`。
 
 演示行程：`a166c670-8a79-480c-9d66-1fabcc51b652`（武功山 2024-07-31）是照片夹具，节点没有 visit_tips；正式规划行程请用生成出来的那条。
 
@@ -340,6 +340,8 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 | 2026-09-11 | API | TestClient | HEIC 415；重复上传 `duplicate: true`；缩略图 200 `image/webp`；删节点后照片仍在、`item_id` 空 | |
 | 2026-09-11 | 页面拆分 | `npx tsc -b`；`/trips/:id` 与 `/map` 均 200 | 类型通过 | 行程留规划图；地图页只读回忆 |
 | 2026-09-12 | 上传 422 + 同名路 | `pytest tests/unit/test_geocode_resolve.py tests/unit/test_photo_upload.py tests/test_route_optimizer.py -q --noconftest` | 42 passed | 见 [2026-09-12 复盘](../../retrospect/2026-09-12_Photo-Upload-422-and-Huangxing-Geocode.md) |
+| 2026-09-12 | PC1–PC3 聚类/逆地理 | `python -m pytest tests/unit/test_photo_*.py tests/unit/test_geo_*.py tests/unit/test_llm.py tests/test_route_optimizer.py tests/test_merge.py -q --noconftest` | 70 passed | 另：`npx tsc -b`；确认 visit_stop 后行程节点数不变 |
+| 2026-09-12 | PC1–PC3 | 行程\|回忆 Tab；GPS 聚类+逆地理+visit_stops；回忆地图计划淡底+实际钉 | 70 passed `--noconftest`；`npx tsc -b`；长沙行程确认停留后节点数不变 | 未提交 |
 
 以后每次实现，至少记录：
 
@@ -370,8 +372,8 @@ MVP 文档里的「10 张里 8 张自动挂对」是**演示愿望**，不是 py
 
 ### 7.3 下一步
 
-1. 按 [执行计划](../计划与回忆-执行计划.md) 做 PC1（Tab 文案），再 PC2（聚类确认），再 PC3（回忆双层地图）。  
-2. 需要的话再补邻图提示（PC4）或 SSE。  
+1. 重启后端后再打开长沙行程：行程页应看到「建议停留」，确认后回忆页出现橙色钉。  
+2. PC4 邻图带动无 EXIF 仍未做。  
 3. 不要在本分支上 YOLO / 人物表，也不要做第二份可编辑行程。
 
 ---
@@ -425,6 +427,7 @@ MVP 文档里的「10 张里 8 张自动挂对」是**演示愿望**，不是 py
 | 2026-09-11 | PA7 | 行程/地图嵌套路由：行程页留规划图；地图页只读清新回忆 | `npx tsc -b` | 未提交 |
 | 2026-09-12 | PA4/排路 | 批量上传 422：自解析 multipart，空 `item_id` 当未指定；黄兴路步行街：`citylimit` + 禁止全国搜 | geocode/route/photo 单测 42 passed；该行程点改到长沙 28.188,112.976 | 未提交 |
 | 2026-09-12 | PC0 | 冻结计划 vs 实际：行程 Tab=计划，回忆 Tab=实际到访；确认后写 visit_stops，不覆盖 itinerary_items | 无代码 | 拆分方案 v2.0、计划与回忆-执行计划 |
+| 2026-09-12 | PC1–PC3 | Tab 行程\|回忆；聚类确认写入 visit_stops；回忆页实际钉 + 计划淡底 | 70 单测 passed；tsc 通过；确认后 itinerary_items 数量不变 | 未提交 |
 
 ---
 

@@ -4,6 +4,7 @@ import {
   useBatchAssignPhotos,
   useDeletePhoto,
   usePatchPhotoAssignment,
+  usePatchVisitStop,
   useTripPhotos,
   useUploadTripPhotos,
 } from "@/hooks/useTripPhotos";
@@ -13,13 +14,17 @@ function isPending(photo: PhotoAsset): boolean {
   const assignment = photo.assignment;
   if (!assignment) return true;
   if (assignment.is_confirmed) return false;
+  if (assignment.visit_stop_id && (assignment.visit_stop_status === "suggested" || assignment.visit_stop_status === "confirmed")) {
+    return false;
+  }
   return assignment.item_id == null || assignment.confidence < 0.85;
 }
 
 export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
-  const { photos } = useTripPhotos(trip.id);
+  const { photos, visitStops } = useTripPhotos(trip.id);
   const upload = useUploadTripPhotos(trip.id);
   const patch = usePatchPhotoAssignment(trip.id);
+  const patchStop = usePatchVisitStop(trip.id);
   const batch = useBatchAssignPhotos(trip.id);
   const remove = useDeletePhoto(trip.id);
   const [selected, setSelected] = useState<string[]>([]);
@@ -36,6 +41,7 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
   );
 
   const pending = (photos.data ?? []).filter(isPending);
+  const suggestedStops = (visitStops.data ?? []).filter((stop) => stop.status === "suggested");
 
   function onFiles(list: FileList | null, itemId?: string) {
     if (!list?.length) return;
@@ -48,7 +54,7 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
         <div>
           <h2 className="text-lg font-semibold text-gray-900">旅行照片</h2>
           <p className="text-xs text-gray-500">
-            照片只用于匹配当前行程。微信下载图往往没有地点和时间，请放到待确认或从某个地点「上传到这里」。
+            计划外地点会按 GPS 聚成「建议停留」，确认后出现在回忆页，不会改写行程节点。微信图请待确认或从某个地点「上传到这里」。
           </p>
         </div>
         <label className="cursor-pointer rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700">
@@ -71,8 +77,74 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
       )}
       <p className="text-sm text-gray-600">
         共 {(photos.data ?? []).length} 张
+        {suggestedStops.length > 0 ? ` · ${suggestedStops.length} 处建议停留` : ""}
         {pending.length > 0 ? ` · ${pending.length} 张待确认` : ""}
       </p>
+
+      {suggestedStops.length > 0 && (
+        <div className="mt-3 space-y-2 rounded-md border border-sky-200 bg-sky-50 p-3">
+          <p className="text-sm font-medium text-sky-900">建议停留（计划外）</p>
+          <ul className="space-y-3">
+            {suggestedStops.map((stop) => (
+              <li key={stop.id} className="rounded border border-sky-100 bg-white p-2">
+                <p className="text-sm font-medium text-gray-900">{stop.place_name}</p>
+                <p className="text-xs text-gray-500">
+                  {stop.photo_count} 张
+                  {stop.linked_item_name ? ` · 可能是计划里的「${stop.linked_item_name}」` : ""}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {stop.photos.slice(0, 6).map((photo) =>
+                    photo.thumbnail_url ? (
+                      <button
+                        key={photo.id}
+                        type="button"
+                        onClick={() => setPreview(photo)}
+                      >
+                        <img src={photo.thumbnail_url} alt="" className="h-12 w-12 rounded object-cover" />
+                      </button>
+                    ) : null,
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded bg-sky-600 px-2 py-1 text-xs text-white hover:bg-sky-700"
+                    onClick={() => patchStop.mutate({ stopId: stop.id, action: "confirm" })}
+                  >
+                    确认新地点
+                  </button>
+                  <select
+                    className="rounded border border-gray-300 px-2 py-1 text-xs"
+                    defaultValue=""
+                    onChange={(event) => {
+                      if (!event.target.value) return;
+                      patchStop.mutate({
+                        stopId: stop.id,
+                        action: "attach_item",
+                        itemId: event.target.value,
+                      });
+                    }}
+                  >
+                    <option value="">改挂到计划节点…</option>
+                    {items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="text-xs text-gray-500 hover:underline"
+                    onClick={() => patchStop.mutate({ stopId: stop.id, action: "dismiss" })}
+                  >
+                    忽略
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {pending.length > 0 && (
         <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3">

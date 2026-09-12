@@ -39,6 +39,34 @@ class PhotoAsset(Base):
     )
 
 
+class VisitStop(Base):
+    __tablename__ = "visit_stops"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    trip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"), index=True
+    )
+    lat: Mapped[float] = mapped_column(Float(), nullable=False)
+    lng: Mapped[float] = mapped_column(Float(), nullable=False)
+    place_name: Mapped[str] = mapped_column(String(255), nullable=False, default="未命名停留")
+    linked_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("itinerary_items.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="suggested")
+    time_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    time_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    evidence_json: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), onupdate=text("now()")
+    )
+
+    assignments: Mapped[list["PhotoAssignment"]] = relationship(back_populates="visit_stop")
+
+
 class PhotoAssignment(Base):
     __tablename__ = "photo_assignments"
     __table_args__ = (
@@ -60,6 +88,12 @@ class PhotoAssignment(Base):
         nullable=True,
         index=True,
     )
+    visit_stop_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("visit_stops.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     assignment_type: Mapped[str] = mapped_column(String(32), nullable=False, default="time")
     confidence: Mapped[float] = mapped_column(Float(), nullable=False, default=0)
     evidence_json: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
@@ -68,6 +102,7 @@ class PhotoAssignment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
 
     photo: Mapped[PhotoAsset] = relationship(back_populates="assignments")
+    visit_stop: Mapped[VisitStop | None] = relationship(back_populates="assignments")
 
 
 class PhotoJob(Base):

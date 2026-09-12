@@ -6,10 +6,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db.session import get_db
-from app.models.photo import PhotoAsset, PhotoAssignment, PhotoJob
+from app.models.photo import PhotoAsset, PhotoAssignment, PhotoJob, VisitStop
 from app.models.trip import ItineraryDay, ItineraryItem, Trip
 from app.schemas.photo import (
     AssignmentPatch,
@@ -21,6 +21,15 @@ from app.schemas.photo import (
     PhotoMapSummaryItemOut,
     PhotoUploadItemOut,
     PhotoUploadOut,
+    VisitStopOut,
+    VisitStopPatch,
+)
+from app.services.photo_pipeline import (
+    attach_visit_stop_to_item,
+    confirm_visit_stop,
+    dismiss_visit_stop,
+    load_trip_nodes,
+    suggest_visit_stops,
 )
 from app.services.photo_storage import (
     MAX_BYTES,
@@ -84,8 +93,12 @@ def _to_out(photo: PhotoAsset) -> PhotoAssetOut:
             continue
     assignment_out = None
     if assignment:
+        visit = assignment.visit_stop
         assignment_out = PhotoAssignmentOut(
             item_id=assignment.item_id,
+            visit_stop_id=assignment.visit_stop_id,
+            visit_stop_status=visit.status if visit else None,
+            visit_stop_name=visit.place_name if visit else None,
             assignment_type=assignment.assignment_type,
             confidence=assignment.confidence,
             is_confirmed=assignment.is_confirmed,
@@ -229,7 +242,7 @@ def list_photos(
     _get_trip(db, trip_id)
     photos = (
         db.query(PhotoAsset)
-        .options(joinedload(PhotoAsset.assignments))
+        .options(joinedload(PhotoAsset.assignments).joinedload(PhotoAssignment.visit_stop))
         .filter(PhotoAsset.trip_id == trip_id)
         .order_by(PhotoAsset.created_at.desc())
         .all()
@@ -242,19 +255,19 @@ def list_photos(
             if row.assignment and row.assignment.item_id == item_id
         ]
     if review == "pending":
-        results = [
-            row
-            for row in results
-            if row.assignment is None
-            or (
-                not row.assignment.is_confirmed
-                and (
-                    row.assignment.item_id is None
-                    or (row.assignment.confidence or 0) < 0.85
-                )
-            )
-        ]
+        results = [row for row in results if _is_loose_pending(row)]
     return results
+
+
+def _is_loose_pending(row: PhotoAssetOut) -> bool:
+    assignment = row.assignment
+    if assignment is None:
+        return True
+    if assignment.is_confirmed:
+        return False
+    if assignment.visit_stop_id and assignment.visit_stop_status in {"suggested", "confirmed"}:
+        return False
+    return assignment.item_id is None or (assignment.confidence or 0) < 0.85
 
 
 @router.get("/{trip_id}/photos/map-summary", response_model=list[PhotoMapSummaryItemOut])
@@ -262,27 +275,142 @@ def map_summary(trip_id: UUID, db: Session = Depends(get_db)):
     _get_trip(db, trip_id)
     photos = (
         db.query(PhotoAsset)
-        .options(joinedload(PhotoAsset.assignments))
+        .options(joinedload(PhotoAsset.assignments).joinedload(PhotoAssignment.visit_stop))
         .filter(PhotoAsset.trip_id == trip_id)
         .all()
     )
     grouped: dict[UUID, list[PhotoAsset]] = {}
+    visit_groups: dict[UUID, list[PhotoAsset]] = {}
     for photo in photos:
         assignment = _primary(photo)
-        if assignment is None or assignment.item_id is None:
+        if assignment is None:
             continue
-        grouped.setdefault(assignment.item_id, []).append(photo)
+        if assignment.item_id is not None:
+            grouped.setdefault(assignment.item_id, []).append(photo)
+        elif (
+            assignment.visit_stop_id is not None
+            and assignment.visit_stop is not None
+            and assignment.visit_stop.status == "confirmed"
+        ):
+            visit_groups.setdefault(assignment.visit_stop_id, []).append(photo)
     out: list[PhotoMapSummaryItemOut] = []
     for item_id, group in grouped.items():
         thumb = next((p for p in group if p.thumbnail_path), group[0])
         out.append(
             PhotoMapSummaryItemOut(
+                kind="item",
                 item_id=item_id,
                 count=len(group),
                 thumbnail_photo_id=thumb.id,
             )
         )
+    for stop_id, group in visit_groups.items():
+        stop = _primary(group[0]).visit_stop
+        thumb = next((p for p in group if p.thumbnail_path), group[0])
+        out.append(
+            PhotoMapSummaryItemOut(
+                kind="visit_stop",
+                visit_stop_id=stop_id,
+                place_name=stop.place_name if stop else None,
+                lat=stop.lat if stop else None,
+                lng=stop.lng if stop else None,
+                count=len(group),
+                thumbnail_photo_id=thumb.id,
+            )
+        )
     return out
+
+
+def _get_visit_stop(db: Session, trip_id: UUID, stop_id: UUID) -> VisitStop:
+    stop = (
+        db.query(VisitStop)
+        .options(selectinload(VisitStop.assignments).selectinload(PhotoAssignment.photo))
+        .filter(VisitStop.id == stop_id, VisitStop.trip_id == trip_id)
+        .one_or_none()
+    )
+    if stop is None:
+        raise HTTPException(status_code=404, detail="建议停留不存在")
+    return stop
+
+
+def _visit_stop_out(db: Session, stop: VisitStop) -> VisitStopOut:
+    photos = [
+        assignment.photo
+        for assignment in stop.assignments
+        if assignment.photo is not None
+    ]
+    linked_name = None
+    if stop.linked_item_id:
+        item = db.get(ItineraryItem, stop.linked_item_id)
+        linked_name = item.poi_name if item else None
+    return VisitStopOut(
+        id=stop.id,
+        trip_id=stop.trip_id,
+        lat=stop.lat,
+        lng=stop.lng,
+        place_name=stop.place_name,
+        linked_item_id=stop.linked_item_id,
+        linked_item_name=linked_name,
+        status=stop.status,
+        time_start=stop.time_start,
+        time_end=stop.time_end,
+        photo_count=len(photos),
+        photos=[_to_out(photo) for photo in photos],
+        evidence=stop.evidence_json,
+    )
+
+
+@router.get("/{trip_id}/visit-stops", response_model=list[VisitStopOut])
+def list_visit_stops(
+    trip_id: UUID,
+    status: str | None = None,
+    db: Session = Depends(get_db),
+):
+    _get_trip(db, trip_id)
+    created = suggest_visit_stops(db, trip_id, load_trip_nodes(db, trip_id))
+    if created:
+        db.commit()
+    query = (
+        db.query(VisitStop)
+        .options(
+            selectinload(VisitStop.assignments)
+            .selectinload(PhotoAssignment.photo)
+            .selectinload(PhotoAsset.assignments)
+            .selectinload(PhotoAssignment.visit_stop)
+        )
+        .filter(VisitStop.trip_id == trip_id)
+        .order_by(VisitStop.created_at)
+    )
+    if status:
+        query = query.filter(VisitStop.status == status)
+    else:
+        query = query.filter(VisitStop.status != "dismissed")
+    return [_visit_stop_out(db, stop) for stop in query.all()]
+
+
+@router.patch("/{trip_id}/visit-stops/{stop_id}", response_model=VisitStopOut)
+def patch_visit_stop(
+    trip_id: UUID,
+    stop_id: UUID,
+    body: VisitStopPatch,
+    db: Session = Depends(get_db),
+):
+    _get_trip(db, trip_id)
+    stop = _get_visit_stop(db, trip_id, stop_id)
+    if body.action == "confirm":
+        confirm_visit_stop(db, stop, body.place_name)
+    elif body.action == "dismiss":
+        dismiss_visit_stop(db, stop)
+    elif body.action == "attach_item":
+        if body.item_id is None:
+            raise HTTPException(status_code=400, detail="请选择计划节点")
+        _item_on_trip(db, trip_id, body.item_id)
+        attach_visit_stop_to_item(db, stop, body.item_id)
+    else:
+        raise HTTPException(status_code=400, detail="未知操作")
+    db.commit()
+    stop = _get_visit_stop(db, trip_id, stop_id)
+    return _visit_stop_out(db, stop)
 
 
 @router.get("/{trip_id}/photos/{photo_id}/file")
@@ -338,6 +466,7 @@ def patch_assignment(
         db.flush()
     if body.action == "unassign":
         assignment.item_id = None
+        assignment.visit_stop_id = None
         assignment.is_confirmed = False
         assignment.assignment_type = "manual"
         assignment.confidence = 0
@@ -347,6 +476,7 @@ def patch_assignment(
             raise HTTPException(status_code=400, detail="请选择地点")
         _item_on_trip(db, trip_id, item_id)
         assignment.item_id = item_id
+        assignment.visit_stop_id = None
         assignment.assignment_type = "manual"
         assignment.confidence = 1.0
         assignment.is_confirmed = True
@@ -355,7 +485,7 @@ def patch_assignment(
     db.commit()
     photo = (
         db.query(PhotoAsset)
-        .options(joinedload(PhotoAsset.assignments))
+        .options(joinedload(PhotoAsset.assignments).joinedload(PhotoAssignment.visit_stop))
         .filter(PhotoAsset.id == photo_id)
         .one()
     )
@@ -380,6 +510,7 @@ def batch_assign(
             assignment = PhotoAssignment(photo_id=photo.id, is_primary=True)
             db.add(assignment)
         assignment.item_id = body.item_id
+        assignment.visit_stop_id = None
         assignment.assignment_type = "manual"
         assignment.confidence = 1.0
         assignment.is_confirmed = True
@@ -389,7 +520,7 @@ def batch_assign(
         return []
     photos = (
         db.query(PhotoAsset)
-        .options(joinedload(PhotoAsset.assignments))
+        .options(joinedload(PhotoAsset.assignments).joinedload(PhotoAssignment.visit_stop))
         .filter(PhotoAsset.id.in_(assigned_ids))
         .all()
     )

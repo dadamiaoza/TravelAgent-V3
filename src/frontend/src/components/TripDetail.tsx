@@ -56,8 +56,10 @@ export default function TripDetail({ trip }: { trip: Trip }) {
   const { photos, summary } = useTripPhotos(trip.id);
   const upload = useUploadTripPhotos(trip.id);
   const photoByItem = Object.fromEntries(
-    (summary.data ?? []).map((row) => [
-      row.item_id,
+    (summary.data ?? [])
+      .filter((row) => row.kind !== "visit_stop" && row.item_id)
+      .map((row) => [
+        row.item_id as string,
       {
         count: row.count,
         thumbUrl: row.thumbnail_photo_id
