@@ -23,7 +23,9 @@
 | 17 | LLM HTTP 客户端 | 统一 `app.core.llm.chat_model()`；禁用 brotli（`Accept-Encoding: gzip, deflate`），避开 openai 3 + httpx2 + brotli 1.0.9 解压崩溃 | [2026-09-11 复盘](../../.ad/retrospect/2026-09-11_Suggest-500-and-M3.md) |
 | 18 | MiniMax M3 思考链格式 | 不全局开 `reasoning_split`，继续在 content 里用 `<think>` 清洗；避免 LangChain 多轮 tool 丢掉 `reasoning_details` | [2026-09-11 复盘](../../.ad/retrospect/2026-09-11_Suggest-500-and-M3.md) |
 | 19 | 照片上传表单 | 不用 `File`+`Form(UUID)` 混校验；`request.form()` 自取文件，空 `item_id` 当未指定 | [2026-09-12 复盘](../../.ad/retrospect/2026-09-12_Photo-Upload-422-and-Huangxing-Geocode.md) |
-| 21 | 计划 vs 实际到访 | 行程 Tab = 计划（`itinerary_items`）；回忆 Tab = 实际足迹；计划外须确认后写 `visit_stops`，不覆盖计划、不做第二份可编辑行程 | [拆分方案 v2.0](../../.ad/specs/行程详情页与地图页%20-%20页面拆分方案.md)、[执行计划](../../.ad/specs/计划与回忆-执行计划.md) |
+| 21 | 计划 vs 实际到访 | 行程 Tab = 计划（`itinerary_items`）；回忆 Tab = 实际足迹；计划外须确认后写 `visit_stops`，不覆盖计划、不做第二份可编辑行程 | [照片归档与回忆.md](../../.ad/specs/照片归档与回忆.md) |
+| 22 | 行程与回忆的产品定位 | 同一趟旅行的两种模式（出门前编计划 / 回来后翻足迹），不是相册 App，也不是真实行程编辑器。用文案和互链减少割裂，不合并真源 | [照片归档与回忆.md](../../.ad/specs/照片归档与回忆.md) §1.1 |
+| 23 | PC4 vs 视觉认地标 | PC4 主路径只做同批邻图抄地点。视觉认地标（PV1）以后可选：只在当天候选里选、可关闭、低置信仍给人、单独验收，不得当 PC4 主路径 | [照片归档与回忆.md](../../.ad/specs/照片归档与回忆.md) §3.4 |
 
 ## 相关文档
 

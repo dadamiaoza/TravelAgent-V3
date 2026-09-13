@@ -231,5 +231,7 @@ _Avoid_: 历史记录、备份
 - **生成**：`GenerationJob` 任务图 fill → `optimize_itinerary()` → verify。不是 Supervisor，也不是 `itinerary_gen` Agent 再 handoff 路线 Agent。
 - **协作**：产品聊天为 `POST /trips/{id}/chat`（建议经用户采纳后 `apply_delta`）。`POST /api/v1/chat` 为学习遗留入口。
 - **入口**：攻略勾选与从零规划汇入同一排路器；勾选后不得先跑一遍从零生成。
-- **计划 vs 实际**：行程 Tab 编辑计划；回忆 Tab 看确认后的实际到访。照片不静默改 `itinerary_items`。
+- **计划 vs 实际**：同一趟旅行的两种模式。行程 Tab 编辑计划；回忆 Tab 按拍摄日看足迹。照片不静默改 `itinerary_items`。不是两个产品，也不做第二份可编辑行程。
+- **无 EXIF 照片**：PC4 已落地（同批邻图抄地点，仍确认）；视觉认地标以后可选，且不得当 PC4 主路径。
 - 完整需求与阶段：[requirements-v3.md](.ad/specs/ai-travel-assistant/requirements-v3.md)、[technical-roadmap-v3.md](.ad/specs/ai-travel-assistant/technical-roadmap-v3.md)
+- 照片归档与回忆（计划 vs 实际）：[照片归档与回忆.md](.ad/specs/照片归档与回忆.md)

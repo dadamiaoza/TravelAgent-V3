@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import type { PhotoAsset, Trip } from "@/lib/types";
 import {
   useBatchAssignPhotos,
@@ -18,6 +19,15 @@ function isPending(photo: PhotoAsset): boolean {
     return false;
   }
   return assignment.item_id == null || assignment.confidence < 0.85;
+}
+
+function neighborHintLabel(photo: PhotoAsset): string | null {
+  const assignment = photo.assignment;
+  if (assignment?.assignment_type !== "batch_neighbor") return null;
+  const evidence = assignment.evidence ?? {};
+  const fromEvidence = typeof evidence.poi_name === "string" ? evidence.poi_name.trim() : "";
+  const name = fromEvidence || assignment.visit_stop_name || "";
+  return name ? `邻图建议：${name}（需确认）` : "邻图建议（需确认）";
 }
 
 export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
@@ -54,7 +64,11 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
         <div>
           <h2 className="text-lg font-semibold text-gray-900">旅行照片</h2>
           <p className="text-xs text-gray-500">
-            计划外地点会按 GPS 聚成「建议停留」，确认后出现在回忆页，不会改写行程节点。微信图请待确认或从某个地点「上传到这里」。
+            在这里上传、确认建议停留。看拍摄日足迹请到
+            <Link to={`/trips/${trip.id}/map`} className="mx-0.5 text-sky-700 hover:underline">
+              回忆
+            </Link>
+            ，不会改写行程节点。微信图请待确认或从某个地点「上传到这里」。若和带地点的原图同一批上传，会给出邻图建议，仍需确认。
           </p>
         </div>
         <label className="cursor-pointer rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700">
@@ -170,7 +184,9 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
             )}
           </div>
           <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {pending.map((photo) => (
+            {pending.map((photo) => {
+              const neighborHint = neighborHintLabel(photo);
+              return (
               <li key={photo.id} className="rounded border border-amber-100 bg-white p-2">
                 <label className="mb-1 flex items-center gap-1 text-xs text-gray-500">
                   <input
@@ -186,6 +202,9 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
                   />
                   {photo.original_filename}
                 </label>
+                {neighborHint && (
+                  <p className="mb-1 text-[11px] text-amber-800">{neighborHint}</p>
+                )}
                 {photo.thumbnail_url && (
                   <button
                     type="button"
@@ -250,7 +269,8 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
                   </button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}
@@ -260,7 +280,20 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
           photos={[preview]}
           index={0}
           alt={preview.original_filename}
+          items={items}
           onClose={() => setPreview(null)}
+          onReassign={(photoId, itemId) => {
+            patch.mutate({ photoId, action: "reassign", itemId });
+            setPreview(null);
+          }}
+          onUnassign={(photoId) => {
+            patch.mutate({ photoId, action: "unassign" });
+            setPreview(null);
+          }}
+          onDelete={(photoId) => {
+            remove.mutate(photoId);
+            setPreview(null);
+          }}
         />
       )}
     </section>

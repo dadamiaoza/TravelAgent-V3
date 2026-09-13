@@ -7,17 +7,26 @@ export default function PhotoLightbox({
   alt,
   onClose,
   onIndexChange,
+  items,
+  onReassign,
   onUnassign,
+  onDelete,
 }: {
   photos: PhotoAsset[];
   index: number;
   alt?: string;
   onClose: () => void;
   onIndexChange?: (index: number) => void;
+  items?: { id: string; label: string }[];
+  onReassign?: (photoId: string, itemId: string) => void;
   onUnassign?: (photoId: string) => void;
+  onDelete?: (photoId: string) => void;
 }) {
   const photo = photos[index];
   const src = photo?.preview_url ?? photo?.thumbnail_url;
+  const currentItemId = photo?.assignment?.item_id ?? "";
+  const otherItems = (items ?? []).filter((item) => item.id !== currentItemId);
+  const canCorrect = Boolean(onReassign || onUnassign || onDelete);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -60,7 +69,7 @@ export default function PhotoLightbox({
             {alt ? `${alt} · ` : ""}
             {index + 1} / {photos.length}
           </p>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {photos.length > 1 && (
               <>
                 <button
@@ -81,13 +90,46 @@ export default function PhotoLightbox({
                 </button>
               </>
             )}
+            {onReassign && otherItems.length > 0 && (
+              <select
+                key={photo.id}
+                className="min-h-11 rounded-full border-0 bg-white px-3 text-sm text-slate-900"
+                value=""
+                aria-label="改挂到其他地点"
+                onChange={(event) => {
+                  const itemId = event.target.value;
+                  if (!itemId) return;
+                  onReassign(photo.id, itemId);
+                }}
+              >
+                <option value="">改挂到…</option>
+                {otherItems.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            )}
             {onUnassign && (
               <button
                 type="button"
-                className="min-h-11 text-red-200 hover:underline"
+                className="min-h-11 rounded-full bg-white/15 px-3 text-white hover:bg-white/25"
                 onClick={() => onUnassign(photo.id)}
               >
-                撤销挂载
+                从这里拿掉
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                className="min-h-11 rounded-full px-3 text-red-200 hover:bg-red-500/20 hover:underline"
+                onClick={() => {
+                  if (window.confirm("确定删除这张照片？原图会从这次行程里去掉。")) {
+                    onDelete(photo.id);
+                  }
+                }}
+              >
+                删除
               </button>
             )}
             <button
@@ -99,6 +141,11 @@ export default function PhotoLightbox({
             </button>
           </div>
         </div>
+        {canCorrect && (
+          <p className="mt-2 text-right text-[11px] text-white/70">
+            改挂和删除只动这张照片，不会改行程计划。
+          </p>
+        )}
       </div>
     </div>
   );

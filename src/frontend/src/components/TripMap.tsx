@@ -364,6 +364,22 @@ export default function TripMap({
   }, [focusItemId, map, selectedDayIndex, days]);
 
   useEffect(() => {
+    if (!map || !focusVisitStopId) return;
+    const stop = visitStops.find((item) => item.id === focusVisitStopId);
+    if (!stop) return;
+    map.setZoomAndCenter(16, [stop.lng, stop.lat]);
+    const marker = markersRef.current.get(`visit:${stop.id}`);
+    if (marker) {
+      marker.setContent(visitPinContent({ count: stop.count, thumbUrl: stop.thumbUrl }, true, stop.place_name));
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = window.setTimeout(() => {
+        marker.setContent(visitPinContent({ count: stop.count, thumbUrl: stop.thumbUrl }, false, stop.place_name));
+        highlightTimerRef.current = null;
+      }, 2500);
+    }
+  }, [focusVisitStopId, map, visitStops]);
+
+  useEffect(() => {
     return () => {
       if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
       map?.destroy();

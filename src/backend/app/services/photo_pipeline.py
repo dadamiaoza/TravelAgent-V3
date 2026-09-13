@@ -11,6 +11,7 @@ from app.services.geo_regeo import reverse_geocode_amap
 from app.services.photo_cluster import GpsPoint, cluster_unmatched_photos
 from app.services.photo_exif import image_size, read_photo_meta
 from app.services.photo_match import ItineraryNode, match_photo
+from app.services.photo_neighbor import apply_batch_neighbors
 from app.services.photo_storage import resolve_stored, save_derivatives
 
 
@@ -274,6 +275,7 @@ def process_photo_job(db: Session, job_id: UUID) -> None:
         job.progress = int(index / total * 100)
         db.commit()
     suggest_visit_stops(db, job.trip_id, nodes)
+    apply_batch_neighbors(db, job)
     job.status = "succeeded"
     job.progress = 100
     db.commit()

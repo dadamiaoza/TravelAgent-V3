@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { ItineraryItem, PhotoAsset } from "@/lib/types";
 import { useDeleteItineraryItem } from "@/hooks/useItineraryMutations";
-import { usePatchPhotoAssignment } from "@/hooks/useTripPhotos";
+import { useDeletePhoto, usePatchPhotoAssignment } from "@/hooks/useTripPhotos";
+import { useTrip } from "@/hooks/useTrip";
+import { planItemOptions } from "@/lib/photos";
 import { useTripStore } from "@/stores/tripStore";
 import PhotoBadge from "@/components/PhotoBadge";
 import PhotoLightbox from "@/components/PhotoLightbox";
@@ -102,6 +105,9 @@ export default function ItineraryItemCard({
 }) {
   const deleteItem = useDeleteItineraryItem(tripId);
   const unassignPhoto = usePatchPhotoAssignment(tripId);
+  const removePhoto = useDeletePhoto(tripId);
+  const tripQuery = useTrip(tripId);
+  const assignItems = planItemOptions(tripQuery.data?.days);
   const updateTripLocally = useTripStore((s) => s.updateTripLocally);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -243,6 +249,15 @@ export default function ItineraryItemCard({
             >
               编辑
             </button>
+            {photos.length > 0 && (
+              <Link
+                to={`/trips/${tripId}/map?item=${item.id}`}
+                onClick={(event) => event.stopPropagation()}
+                className="text-xs text-sky-700 hover:underline"
+              >
+                在回忆中看
+              </Link>
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -278,10 +293,19 @@ export default function ItineraryItemCard({
               photos={previewPhotos}
               index={lightboxIndex}
               alt={item.poi_name}
+              items={assignItems}
               onClose={() => setLightboxIndex(null)}
               onIndexChange={setLightboxIndex}
+              onReassign={(photoId, itemId) => {
+                unassignPhoto.mutate({ photoId, action: "reassign", itemId });
+                setLightboxIndex(null);
+              }}
               onUnassign={(photoId) => {
                 unassignPhoto.mutate({ photoId, action: "unassign" });
+                setLightboxIndex(null);
+              }}
+              onDelete={(photoId) => {
+                removePhoto.mutate(photoId);
                 setLightboxIndex(null);
               }}
             />

@@ -136,3 +136,4 @@ def test_wechat_photo_has_no_captured_at_and_never_auto() -> None:
     assert result.auto_assign is False
     assert result.item_id is None
     assert result.confidence == 0
+    assert result.assignment_type != "batch_neighbor"

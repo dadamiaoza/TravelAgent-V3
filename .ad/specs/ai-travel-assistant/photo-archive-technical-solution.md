@@ -2,12 +2,12 @@
 
 > 日期：2026-09-11  
 > 分支：`feature/photo-archive`  
-> 状态：**已按确认的 6 条落地（PA1–PA6）**  
+> 状态：**PA1–PA7、PC1–PC4、PD1–PD2 已落地；人物未做**  
 >  
-> 产品口径：[MVP 产品需求文档](../MVP-产品需求文档%20-%20旅行照片智能归档.md)  
+> 产品口径：[照片归档与回忆.md](../照片归档与回忆.md)  
 > 实现进度与测试记录：[photo-archive-journal.md](photo-archive-journal.md)  
 > 愿景（本期不做）：人物 YOLO  
-> 下一刀（文档已冻结、代码未做）：[计划与回忆-执行计划.md](../计划与回忆-执行计划.md) — 确认后的实际到访，不覆盖计划
+> 剩余工作：[计划与回忆-执行计划.md](../计划与回忆-执行计划.md)
 
 本文回答：在**当前仓库**里怎么把 MVP 做出来。不是从零选一套新栈。
 
@@ -17,7 +17,7 @@
 
 MVP 只做一件事：旅行结束后，把照片挂到**已经规划好的** `itinerary_items` 上。
 
-三不做：不生成行程、不排路、**不静默**往计划里加点。计划外停留是下一刀 `visit_stops`，须用户确认。
+三不做：不生成行程、不排路、**不静默**往计划里加点。计划外停留写 `visit_stops`，须用户确认（PC1–PC3 已落地）。
 
 三类照片：
 
@@ -41,7 +41,7 @@ MVP 只做一件事：旅行结束后，把照片挂到**已经规划好的** `i
 | 后端 | multipart 上传、EXIF、缩略图、打分、改挂、删文件、按 trip 鉴权（UUID） | Celery、Redis、MinIO、LangGraph 照片图 |
 | 数据库 | 三张新表 + 文件落本地盘 | 人物表、向量表 |
 | AI | **无** | MiniMax 看图、自定义 YOLO |
-| 第三方 | 无新 key。匹配不调高德（节点已有坐标） | 对象存储。计划外簇的逆地理是 PC2，不在 MVP 匹配路径里 |
+| 第三方 | 无新 key。计划节点匹配不调高德（节点已有坐标）；计划外簇用高德逆地理（PC2 已落地） | 对象存储 |
 
 高德只出现在「节点当初是怎么定位的」（已有）。照片 GPS 用本地公式转 GCJ-02，不请求高德。
 
@@ -55,7 +55,7 @@ MVP 只做一件事：旅行结束后，把照片挂到**已经规划好的** `i
 |------|------|------|
 | API | 现有 FastAPI | 已有路由、依赖注入、`get_db` |
 | 前端 | 现有 React + Vite + TS + TanStack Query | 行程页已是宿主；加区域即可 |
-| 地图 | 现有 `TripMap` + 高德 JS | 关卡顺序 = 行程 `seq`；实际到访层见执行计划 PC3，不在 MVP 本文 |
+| 地图 | 现有 `TripMap` + 高德 JS | 计划层 = 行程 `seq`；回忆实际层见 [照片归档与回忆.md](../照片归档与回忆.md)（PC3 已落地） |
 | 数据库 | PostgreSQL 16 + Alembic | 与 Trip 级联删除；下一号迁移 `0018` |
 | 原图存储 | 本地 `src/backend/uploads/`（已 gitignore） | 演示够用；路径存在表里，以后换 S3 只改存储层 |
 | 读 EXIF | `pillow` + `piexif` | 新手资料多；只读 GPS/`DateTimeOriginal`，不写回原图 |
@@ -181,7 +181,7 @@ ItineraryScore：拍摄日 == 节点日→1，否则 0（无日期则 0）
 
 阈值：≥0.85 自动挂且 `is_confirmed=false`（可撤销）；0.60–0.85 挂上但待确认；&lt;0.60 不写 `item_id`。类型 B/C 强制走待确认（C 的 GPSScore=TimeScore=0）。
 
-同批邻图（可选，PA6）：类型 C 把同 job 里已自动挂的节点当作候选，confidence 封顶 0.55，`assignment_type` 仍先用 `time` 不合适——用 `batch_neighbor`。若怕字段膨胀，第一期可只做「按天改挂」，邻图提示标为可选。
+同批邻图（PC4 已落地）：类型 C 按 `photo_ids` 上传顺序做连续段，抄两侧锚点（已挂的 `item_id` / `visit_stop_id`）的地点；confidence 封顶 0.55，`assignment_type=batch_neighbor`，`is_confirmed=false`。两边锚点不一致则不抄。**不准**在 PC4 里调多模态认地标。详见 [计划与回忆-执行计划.md](../计划与回忆-执行计划.md)。
 
 ---
 

@@ -80,7 +80,12 @@ export default function TripPage() {
         &larr; 返回首页
       </Link>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-2xl font-bold">行程详情</h1>
+        <div>
+          <h1 className="text-2xl font-bold">行程详情</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            这是旅行计划。回来后到「回忆」按拍摄日看足迹，计划不会被照片改写。
+          </p>
+        </div>
         {tabs}
       </div>
 
