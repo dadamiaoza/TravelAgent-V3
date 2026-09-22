@@ -169,15 +169,18 @@ export default function PhotoDrawer({
               {mode === "album" ? (
                 <button
                   type="button"
-                  className="text-xs text-sky-700 hover:underline"
                   onClick={onBack}
+                  className="inline-flex items-center gap-1 rounded-full border border-slate-200/80 bg-white/90 px-2.5 py-1 text-xs font-medium text-sky-800 shadow-sm backdrop-blur-md transition hover:border-sky-200 hover:bg-sky-50"
                 >
+                  <span aria-hidden className="text-[11px] leading-none text-sky-700">
+                    ←
+                  </span>
                   返回当天路线
                 </button>
               ) : (
                 <p className="text-xs text-slate-500">{dayLabel}</p>
               )}
-              <h2 className="truncate text-base font-semibold text-slate-900">
+              <h2 className="mt-1.5 truncate text-base font-semibold tracking-tight text-slate-900">
                 {mode === "album" ? title : "这一天的地点"}
               </h2>
               {mode === "album" && onDismissVisitStop && (
