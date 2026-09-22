@@ -103,8 +103,19 @@ function newId() {
 
 function withActivity(message: ChatMessage, text: string): ChatMessage {
   const activity = message.activity ?? [];
-  if (!text || activity[activity.length - 1]?.text === text) return message;
+  if (!text || activity.some((entry) => entry.text === text)) return message;
   return { ...message, activity: [...activity, { id: newId(), text }] };
+}
+
+function noteApplied(message: ChatMessage, applied: ItineraryDelta[]): ChatMessage {
+  let next = message;
+  for (const delta of applied) {
+    next = withActivity(next, `已写入 ${deltaActionLabel(delta.action)} · ${deltaTargetText(delta)}`);
+  }
+  return {
+    ...next,
+    appliedCount: Math.max(next.appliedCount ?? 0, applied.length),
+  };
 }
 
 function groupTurns(messages: ChatMessage[]): ChatTurn[] {
@@ -176,7 +187,7 @@ function Prose({ text, streaming }: { text: string; streaming?: boolean }) {
   if (!text) return null;
   const segments = text.split(/```/);
   return (
-    <div className="space-y-2 text-[13px] leading-6 text-ink">
+    <div className="space-y-2 text-[13px] leading-5 text-ink">
       {segments.map((segment, index) => {
         if (index % 2 === 1) {
           return (
@@ -225,14 +236,22 @@ function Spinner() {
 }
 
 function UserBubble({ content }: { content: string }) {
-  const long = content.length > 80 || content.split("\n").length > 3;
+  const textRef = useRef<HTMLParagraphElement>(null);
   const [open, setOpen] = useState(false);
-  const collapsed = long && !open;
+  const [canToggle, setCanToggle] = useState(false);
+  const collapsed = canToggle && !open;
+
+  useEffect(() => {
+    const node = textRef.current;
+    if (!node || open) return;
+    setCanToggle(node.scrollHeight > node.clientHeight + 1);
+  }, [content, open]);
   const body = (
     <>
       <p
+        ref={textRef}
         className={`whitespace-pre-wrap pr-6 text-[13px] leading-[18px] text-ink ${
-          collapsed ? "max-h-[68px] overflow-hidden" : ""
+          collapsed || !open ? "max-h-[68px] overflow-hidden" : ""
         }`}
       >
         {content}
@@ -240,7 +259,7 @@ function UserBubble({ content }: { content: string }) {
       {collapsed && (
         <span className="pointer-events-none absolute inset-x-0 bottom-0 h-5 rounded-b-xl bg-gradient-to-t from-elevated to-transparent" />
       )}
-      {long && (
+      {canToggle && (
         <Chevron
           className={`absolute right-2 top-2 text-ink-tertiary transition-opacity ${
             open ? "rotate-90 opacity-60" : "opacity-0 group-hover:opacity-60"
@@ -251,7 +270,7 @@ function UserBubble({ content }: { content: string }) {
   );
   const className =
     "group relative w-full rounded-xl border border-line-tertiary bg-elevated px-3 py-2 text-left";
-  if (!long) {
+  if (!canToggle) {
     return <div className={className}>{body}</div>;
   }
   return (
@@ -317,11 +336,6 @@ function ActivityTrail({
               {entry.text}
             </li>
           ))}
-          {appliedCount > 0 && (
-            <li className="truncate text-[12px] leading-5 text-ink-tertiary">
-              已写入 {appliedCount} 条修改
-            </li>
-          )}
         </ul>
       )}
     </div>
@@ -622,20 +636,21 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             const applied = (data.deltas as ItineraryDelta[]) ?? [];
             void refreshTrip().catch(() => undefined);
             markDeltasAccepted(applied, aiMessageId);
-            patchAi(aiMessageId, (current) => ({
-              ...current,
-              appliedCount: Math.max(current.appliedCount ?? 0, applied.length),
-            }));
+            patchAi(aiMessageId, (current) => noteApplied(current, applied));
           } else if (event === "done") {
             const applied = (data.applied as ItineraryDelta[]) ?? [];
             setThreadId(String(data.thread_id ?? ""));
-            patchAi(aiMessageId, (current) => ({
-              ...current,
-              streaming: false,
-              content: current.content || String(data.reply ?? ""),
-              suggestions: (data.suggestions as ItineraryDelta[]) ?? [],
-              appliedCount: Math.max(current.appliedCount ?? 0, applied.length),
-            }));
+            patchAi(aiMessageId, (current) =>
+              noteApplied(
+                {
+                  ...current,
+                  streaming: false,
+                  content: current.content || String(data.reply ?? ""),
+                  suggestions: (data.suggestions as ItineraryDelta[]) ?? [],
+                },
+                applied,
+              ),
+            );
             if (applied.length > 0) {
               void refreshTrip().catch(() => undefined);
               markDeltasAccepted(applied, aiMessageId);
@@ -711,7 +726,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
         {turns.length === 0 ? (
-          <div className="flex h-full flex-col justify-end px-3 py-4">
+          <div className="flex h-full flex-col justify-center px-3 py-4">
             <p className="mb-2 text-[12px] text-ink-tertiary">可以这样说</p>
             <div className="flex flex-col items-start gap-1.5">
               {STARTER_PROMPTS.map((prompt) => (
