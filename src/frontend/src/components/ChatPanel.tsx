@@ -1,14 +1,29 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useTrip } from "@/hooks/useTrip";
 import { useTripStore } from "@/stores/tripStore";
 import type { ItineraryDelta, Trip, TripChatWriteMode } from "@/lib/types";
+
+interface ActivityEntry {
+  id: string;
+  text: string;
+}
 
 interface ChatMessage {
   id: string;
   role: "user" | "ai";
   content: string;
   suggestions?: ItineraryDelta[];
+  activity?: ActivityEntry[];
+  appliedCount?: number;
+  streaming?: boolean;
+}
+
+interface ChatTurn {
+  id: string;
+  user: ChatMessage | null;
+  ai: ChatMessage | null;
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -20,36 +35,42 @@ const ACTION_LABELS: Record<string, string> = {
   replace: "换成新地点",
 };
 
-function deltaSummary(delta: ItineraryDelta): string {
-  const action = ACTION_LABELS[delta.action] ?? delta.action;
-  const target = delta.target;
-  const payload = delta.payload;
-  if (delta.action === "add") {
-    return `${action}：${payload?.poi_name ?? "新地点"} → Day${target?.day_index ?? "?"} 第${target?.seq ?? "?"}位`;
-  }
-  if (delta.action === "delete") {
-    return `${action}：${payload?.poi_name ?? "该地点"}（Day${target?.day_index ?? "?"}）`;
-  }
-  if (delta.action === "replace") {
-    return `${action}：改为 ${payload?.poi_name ?? "新地点"}（Day${target?.day_index ?? "?"}）`;
-  }
-  if (delta.action === "move") {
-    return `${action}：${payload?.poi_name ?? "该地点"} → Day${target?.day_index ?? "?"}`;
-  }
-  if (delta.action === "reorder") {
-    return `${action}：Day${target?.day_index ?? "?"} 共 ${payload?.item_ids?.length ?? 0} 个节点`;
-  }
-  if (delta.action === "update") {
-    return `${action}：${payload?.poi_name ?? "地点"} 的时间/备注`;
-  }
-  return action;
+const STARTER_PROMPTS = [
+  "删掉雷峰塔",
+  "第二天会下雨吗",
+  "把雷峰塔换成灵隐寺",
+  "挪到第 2 天",
+  "按这段攻略加点：…",
+];
+
+function deltaActionLabel(action: string): string {
+  return ACTION_LABELS[action] ?? action;
 }
 
-function deltaContrast(delta: ItineraryDelta): string | null {
-  if (delta.preview_before && delta.preview_after && delta.preview_before !== delta.preview_after) {
-    return `原：${delta.preview_before}\n新：${delta.preview_after}`;
+function deltaTargetText(delta: ItineraryDelta): string {
+  const payload = delta.payload;
+  const target = delta.target;
+  const name = payload?.poi_name?.trim() || "该地点";
+  const day = target?.day_index ?? "?";
+  if (delta.action === "add") {
+    return `${name} → Day${day} 第${target?.seq ?? "?"}位`;
   }
-  return null;
+  if (delta.action === "delete") {
+    return `${name}（Day${day}）`;
+  }
+  if (delta.action === "replace") {
+    return `改为 ${name}（Day${day}）`;
+  }
+  if (delta.action === "move") {
+    return `${name} → Day${day}`;
+  }
+  if (delta.action === "reorder") {
+    return `Day${day} 共 ${payload?.item_ids?.length ?? 0} 个节点`;
+  }
+  if (delta.action === "update") {
+    return `${name} 的时间/备注`;
+  }
+  return name;
 }
 
 function deltaImpact(delta: ItineraryDelta): string {
@@ -68,8 +89,396 @@ function deltaImpact(delta: ItineraryDelta): string {
   return "修改后地图和列表会同步刷新。";
 }
 
+function hasContrast(delta: ItineraryDelta): boolean {
+  return Boolean(
+    delta.preview_before &&
+      delta.preview_after &&
+      delta.preview_before !== delta.preview_after,
+  );
+}
+
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function withActivity(message: ChatMessage, text: string): ChatMessage {
+  const activity = message.activity ?? [];
+  if (!text || activity[activity.length - 1]?.text === text) return message;
+  return { ...message, activity: [...activity, { id: newId(), text }] };
+}
+
+function groupTurns(messages: ChatMessage[]): ChatTurn[] {
+  const turns: ChatTurn[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role === "user") {
+      const next = messages[index + 1];
+      if (next?.role === "ai") {
+        turns.push({ id: message.id, user: message, ai: next });
+        index += 1;
+      } else {
+        turns.push({ id: message.id, user: message, ai: null });
+      }
+    } else {
+      turns.push({ id: message.id, user: null, ai: message });
+    }
+  }
+  return turns;
+}
+
+function renderInline(text: string) {
+  const chunks = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return chunks.map((chunk, index) => {
+    if (chunk.startsWith("**") && chunk.endsWith("**") && chunk.length > 4) {
+      return (
+        <strong key={index} className="font-semibold">
+          {chunk.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (chunk.startsWith("`") && chunk.endsWith("`") && chunk.length > 2) {
+      return (
+        <code key={index} className="rounded bg-chrome px-1 py-px font-mono text-[12px]">
+          {chunk.slice(1, -1)}
+        </code>
+      );
+    }
+    return <span key={index}>{chunk}</span>;
+  });
+}
+
+function ProseBlock({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const listLines = lines.filter((line) => line.trim().length > 0);
+  const isList = listLines.length > 0 && listLines.every((line) => /^[-*]\s+/.test(line.trim()));
+  if (isList) {
+    return (
+      <ul className="list-disc space-y-1 pl-4">
+        {listLines.map((line, index) => (
+          <li key={index}>{renderInline(line.trim().replace(/^[-*]\s+/, ""))}</li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <p className="whitespace-pre-wrap">
+      {lines.map((line, index) => (
+        <span key={index}>
+          {index > 0 && <br />}
+          {renderInline(line)}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function Prose({ text, streaming }: { text: string; streaming?: boolean }) {
+  if (!text) return null;
+  const segments = text.split(/```/);
+  return (
+    <div className="space-y-2 text-[13px] leading-6 text-ink">
+      {segments.map((segment, index) => {
+        if (index % 2 === 1) {
+          return (
+            <pre
+              key={index}
+              className="overflow-x-auto rounded-lg border border-line-tertiary bg-elevated px-3 py-2 font-mono text-[12px] leading-5 text-ink"
+            >
+              {segment.replace(/^\w+\n/, "")}
+            </pre>
+          );
+        }
+        const blocks = segment.split(/\n{2,}/).filter((block) => block.length > 0);
+        return blocks.map((block, blockIndex) => (
+          <ProseBlock key={`${index}-${blockIndex}`} text={block} />
+        ));
+      })}
+      {streaming && (
+        <span className="inline-block h-3 w-px animate-pulse bg-ink-tertiary align-middle" />
+      )}
+    </div>
+  );
+}
+
+function Chevron({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true" className={`h-3 w-3 ${className}`}>
+      <path
+        d="M4.5 2.5 8 6 4.5 9.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-r-transparent"
+      aria-hidden="true"
+    />
+  );
+}
+
+function UserBubble({ content }: { content: string }) {
+  const long = content.length > 80 || content.split("\n").length > 3;
+  const [open, setOpen] = useState(false);
+  const collapsed = long && !open;
+  const body = (
+    <>
+      <p
+        className={`whitespace-pre-wrap pr-6 text-[13px] leading-[18px] text-ink ${
+          collapsed ? "max-h-[68px] overflow-hidden" : ""
+        }`}
+      >
+        {content}
+      </p>
+      {collapsed && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 h-5 rounded-b-xl bg-gradient-to-t from-elevated to-transparent" />
+      )}
+      {long && (
+        <Chevron
+          className={`absolute right-2 top-2 text-ink-tertiary transition-opacity ${
+            open ? "rotate-90 opacity-60" : "opacity-0 group-hover:opacity-60"
+          }`}
+        />
+      )}
+    </>
+  );
+  const className =
+    "group relative w-full rounded-xl border border-line-tertiary bg-elevated px-3 py-2 text-left";
+  if (!long) {
+    return <div className={className}>{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen((value) => !value)}
+      aria-expanded={open}
+      className={className}
+    >
+      {body}
+    </button>
+  );
+}
+
+function ActivityTrail({
+  entries,
+  streaming,
+  appliedCount,
+}: {
+  entries: ActivityEntry[];
+  streaming: boolean;
+  appliedCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const wasStreaming = useRef(streaming);
+
+  useEffect(() => {
+    if (wasStreaming.current && !streaming) setOpen(false);
+    wasStreaming.current = streaming;
+  }, [streaming]);
+
+  if (!streaming && entries.length === 0 && appliedCount === 0) return null;
+
+  const label = streaming
+    ? entries[entries.length - 1]?.text || "正在处理…"
+    : appliedCount > 0
+      ? `本次处理 · 已写入 ${appliedCount} 条`
+      : "本次处理";
+
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="group flex w-full items-center gap-1.5 py-0.5 text-left text-[13px] leading-5 text-ink-secondary hover:text-ink"
+      >
+        <span className="flex h-3 w-3 shrink-0 items-center justify-center text-ink-tertiary">
+          {streaming ? (
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+          ) : (
+            <Chevron
+              className={`transition ${open ? "rotate-90 opacity-60" : "opacity-0 group-hover:opacity-60"}`}
+            />
+          )}
+        </span>
+        <span className="truncate">{label}</span>
+      </button>
+      {open && (
+        <ul className="mb-1 ml-[18px] space-y-0.5">
+          {entries.map((entry) => (
+            <li key={entry.id} className="truncate text-[12px] leading-5 text-ink-tertiary">
+              {entry.text}
+            </li>
+          ))}
+          {appliedCount > 0 && (
+            <li className="truncate text-[12px] leading-5 text-ink-tertiary">
+              已写入 {appliedCount} 条修改
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function SuggestionCard({
+  delta,
+  status,
+  onAccept,
+  onIgnore,
+}: {
+  delta: ItineraryDelta;
+  status?: "accepted" | "ignored" | "failed";
+  onAccept: () => void;
+  onIgnore: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const contrast = hasContrast(delta);
+  const statusLabel =
+    status === "accepted" ? "已采纳" : status === "failed" ? "采纳失败" : status === "ignored" ? "已忽略" : null;
+
+  return (
+    <div className="group rounded-lg border border-line-tertiary bg-elevated">
+      <div className="flex items-center gap-1 px-1.5 py-1">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+        >
+          <Chevron
+            className={`shrink-0 text-ink-tertiary transition ${
+              open ? "rotate-90 opacity-60" : "opacity-0 group-hover:opacity-60"
+            }`}
+          />
+          <span className="shrink-0 rounded bg-chrome px-1.5 py-0.5 text-[11px] leading-4 text-ink-secondary">
+            {deltaActionLabel(delta.action)}
+          </span>
+          <span className="truncate text-[13px] leading-5 text-ink">{deltaTargetText(delta)}</span>
+        </button>
+        {statusLabel ? (
+          <span
+            className={`shrink-0 px-1 text-[12px] ${
+              status === "accepted"
+                ? "text-emerald-700"
+                : status === "failed"
+                  ? "text-red-600"
+                  : "text-ink-tertiary"
+            }`}
+          >
+            {statusLabel}
+          </span>
+        ) : (
+          <div className="flex shrink-0 items-center">
+            <button
+              type="button"
+              onClick={onAccept}
+              className="rounded px-1.5 py-0.5 text-[12px] text-ink-secondary hover:bg-chrome hover:text-ink"
+            >
+              采纳
+            </button>
+            <button
+              type="button"
+              onClick={onIgnore}
+              className="rounded px-1.5 py-0.5 text-[12px] text-ink-tertiary hover:bg-chrome hover:text-ink-secondary"
+            >
+              忽略
+            </button>
+          </div>
+        )}
+      </div>
+      {open && (
+        <div className="space-y-1 border-t border-line-tertiary px-3 py-2">
+          {contrast && (
+            <>
+              <p className="text-[12px] leading-5 text-ink-tertiary">
+                <span className="mr-1 text-ink-secondary">原</span>
+                {delta.preview_before}
+              </p>
+              <p className="text-[12px] leading-5 text-ink">
+                <span className="mr-1 text-ink-secondary">新</span>
+                {delta.preview_after}
+              </p>
+            </>
+          )}
+          <p className="text-[12px] leading-5 text-ink-tertiary">{deltaImpact(delta)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TurnView({
+  turn,
+  handled,
+  onAccept,
+  onIgnore,
+  onAcceptAll,
+}: {
+  turn: ChatTurn;
+  handled: Record<string, "accepted" | "ignored" | "failed">;
+  onAccept: (delta: ItineraryDelta, key: string) => void;
+  onIgnore: (key: string) => void;
+  onAcceptAll: (deltas: ItineraryDelta[], keys: string[]) => void;
+}) {
+  const suggestions = turn.ai?.suggestions ?? [];
+  const keys = suggestions.map((delta, index) => delta.suggestion_id ?? `${turn.ai?.id}-s${index}`);
+  const pending = keys.filter((key) => !handled[key]).length;
+
+  return (
+    <section className="border-b border-line-tertiary last:border-b-0">
+      {turn.user && (
+        <div className="sticky top-0 z-10 bg-chrome px-3 pb-1 pt-3">
+          <UserBubble content={turn.user.content} />
+          <div className="pointer-events-none -mx-3 mt-1 h-3 bg-gradient-to-b from-chrome to-transparent" />
+        </div>
+      )}
+      {turn.ai && (
+        <div className="px-3 pb-4">
+          <ActivityTrail
+            entries={turn.ai.activity ?? []}
+            streaming={Boolean(turn.ai.streaming)}
+            appliedCount={turn.ai.appliedCount ?? 0}
+          />
+          <Prose text={turn.ai.content} streaming={turn.ai.streaming} />
+          {suggestions.length > 1 && pending > 0 && (
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => onAcceptAll(suggestions, keys)}
+                className="rounded px-1.5 py-0.5 text-[12px] text-ink-secondary hover:bg-elevated hover:text-ink"
+              >
+                全部采纳（{pending}）
+              </button>
+            </div>
+          )}
+          {suggestions.length > 0 && (
+            <div className="mt-2 space-y-1.5">
+              {suggestions.map((delta, index) => {
+                const key = keys[index];
+                return (
+                  <SuggestionCard
+                    key={key}
+                    delta={delta}
+                    status={handled[key]}
+                    onAccept={() => onAccept(delta, key)}
+                    onIgnore={() => onIgnore(key)}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 async function streamTripChat(
@@ -123,6 +532,7 @@ async function streamTripChat(
 
 export default function ChatPanel({ tripId }: { tripId: string }) {
   const queryClient = useQueryClient();
+  const { data: trip } = useTrip(tripId);
   const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
   const focusItemId = useTripStore((s) => s.focusItemId);
   const applyServerTrip = useTripStore((s) => s.applyServerTrip);
@@ -133,8 +543,20 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const [writeMode, setWriteMode] = useState<TripChatWriteMode>("propose");
   const [handled, setHandled] = useState<Record<string, "accepted" | "ignored" | "failed">>({});
-  const [toolStatus, setToolStatus] = useState<string>("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottom = useRef(true);
+
+  const focusName = trip?.days
+    ?.flatMap((day) => day.items ?? [])
+    .find((item) => item.id === focusItemId)?.poi_name;
+  const contextLabel = `当前上下文：Day ${selectedDayIndex + 1}${focusName ? ` · ${focusName}` : ""}`;
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || !stickToBottom.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   async function refreshTrip() {
     const data = await api.get<Trip>(`/trips/${tripId}`);
@@ -153,16 +575,29 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     });
   }
 
+  function patchAi(aiMessageId: string, updater: (message: ChatMessage) => ChatMessage) {
+    setMessages((prev) => prev.map((message) => (message.id === aiMessageId ? updater(message) : message)));
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text || loading) return;
 
-    setMessages((prev) => [...prev, { id: newId(), role: "user", content: text }]);
+    const userMessage: ChatMessage = { id: newId(), role: "user", content: text };
     const aiMessageId = newId();
-    setMessages((prev) => [...prev, { id: aiMessageId, role: "ai", content: "", suggestions: [] }]);
+    const aiMessage: ChatMessage = {
+      id: aiMessageId,
+      role: "ai",
+      content: "",
+      suggestions: [],
+      activity: [{ id: newId(), text: "AI 正在思考…" }],
+      appliedCount: 0,
+      streaming: true,
+    };
+    stickToBottom.current = true;
+    setMessages((prev) => [...prev, userMessage, aiMessage]);
     setInput("");
     setLoading(true);
-    setToolStatus("AI 正在思考…");
 
     try {
       await streamTripChat(
@@ -179,33 +614,28 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
         (event, data) => {
           if (event === "status") {
             const message = String(data.message ?? "");
-            if (message) setToolStatus(message);
+            if (message) patchAi(aiMessageId, (current) => withActivity(current, message));
           } else if (event === "delta") {
             const chunk = String(data.text ?? "");
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === aiMessageId ? { ...msg, content: msg.content + chunk } : msg,
-              ),
-            );
+            patchAi(aiMessageId, (current) => ({ ...current, content: current.content + chunk }));
           } else if (event === "applied") {
             const applied = (data.deltas as ItineraryDelta[]) ?? [];
             void refreshTrip().catch(() => undefined);
             markDeltasAccepted(applied, aiMessageId);
+            patchAi(aiMessageId, (current) => ({
+              ...current,
+              appliedCount: Math.max(current.appliedCount ?? 0, applied.length),
+            }));
           } else if (event === "done") {
-            setToolStatus("");
-            setThreadId(String(data.thread_id ?? ""));
             const applied = (data.applied as ItineraryDelta[]) ?? [];
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === aiMessageId
-                  ? {
-                      ...msg,
-                      content: msg.content || String(data.reply ?? ""),
-                      suggestions: (data.suggestions as ItineraryDelta[]) ?? [],
-                    }
-                  : msg,
-              ),
-            );
+            setThreadId(String(data.thread_id ?? ""));
+            patchAi(aiMessageId, (current) => ({
+              ...current,
+              streaming: false,
+              content: current.content || String(data.reply ?? ""),
+              suggestions: (data.suggestions as ItineraryDelta[]) ?? [],
+              appliedCount: Math.max(current.appliedCount ?? 0, applied.length),
+            }));
             if (applied.length > 0) {
               void refreshTrip().catch(() => undefined);
               markDeltasAccepted(applied, aiMessageId);
@@ -214,16 +644,14 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
         },
       );
     } catch {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === aiMessageId
-            ? { ...msg, content: "抱歉，AI 对话暂时不可用，请稍后再试。" }
-            : msg,
-        ),
-      );
+      patchAi(aiMessageId, (current) => ({
+        ...current,
+        streaming: false,
+        content: current.content || "抱歉，AI 对话暂时不可用，请稍后再试。",
+      }));
     } finally {
+      patchAi(aiMessageId, (current) => ({ ...current, streaming: false }));
       setLoading(false);
-      setToolStatus("");
       inputRef.current?.focus();
     }
   }
@@ -255,166 +683,131 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     }
   }
 
-  function handleIgnore(_delta: ItineraryDelta, key: string) {
+  function handleIgnore(key: string) {
     setHandled((prev) => ({ ...prev, [key]: "ignored" }));
   }
 
+  const turns = groupTurns(messages);
+
   return (
-    <aside className="flex h-[70vh] min-h-[500px] max-h-[70vh] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-900">AI 行程协作</h2>
-          <p className="mt-0.5 text-xs text-gray-500">当前上下文：Day {selectedDayIndex + 1}</p>
-        </div>
-        <div className="shrink-0 text-right">
-          <div
-            className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-0.5"
-            role="group"
-            aria-label="写库模式"
-          >
+    <aside
+      aria-busy={loading}
+      className="flex h-[70vh] min-h-[28rem] max-h-[70vh] w-full flex-col overflow-hidden rounded-lg border border-line-tertiary bg-chrome shadow-sm lg:h-[calc(100dvh-10.5rem)] lg:max-h-[calc(100dvh-2rem)] lg:min-h-[26rem]"
+    >
+      <header className="flex items-center justify-between gap-3 border-b border-line-tertiary px-3 py-2.5">
+        <h2 className="shrink-0 text-[13px] font-semibold text-ink">AI 行程协作</h2>
+        <p className="min-w-0 truncate text-right text-[12px] text-ink-tertiary" title={contextLabel}>
+          {contextLabel}
+        </p>
+      </header>
+
+      <div
+        ref={scrollerRef}
+        onScroll={() => {
+          const el = scrollerRef.current;
+          if (!el) return;
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
+        {turns.length === 0 ? (
+          <div className="flex h-full flex-col justify-end px-3 py-4">
+            <p className="mb-2 text-[12px] text-ink-tertiary">可以这样说</p>
+            <div className="flex flex-col items-start gap-1.5">
+              {STARTER_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => {
+                    setInput(prompt);
+                    inputRef.current?.focus();
+                  }}
+                  className="max-w-full truncate rounded-lg border border-line-tertiary bg-elevated px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:text-ink"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          turns.map((turn) => (
+            <TurnView
+              key={turn.id}
+              turn={turn}
+              handled={handled}
+              onAccept={(delta, key) => void handleAccept(delta, key)}
+              onIgnore={handleIgnore}
+              onAcceptAll={(deltas, keys) => void handleAcceptAll(deltas, keys)}
+            />
+          ))
+        )}
+      </div>
+
+      <footer className="sticky bottom-0 z-20 border-t border-line-tertiary bg-chrome px-3 pb-3 pt-2">
+        <div className="rounded-xl border border-line-tertiary bg-elevated shadow-sm focus-within:border-[rgb(20_20_20/0.16)]">
+          <textarea
+            ref={inputRef}
+            value={input}
+            rows={2}
+            disabled={loading}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void handleSend();
+              }
+            }}
+            placeholder="例如：删掉雷峰塔 / 第二天会下雨吗"
+            className="chat-composer-input w-full resize-none bg-transparent px-3 pt-3 text-[13px] leading-5 text-ink outline-none placeholder:text-ink-tertiary disabled:cursor-not-allowed disabled:opacity-60"
+          />
+          <div className="flex items-center justify-between gap-2 px-2 pb-1">
+            <div
+              className="inline-flex max-w-full rounded-md bg-chrome p-0.5"
+              role="group"
+              aria-label="写库模式"
+            >
+              <button
+                type="button"
+                onClick={() => setWriteMode("propose")}
+                disabled={loading}
+                className={`rounded px-2 py-1 text-[11px] ${
+                  writeMode === "propose"
+                    ? "bg-elevated font-medium text-ink shadow-sm"
+                    : "text-ink-tertiary hover:text-ink-secondary"
+                }`}
+              >
+                只提议
+              </button>
+              <button
+                type="button"
+                onClick={() => setWriteMode("auto_apply")}
+                disabled={loading}
+                className={`rounded px-2 py-1 text-[11px] ${
+                  writeMode === "auto_apply"
+                    ? "bg-elevated font-medium text-ink shadow-sm"
+                    : "text-ink-tertiary hover:text-ink-secondary"
+                }`}
+              >
+                授权后自动采纳
+              </button>
+            </div>
             <button
               type="button"
-              onClick={() => setWriteMode("propose")}
-              className={`rounded px-2 py-1 text-xs ${
-                writeMode === "propose"
-                  ? "bg-white font-medium text-gray-900 shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
+              onClick={() => void handleSend()}
+              disabled={loading || !input.trim()}
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-ink px-2.5 text-[12px] text-elevated disabled:opacity-40"
             >
-              只提议
-            </button>
-            <button
-              type="button"
-              onClick={() => setWriteMode("auto_apply")}
-              className={`rounded px-2 py-1 text-xs ${
-                writeMode === "auto_apply"
-                  ? "bg-white font-medium text-gray-900 shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
-            >
-              授权后自动采纳
+              {loading ? <Spinner /> : "发送"}
             </button>
           </div>
-          <p className="mt-1 text-[11px] text-gray-400">
-            {writeMode === "propose" ? "改行程需你点采纳" : "本会话允许助手直接改行程"}
+          <p className="flex items-center justify-between gap-2 px-2.5 pb-2 text-[11px] text-ink-tertiary">
+            <span className="truncate">
+              {writeMode === "propose" ? "改行程需你点采纳" : "本会话允许助手直接改行程"}
+            </span>
+            <span className="shrink-0">Enter 发送</span>
           </p>
         </div>
-      </div>
-
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {messages.length === 0 && (
-          <div className="space-y-1 text-center text-sm text-gray-400">
-            <p>可以这样说：</p>
-            <p>「删掉雷峰塔」</p>
-            <p>「第二天会下雨吗」</p>
-            <p>「把雷峰塔换成灵隐寺」或「挪到第 2 天」</p>
-            <p>「按这段攻略加点：…」</p>
-          </div>
-        )}
-        {messages.map((msg) => (
-          <div key={msg.id}>
-            <div
-              className={`rounded-lg px-3 py-2 text-sm ${
-                msg.role === "user"
-                  ? "ml-auto max-w-[80%] bg-blue-600 text-white"
-                  : "max-w-[90%] bg-gray-100 text-gray-800"
-              }`}
-            >
-              {msg.content}
-            </div>
-            {msg.suggestions && msg.suggestions.length > 1 && (() => {
-              const keys = msg.suggestions.map(
-                (delta, idx) => delta.suggestion_id ?? `${msg.id}-s${idx}`,
-              );
-              const pending = keys.filter((key) => !handled[key]).length;
-              if (pending === 0) return null;
-              return (
-                <button
-                  type="button"
-                  onClick={() => handleAcceptAll(msg.suggestions!, keys)}
-                  className="mt-2 rounded border border-blue-300 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
-                >
-                  全部采纳（{pending}）
-                </button>
-              );
-            })()}
-            {msg.suggestions && msg.suggestions.length > 0 && (
-              <div className="mt-2 space-y-2">
-                {msg.suggestions.map((delta, idx) => {
-                  const key = delta.suggestion_id ?? `${msg.id}-s${idx}`;
-                  const status = handled[key];
-                  if (status) {
-                    const label =
-                      status === "accepted"
-                        ? "✅ 已采纳"
-                        : status === "failed"
-                          ? "❌ 采纳失败"
-                          : "已忽略";
-                    return (
-                      <p key={key} className="text-xs text-gray-400">
-                        {label} · {deltaSummary(delta)}
-                      </p>
-                    );
-                  }
-                  return (
-                    <div key={key} className="rounded-md border border-orange-200 bg-orange-50 p-3">
-                      <p className="text-xs font-semibold text-orange-800">{deltaSummary(delta)}</p>
-                      {deltaContrast(delta) && (
-                        <pre className="mt-1 whitespace-pre-wrap text-xs text-orange-800">
-                          {deltaContrast(delta)}
-                        </pre>
-                      )}
-                      <p className="mt-1 text-xs text-orange-700">{deltaImpact(delta)}</p>
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleAccept(delta, key)}
-                          className="rounded bg-blue-600 px-2 py-1 text-xs text-white"
-                        >
-                          采纳
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleIgnore(delta, key)}
-                          className="rounded bg-gray-200 px-2 py-1 text-xs text-gray-700"
-                        >
-                          忽略
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
-        {loading && <p className="text-xs text-gray-400">{toolStatus || "AI 正在思考…"}</p>}
-      </div>
-
-      <div className="border-t border-gray-100 p-3">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void handleSend();
-            }
-          }}
-          rows={2}
-          placeholder="例如：删掉雷峰塔 / 第二天会下雨吗"
-          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={() => void handleSend()}
-          disabled={loading || !input.trim()}
-          className="mt-2 w-full rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50"
-        >
-          {loading ? "发送中…" : "发送"}
-        </button>
-      </div>
+      </footer>
     </aside>
   );
 }
