@@ -44,6 +44,7 @@ export default function TripMapPage() {
   const [selectedBeadId, setSelectedBeadId] = useState<string | null>(null);
   const [chapterKey, setChapterKey] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [playStopIndex, setPlayStopIndex] = useState(0);
   const appliedItemQuery = useRef(false);
 
@@ -281,6 +282,8 @@ export default function TripMapPage() {
   function selectBead(bead: SpineBead, keepLightbox = false) {
     if (!keepLightbox) setLightboxIndex(null);
     setSelectedBeadId(bead.id);
+    const playIdx = playableBeads.findIndex((row) => row.id === bead.id);
+    if (playIdx >= 0) setPlayStopIndex(playIdx);
     if (bead.kind === "plan" && bead.itemId) {
       setFocusVisitStopId(null);
       setFocusItem(bead.itemId);
@@ -327,6 +330,13 @@ export default function TripMapPage() {
   }, [activeKey]);
 
   useEffect(() => {
+    if (!selectedBeadId) return;
+    const idx = playableBeads.findIndex((bead) => bead.id === selectedBeadId);
+    if (idx >= 0) setPlayStopIndex(idx);
+  }, [selectedBeadId, playableBeads]);
+
+
+  useEffect(() => {
     if (!playing) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) return;
@@ -367,74 +377,81 @@ export default function TripMapPage() {
         <p className="flex h-full items-center justify-center text-slate-500">该行程暂无内容</p>
       )}
 
-      <div className="pointer-events-none absolute left-3 right-3 top-20 z-20 flex flex-col items-center gap-2 sm:top-24">
-        {chapters.length > 0 && (
-          <div className="pointer-events-auto flex max-w-full flex-wrap justify-center gap-2 rounded-2xl border border-white/70 bg-white/70 p-1 shadow-sm backdrop-blur-md">
-            {chapters.map((chapter) => (
-              <button
-                key={chapter.key}
-                type="button"
-                onClick={() => selectChapter(chapter.key)}
-                className={`min-h-11 rounded-full px-3 text-sm font-medium transition duration-200 ${
-                  activeKey === chapter.key
-                    ? "bg-sky-600 text-white"
-                    : "text-slate-600 hover:bg-white"
-                }`}
-              >
-                {chapter.label}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="pointer-events-auto flex flex-wrap justify-center gap-2">
+      <div className="pointer-events-none absolute left-3 right-3 top-20 z-20 sm:top-24">
+        <div className="pointer-events-auto mx-auto flex max-w-full items-center gap-1.5 overflow-x-auto rounded-full border border-white/70 bg-white/80 p-1 shadow-sm backdrop-blur-md scrollbar-none">
+          {chapters.length > 0 && (
+            <div className="flex shrink-0 items-center gap-1">
+              {chapters.map((chapter) => (
+                <button
+                  key={chapter.key}
+                  type="button"
+                  onClick={() => selectChapter(chapter.key)}
+                  className={`h-8 shrink-0 rounded-full px-2.5 text-xs font-medium transition duration-200 ${
+                    activeKey === chapter.key
+                      ? "bg-sky-600 text-white"
+                      : "text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  {chapter.label}
+                </button>
+              ))}
+              <span className="mx-0.5 h-4 w-px shrink-0 bg-slate-200" aria-hidden />
+            </div>
+          )}
+
           <button
             type="button"
             aria-pressed={showPlanLayer}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur-md ${
+            title="对照计划路线"
+            className={`h-8 shrink-0 rounded-full border px-2.5 text-xs font-medium ${
               showPlanLayer
                 ? "border-sky-300 bg-sky-100 text-sky-800"
-                : "border-white/70 bg-white/80 text-slate-600 hover:bg-white"
+                : "border-transparent text-slate-600 hover:bg-white"
             }`}
             onClick={() => setShowPlanLayer((on) => !on)}
           >
-            对照计划路线
+            对照计划
           </button>
+
           {otherDayGhosts.length > 0 && (
             <button
               type="button"
               aria-pressed={showOtherDays}
-              className={`rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur-md ${
+              title={showOtherDays && fitScope !== "all" ? "看全部拍摄日" : "显示其他拍摄日"}
+              className={`h-8 shrink-0 rounded-full border px-2.5 text-xs font-medium ${
                 showOtherDays
                   ? "border-sky-300 bg-sky-100 text-sky-800"
-                  : "border-white/70 bg-white/80 text-slate-600 hover:bg-white"
+                  : "border-transparent text-slate-600 hover:bg-white"
               }`}
               onClick={toggleOtherDays}
             >
-              {showOtherDays && fitScope !== "all" ? "看全部拍摄日" : "显示其他拍摄日"}
+              {showOtherDays && fitScope !== "all" ? "全部拍摄日" : "其他拍摄日"}
             </button>
           )}
+
           {playableBeads.length > 0 && (
-            <div className="flex items-center gap-1 rounded-full border border-white/70 bg-white/80 px-1 py-1 text-xs text-slate-600 shadow-sm backdrop-blur-md">
+            <>
+              <span className="mx-0.5 h-4 w-px shrink-0 bg-slate-200" aria-hidden />
               {playing ? (
                 <button
                   type="button"
-                  className="min-h-11 rounded-full px-3 font-medium text-sky-800 hover:bg-white"
+                  className="h-8 shrink-0 rounded-full px-2.5 text-xs font-medium text-sky-800 hover:bg-white"
                   onClick={() => setPlaying(false)}
                 >
-                  暂停回放
+                  暂停
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="min-h-11 rounded-full px-3 font-medium text-sky-800 hover:bg-white"
+                  className="h-8 shrink-0 rounded-full px-2.5 text-xs font-medium text-sky-800 hover:bg-white"
                   onClick={startPlayback}
                 >
-                  回放足迹
+                  回放
                 </button>
               )}
               <button
                 type="button"
-                className="min-h-11 rounded-full px-3 hover:bg-white disabled:text-slate-300"
+                className="h-8 shrink-0 rounded-full px-2 text-xs hover:bg-white disabled:text-slate-300"
                 disabled={playStopIndex <= 0 || playableBeads.length < 2}
                 onClick={() => {
                   setPlaying(false);
@@ -443,13 +460,15 @@ export default function TripMapPage() {
               >
                 上一站
               </button>
-              <span className="max-w-[9rem] truncate px-1 text-slate-500">
+              <span className="max-w-[7.5rem] shrink truncate px-1 text-[11px] text-slate-500">
                 {playableBeads[playStopIndex]?.label ?? playableBeads[0]?.label}
-                {playableBeads.length > 0 ? ` ${Math.min(playStopIndex + 1, playableBeads.length)}/${playableBeads.length}` : ""}
+                {playableBeads.length > 0
+                  ? ` ${Math.min(playStopIndex + 1, playableBeads.length)}/${playableBeads.length}`
+                  : ""}
               </span>
               <button
                 type="button"
-                className="min-h-11 rounded-full px-3 hover:bg-white disabled:text-slate-300"
+                className="h-8 shrink-0 rounded-full px-2 text-xs hover:bg-white disabled:text-slate-300"
                 disabled={playStopIndex >= playableBeads.length - 1 || playableBeads.length < 2}
                 onClick={() => {
                   setPlaying(false);
@@ -458,19 +477,41 @@ export default function TripMapPage() {
               >
                 下一站
               </button>
-            </div>
+            </>
           )}
+
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-slate-200" aria-hidden />
+          <button
+            type="button"
+            aria-expanded={helpOpen}
+            aria-label="地图操作说明"
+            className={`h-8 w-8 shrink-0 rounded-full text-sm font-semibold ${
+              helpOpen ? "bg-sky-100 text-sky-800" : "text-slate-500 hover:bg-white"
+            }`}
+            onClick={() => setHelpOpen((open) => !open)}
+          >
+            ?
+          </button>
         </div>
-        <p className="pointer-events-auto max-w-lg rounded-2xl border border-white/70 bg-white/85 px-3 py-1.5 text-center text-[11px] text-slate-600 shadow-sm backdrop-blur-md">
-          按拍摄日翻足迹。切到某一天只框当天；要看多天距离，再点「显示其他拍摄日」。灯箱可连翻到下一地点；回放只走停留，不连假路线。
-          <Link to={`/trips/${trip.id}`} className="ml-1 text-sky-700 hover:underline">
-            去行程上传
-          </Link>
-        </p>
-        {!hasFootprint && (
-          <p className="pointer-events-auto max-w-md rounded-2xl border border-white/70 bg-white/85 px-4 py-2 text-center text-xs text-slate-600 shadow-sm backdrop-blur-md">
-            淡线是计划对照，还不是足迹。在行程页上传带地点的照片后，这里会长出实际停留。
-          </p>
+
+        {helpOpen && (
+          <div className="pointer-events-auto mx-auto mt-2 max-w-lg rounded-2xl border border-white/70 bg-white/90 px-3 py-2 text-center text-[11px] leading-relaxed text-slate-600 shadow-sm backdrop-blur-md">
+            {hasFootprint ? (
+              <>
+                按拍摄日翻足迹；点某一天只看该日。要看多日距离，再点「其他拍摄日」。对照计划可叠一层路线；回放只沿停留点，不画计划路。
+                <Link to={`/trips/${trip.id}`} className="ml-1 text-sky-700 hover:underline">
+                  去行程上传
+                </Link>
+              </>
+            ) : (
+              <>
+                当前是计划日视图，还没有足迹。去行程页上传带地点的照片后，这里会长出真实停留点。
+                <Link to={`/trips/${trip.id}`} className="ml-1 text-sky-700 hover:underline">
+                  去行程上传
+                </Link>
+              </>
+            )}
+          </div>
         )}
       </div>
 
