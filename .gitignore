@@ -24,6 +24,9 @@ Thumbs.db
 # Interview prep (local only)
 .inter/
 
+# Local AD specs, journals, and test photos
+.ad/
+
 # Photo archive local uploads (never commit user photos)
 src/backend/uploads/
 

@@ -21,6 +21,7 @@ from app.schemas.trip import (
 )
 from app.services import trip_editor
 from app.services.closure_rules import evaluate_closure_rule
+from app.services.photo_chat import load_photo_context, propose_photo_change as propose_photo_change_delta
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,8 @@ def build_trip_context(trip, focus: TripChatContext | None = None) -> dict:
         context["current_day_index"] = focus.day_index
         if focus.item_id:
             context["current_item_id"] = str(focus.item_id)
+        if focus.photo_id:
+            context["current_photo_id"] = str(focus.photo_id)
     return context
 
 
@@ -491,6 +494,46 @@ def apply_itinerary_delta(
     return f"已写入行程：{delta.action} {((delta.payload.poi_name if delta.payload else None) or '')}".strip()
 
 
+def apply_photo_change(
+    session: TripChatSession,
+    *,
+    action: str,
+    place_name: str = "",
+    poi_name: str = "",
+    photo_id: str = "",
+    filename: str = "",
+    item_id: str = "",
+    visit_stop_id: str = "",
+) -> str:
+    session.emit("apply_photo_change", "正在写入照片归属…")
+    if session.write_mode != WRITE_MODE_AUTO:
+        return "当前是「只提议」模式，不能写库。请调用 propose_photo_change，让用户点采纳。"
+    if session.db is None:
+        return "写库失败：没有数据库会话"
+    proposed = propose_photo_change_delta(
+        session,
+        action=action,
+        place_name=place_name,
+        poi_name=poi_name,
+        photo_id=photo_id,
+        filename=filename,
+        item_id=item_id,
+        visit_stop_id=visit_stop_id,
+    )
+    if not session.suggestions:
+        return proposed
+    delta = session.suggestions[-1]
+    try:
+        trip_editor.apply_delta(session.db, session.trip_id, delta)
+    except Exception as exc:
+        logger.exception("apply_photo_change tool failed")
+        session.suggestions.pop()
+        return f"写库失败：{exc}"
+    session.suggestions.pop()
+    session.applied.append(delta)
+    return f"已更新照片归属：{delta.action}"
+
+
 def check_itinerary_facts(
     session: TripChatSession,
     *,
@@ -638,7 +681,33 @@ def build_tools(session: TripChatSession) -> list[Callable]:
         """把用户粘贴的攻略文本解析成新增景点建议。只解析这段文本，不要搜索网页。"""
         return parse_guide_into_deltas(session, text, day_index=day_index)
 
-    tools: list[Callable] = [propose_delta, check_facts, parse_guide]
+    def propose_photo_change(
+        action: str,
+        place_name: str = "",
+        poi_name: str = "",
+        photo_id: str = "",
+        filename: str = "",
+        item_id: str = "",
+        visit_stop_id: str = "",
+    ) -> str:
+        """提出照片归属或计划外停留的修改建议，不写数据库。
+        action: dismiss_visit_stop / reassign_photo / unassign_photo / attach_visit_stop。
+        去掉计划外停留用 dismiss_visit_stop + place_name（如望江公园），不要当成行程节点删除。
+        改挂：place_name=照片现在在哪（停留名或「未归类」），poi_name=要挂到的计划节点。
+        用户说「这张」且上下文有 current_photo_id 时，place_name 可空。
+        不要向用户要文件名。禁止猜测 GPS 或看图认地。"""
+        return propose_photo_change_delta(
+            session,
+            action=action,
+            place_name=place_name,
+            poi_name=poi_name,
+            photo_id=photo_id,
+            filename=filename,
+            item_id=item_id,
+            visit_stop_id=visit_stop_id,
+        )
+
+    tools: list[Callable] = [propose_delta, check_facts, parse_guide, propose_photo_change]
     if session.write_mode == WRITE_MODE_AUTO:
         def apply_delta(
             action: str,
@@ -670,6 +739,30 @@ def build_tools(session: TripChatSession) -> list[Callable]:
             )
 
         tools.append(apply_delta)
+
+        def apply_photo_change_tool(
+            action: str,
+            place_name: str = "",
+            poi_name: str = "",
+            photo_id: str = "",
+            filename: str = "",
+            item_id: str = "",
+            visit_stop_id: str = "",
+        ) -> str:
+            """用户已授权自动采纳时，写入照片归属或去掉计划外停留。参数与 propose_photo_change 相同。只提议模式不要调用。"""
+            return apply_photo_change(
+                session,
+                action=action,
+                place_name=place_name,
+                poi_name=poi_name,
+                photo_id=photo_id,
+                filename=filename,
+                item_id=item_id,
+                visit_stop_id=visit_stop_id,
+            )
+
+        apply_photo_change_tool.__name__ = "apply_photo_change"
+        tools.append(apply_photo_change_tool)
     return tools
 
 
@@ -708,6 +801,11 @@ def run_trip_chat(
     progress: Callable[[str, str], None] | None = None,
 ) -> TripChatOut:
     context = build_trip_context(trip, body.context)
+    if db is not None:
+        try:
+            context.update(load_photo_context(db, trip.id))
+        except Exception:
+            logger.exception("load photo chat context failed")
     write_mode = getattr(body, "write_mode", None) or WRITE_MODE_PROPOSE
     if write_mode not in {WRITE_MODE_PROPOSE, WRITE_MODE_AUTO}:
         write_mode = WRITE_MODE_PROPOSE

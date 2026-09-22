@@ -3,6 +3,7 @@ import { photosForItem, photosForVisitStop } from "@/lib/photos";
 
 export type SpineLane = "axis" | "above" | "below";
 export type SpineBeadKind = "plan" | "visit" | "unsorted";
+export type UnsortedScope = "day" | "trip" | "gap";
 
 export interface SpineBead {
   id: string;
@@ -13,8 +14,22 @@ export interface SpineBead {
   thumbUrl: string | null;
   itemId?: string;
   visitStopId?: string;
-  unsortedScope?: "day" | "trip";
+  unsortedScope?: UnsortedScope;
+  photoIds?: string[];
   lane: SpineLane;
+}
+
+export interface RecallGhostPin {
+  id: string;
+  kind: "plan" | "visit";
+  chapterKey: string;
+  place_name: string;
+  lat: number;
+  lng: number;
+  count: number;
+  thumbUrl: string | null;
+  itemId?: string;
+  visitStopId?: string;
 }
 
 export interface RecallChapter {
@@ -175,6 +190,10 @@ export function photosForBead(
   chapterKey: string,
   confirmedIds: Set<string>,
 ): PhotoAsset[] {
+  if (bead.photoIds && bead.photoIds.length > 0) {
+    const ids = new Set(bead.photoIds);
+    return (photos ?? []).filter((photo) => ids.has(photo.id));
+  }
   if (bead.kind === "plan" && bead.itemId) return photosForItemOnChapter(photos, bead.itemId, chapterKey);
   if (bead.kind === "visit" && bead.visitStopId) {
     return photosForVisitStop(photos, bead.visitStopId).filter((photo) => {
@@ -184,6 +203,115 @@ export function photosForBead(
   }
   if (bead.unsortedScope === "trip") return photosForTripUnsorted(photos, confirmedIds);
   return photosForDayUnsorted(photos, chapterKey, confirmedIds);
+}
+
+function sortByCaptured(photos: PhotoAsset[]): PhotoAsset[] {
+  return [...photos].sort((left, right) => {
+    const leftMs = left.captured_at ? Date.parse(left.captured_at) : Number.POSITIVE_INFINITY;
+    const rightMs = right.captured_at ? Date.parse(right.captured_at) : Number.POSITIVE_INFINITY;
+    const leftSafe = Number.isNaN(leftMs) ? Number.POSITIVE_INFINITY : leftMs;
+    const rightSafe = Number.isNaN(rightMs) ? Number.POSITIVE_INFINITY : rightMs;
+    if (leftSafe !== rightSafe) return leftSafe - rightSafe;
+    return left.id.localeCompare(right.id);
+  });
+}
+
+export interface RecallPhotoFrame {
+  photo: PhotoAsset;
+  bead: SpineBead;
+  indexInBead: number;
+  beadCount: number;
+}
+
+export function buildDayPhotoFrames(
+  beads: SpineBead[],
+  photos: PhotoAsset[] | undefined,
+  chapterKey: string,
+  confirmedIds: Set<string>,
+): RecallPhotoFrame[] {
+  const frames: RecallPhotoFrame[] = [];
+  for (const bead of beads) {
+    const shots = sortByCaptured(photosForBead(bead, photos, chapterKey, confirmedIds));
+    shots.forEach((photo, indexInBead) => {
+      frames.push({ photo, bead, indexInBead, beadCount: shots.length });
+    });
+  }
+  return frames;
+}
+
+export function playableRecallBeads(beads: SpineBead[]): SpineBead[] {
+  return beads.filter((bead) => bead.kind === "plan" || bead.kind === "visit");
+}
+
+export function gapCaption(beforeLabel: string | null, afterLabel: string | null): string {
+  if (beforeLabel && afterLabel) return `${beforeLabel} → ${afterLabel}`;
+  if (afterLabel) return `${afterLabel}之前`;
+  if (beforeLabel) return `${beforeLabel}之后`;
+  return "待挂地点";
+}
+
+function makeGapBead(
+  index: number,
+  shots: PhotoAsset[],
+  beforeLabel: string | null,
+  afterLabel: string | null,
+): SpineBead {
+  return {
+    id: `unsorted:gap:${index}`,
+    kind: "unsorted",
+    label: "空档",
+    caption: gapCaption(beforeLabel, afterLabel),
+    photoCount: shots.length,
+    thumbUrl: firstThumb(shots),
+    unsortedScope: "gap",
+    photoIds: shots.map((photo) => photo.id),
+    lane: "axis",
+  };
+}
+
+export function interleaveUnsortedGaps(
+  placed: { sortMs: number; bead: SpineBead }[],
+  unsorted: PhotoAsset[],
+): SpineBead[] {
+  if (unsorted.length === 0) return placed.map((row) => row.bead);
+  if (placed.length === 0) {
+    return [
+      {
+        id: "unsorted:day",
+        kind: "unsorted",
+        label: "未归类",
+        caption: "待挂地点",
+        photoCount: unsorted.length,
+        thumbUrl: firstThumb(unsorted),
+        unsortedScope: "day",
+        photoIds: unsorted.map((photo) => photo.id),
+        lane: "axis",
+      },
+    ];
+  }
+
+  const buckets: PhotoAsset[][] = Array.from({ length: placed.length + 1 }, () => []);
+  for (const photo of unsorted) {
+    const capturedMs = parseIsoMs(photo.captured_at);
+    let index = placed.length;
+    if (capturedMs != null) {
+      const hit = placed.findIndex((row) => capturedMs < row.sortMs);
+      if (hit >= 0) index = hit;
+    }
+    buckets[index].push(photo);
+  }
+
+  const beads: SpineBead[] = [];
+  for (let index = 0; index <= placed.length; index += 1) {
+    const shots = buckets[index];
+    if (shots.length > 0) {
+      const beforeLabel = index === 0 ? null : placed[index - 1].bead.label;
+      const afterLabel = index === placed.length ? null : placed[index].bead.label;
+      beads.push(makeGapBead(index, shots, beforeLabel, afterLabel));
+    }
+    if (index < placed.length) beads.push(placed[index].bead);
+  }
+  return beads;
 }
 
 function planItems(days: DayView[]): { day: DayView; item: ItineraryItem }[] {
@@ -255,26 +383,17 @@ export function buildRecallSpine(input: {
   rows.sort((a, b) => a.sortMs - b.sortMs || a.planFirst - b.planFirst);
 
   let visitOrdinal = 0;
-  const beads = rows.map((row) => {
-    if (row.bead.kind !== "visit") return row.bead;
+  const placed = rows.map((row) => {
+    if (row.bead.kind !== "visit") return { sortMs: row.sortMs, bead: row.bead };
     const lane: SpineLane = visitOrdinal % 2 === 0 ? "above" : "below";
     visitOrdinal += 1;
-    return { ...row.bead, lane };
+    return { sortMs: row.sortMs, bead: { ...row.bead, lane } };
   });
 
-  const dayUnsorted = photosForDayUnsorted(photos, chapterKey, confirmedIds);
-  if (dayUnsorted.length > 0) {
-    beads.push({
-      id: "unsorted:day",
-      kind: "unsorted",
-      label: "未归类",
-      caption: "待挂地点",
-      photoCount: dayUnsorted.length,
-      thumbUrl: firstThumb(dayUnsorted),
-      unsortedScope: "day",
-      lane: "axis",
-    });
-  }
+  const beads = interleaveUnsortedGaps(
+    placed,
+    photosForDayUnsorted(photos, chapterKey, confirmedIds),
+  );
 
   const tripUnsorted = photosForTripUnsorted(photos, confirmedIds);
   if (isLastChapter && tripUnsorted.length > 0) {
@@ -286,6 +405,7 @@ export function buildRecallSpine(input: {
       photoCount: tripUnsorted.length,
       thumbUrl: firstThumb(tripUnsorted),
       unsortedScope: "trip",
+      photoIds: tripUnsorted.map((photo) => photo.id),
       lane: "axis",
     });
   }
@@ -296,4 +416,63 @@ export function buildRecallSpine(input: {
 export function planDayIndexForChapter(days: DayView[], chapterKey: string): number {
   const index = days.findIndex((day) => dayKey(day.date) === chapterKey);
   return index >= 0 ? index : 0;
+}
+
+export function buildOtherDayGhosts(input: {
+  activeKey: string | null;
+  chapters: RecallChapter[];
+  days: DayView[];
+  photos: PhotoAsset[];
+  confirmedStops: VisitStop[];
+}): RecallGhostPin[] {
+  const { activeKey, chapters, days, photos, confirmedStops } = input;
+  if (!activeKey || chapters.length < 2) return [];
+  const lastKey = chapters[chapters.length - 1]?.key ?? null;
+  const pins: RecallGhostPin[] = [];
+  const seenItems = new Set<string>();
+
+  for (const day of days) {
+    for (const item of day.items ?? []) {
+      if (seenItems.has(item.id) || item.lat == null || item.lng == null) continue;
+      seenItems.add(item.id);
+      if (photosForItemOnChapter(photos, item.id, activeKey).length > 0) continue;
+      const other = chapters.find(
+        (chapter) =>
+          chapter.key !== activeKey && photosForItemOnChapter(photos, item.id, chapter.key).length > 0,
+      );
+      if (!other) continue;
+      const shots = photosForItemOnChapter(photos, item.id, other.key);
+      pins.push({
+        id: `ghost:item:${item.id}`,
+        kind: "plan",
+        chapterKey: other.key,
+        place_name: item.poi_name,
+        lat: item.lat,
+        lng: item.lng,
+        count: shots.length,
+        thumbUrl: firstThumb(shots),
+        itemId: item.id,
+      });
+    }
+  }
+
+  for (const stop of confirmedStops) {
+    if (stop.status !== "confirmed" || stop.lat == null || stop.lng == null) continue;
+    const key = visitStopChapterKey(stop) ?? lastKey;
+    if (!key || key === activeKey) continue;
+    const shots = photosForVisitStop(photos, stop.id);
+    pins.push({
+      id: `ghost:visit:${stop.id}`,
+      kind: "visit",
+      chapterKey: key,
+      place_name: stop.place_name,
+      lat: stop.lat,
+      lng: stop.lng,
+      count: shots.length || stop.photo_count,
+      thumbUrl: firstThumb(shots) ?? firstThumb(stop.photos),
+      visitStopId: stop.id,
+    });
+  }
+
+  return pins;
 }

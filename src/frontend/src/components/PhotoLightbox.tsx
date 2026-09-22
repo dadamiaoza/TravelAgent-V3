@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { PhotoAsset } from "@/lib/types";
+import { useTripStore } from "@/stores/tripStore";
 
 export default function PhotoLightbox({
   photos,
@@ -7,6 +8,7 @@ export default function PhotoLightbox({
   alt,
   onClose,
   onIndexChange,
+  hint,
   items,
   onReassign,
   onUnassign,
@@ -17,6 +19,7 @@ export default function PhotoLightbox({
   alt?: string;
   onClose: () => void;
   onIndexChange?: (index: number) => void;
+  hint?: string;
   items?: { id: string; label: string }[];
   onReassign?: (photoId: string, itemId: string) => void;
   onUnassign?: (photoId: string) => void;
@@ -27,6 +30,13 @@ export default function PhotoLightbox({
   const currentItemId = photo?.assignment?.item_id ?? "";
   const otherItems = (items ?? []).filter((item) => item.id !== currentItemId);
   const canCorrect = Boolean(onReassign || onUnassign || onDelete);
+  const setFocusPhoto = useTripStore((s) => s.setFocusPhoto);
+
+  useEffect(() => {
+    if (!photo?.id) return;
+    setFocusPhoto(photo.id);
+    return () => setFocusPhoto(null);
+  }, [photo?.id, setFocusPhoto]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -66,8 +76,10 @@ export default function PhotoLightbox({
         />
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-white">
           <p>
-            {alt ? `${alt} · ` : ""}
-            {index + 1} / {photos.length}
+            {alt ? `${alt}` : ""}
+            {hint
+              ? `${alt ? " · " : ""}${hint}`
+              : `${alt ? " · " : ""}${index + 1} / ${photos.length}`}
           </p>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {photos.length > 1 && (

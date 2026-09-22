@@ -333,6 +333,7 @@ class ChatOut(BaseModel):
 class TripChatContext(BaseModel):
     day_index: int | None = None
     item_id: UUID | None = None
+    photo_id: UUID | None = None
 
 
 class TripChatRequest(BaseModel):
@@ -360,6 +361,9 @@ class ItineraryDeltaPayload(BaseModel):
     lat: float | None = None
     lng: float | None = None
     item_ids: list[UUID] | None = None
+    photo_id: UUID | None = None
+    photo_ids: list[UUID] | None = None
+    visit_stop_id: UUID | None = None
 
 
 class ItineraryDelta(BaseModel):

@@ -237,6 +237,12 @@ def apply_delta(db: Session, trip_id: UUID, delta: ItineraryDelta) -> Trip:
             dest_seq=target.seq,
         )
 
+    from app.services.photo_chat import PHOTO_ACTIONS, apply_photo_delta
+
+    if action in PHOTO_ACTIONS:
+        apply_photo_delta(db, trip_id, delta)
+        return _get_trip(db, trip_id)
+
     raise HTTPException(status_code=400, detail=f"Unsupported delta action: {action}")
 
 

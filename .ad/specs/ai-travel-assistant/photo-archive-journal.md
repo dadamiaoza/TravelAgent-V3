@@ -282,11 +282,14 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 | PD1 | 回忆抽屉两态：当天节点脊 + 照片墙 | PC3 | 不点地图钉也能拉开看到当天 Day+地点；点珠地图聚焦 | ✅ 完成 |
 | PD2 | 行程/回忆互链：文案、计划 Day 标注、`/map?item=` 聚焦同一节点 | PD1 | 两边能跳转；珠上能看出计划内/计划外 | ✅ 完成 |
 | PC4 | 邻图带动无 EXIF（低置信，仍确认） | PC2 | 无 GPS 图不自动成停留 | ✅ 完成 |
+| PD3 | 类型 B 按拍摄时间插空档；挂错的计划外停留可去掉 | PD1 | 空档不写成地点；去掉停留后照片回未归类、计划不变 | ✅ 完成 |
+| 对话改归属 | Trip Assistant 提议改 `photo_assignments` / 去掉停留 | PD3 | 默认只提议；不猜 GPS | ✅ 完成 |
+| PD4 | 回忆页轨迹回放 + 灯箱按当天脊连翻 | PD1 | 回放走停留不连假线；灯箱跨地点时地图跟着走 | ✅ 完成 |
 | PB1 | 预训练 YOLO 只做 `person` 检测 + 手动画框命名 | PA5 | 合照能标出几个人；用户给框起名；原图仍只一份 | ⬜ 有意推迟 |
 | PB2 | 特征向量聚类 + 用户给「人物组」命名 | PB1 | 同一人多张照片聚成一组，不自动叫「妈妈」 | ⬜ 有意推迟 |
 | PB3 | 行程内人物关系（家人/同伴），不建账号级社交图 | PB2 | 用户手拉关系；共同出镜不自动断言 | ⬜ 有意推迟 |
 
-**建议实现顺序：** PA1–PA7、PC1–PC4、PD1–PD2 已完成。下一步 PB1。
+**建议实现顺序：** PA1–PA7、PC1–PC4、PD1–PD4、对话改归属已完成。下一步：PB1。
 
 ### 4.1 PA1 已落地的文件
 
@@ -316,7 +319,7 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 
 行程详情页可以批量上传 JPEG/PNG/WebP（HEIC 返回 415）。文件落到 `src/backend/uploads/{trip_id}/{photo_id}/`，同一行程相同 SHA-256 不存第二份原图。EXIF 只读 GPS / `DateTimeOriginal`；没有就不填 `captured_at`。匹配是 Python 打分（WGS-84→GCJ-02），不调 LLM。高置信度自动挂；中置信度挂上待确认；微信类下载图进待确认。节点可「上传到这里」（`manual` + 已确认）。删节点只把 `item_id` SET NULL，原图还在。
 
-页面：`/trips/:id` 规划路线图 + 节点徽章 + 底部上传/待确认/**建议停留**；Tab 为 **行程 | 回忆**（无照片 Tab）。行程页说明这是计划并链到回忆；节点可「在回忆中看」。点开照片可改挂到其他计划点、从这里拿掉、或删除原图。同批无 EXIF 若夹在已定位原图之间，待确认会出现「邻图建议：…（需确认）」，分数 ≤0.55，确认前不进回忆实心钉。`/trips/:id/map` 回忆页：按拍摄日成章；计划淡底是对照；链回行程上传。计划外 GPS 簇需用户确认后才写入 `visit_stops`，不改 `itinerary_items`。
+页面：`/trips/:id` 规划路线图 + 节点徽章 + 底部上传/待确认/**建议停留**；Tab 为 **行程 | 回忆**（无照片 Tab）。行程页说明这是计划并链到回忆；节点可「在回忆中看」。点开照片可改挂到其他计划点、从这里拿掉、或删除原图。同批无 EXIF 若夹在已定位原图之间，待确认会出现「邻图建议：…（需确认）」，分数 ≤0.55，确认前不进回忆实心钉。行程侧栏可以说「去掉望江公园这个停留」「把望江公园的照片改挂到岳麓山」「未归类的挂到岳麓山」，或先点开照片再说「改挂到岳麓山」。助手只出建议卡片，点采纳才写库，不猜 GPS，也不用报文件名。`/trips/:id/map` 回忆页：按拍摄日成章；当天实心钉，其他拍摄日半透明小钉（可关「显示其他拍摄日」）；换拍摄日只框当天，点该开关才把多天放进同一视野；可「回放足迹」一站一站走（不连假路线）；灯箱按当天脊顺序连翻，跨地点时地图跟着走。计划淡底是对照。有拍摄时间但未挂地点的照片按时间插在两珠之间的「空档」，不写成地点。计划外停留（有照片也能）可在抽屉或行程页去掉，照片回未归类，不改 `itinerary_items`。计划外 GPS 簇需用户确认后才写入 `visit_stops`。
 
 演示行程：`a166c670-8a79-480c-9d66-1fabcc51b652`（武功山 2024-07-31）是照片夹具，节点没有 visit_tips；正式规划行程请用生成出来的那条。
 
@@ -326,7 +329,7 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 
 1. 行程按天、按节点存储，节点有 `lat` / `lng` / 计划时间。  
 2. 生成 Job：`fill → route → verify`，排路是 `optimize_itinerary()` 函数。  
-3. 行程页可编辑；侧栏 Trip Assistant 可提议 Delta（第一期照片改挂走普通按钮即可，不必接聊天）。  
+3. 行程页可编辑；侧栏 Trip Assistant 可提议改计划，也可提议改照片归属 / 去掉计划外停留（人点采纳）。  
 4. 数据库迁移到 `0018`（`photo_assets` / `photo_assignments` / `photo_jobs`）。
 
 ---
@@ -344,6 +347,10 @@ Docker 里只有 Postgres，不加 MinIO。演示 200 张 JPEG 可以接受；�
 | 2026-09-12 | 上传 422 + 同名路 | `pytest tests/unit/test_geocode_resolve.py tests/unit/test_photo_upload.py tests/test_route_optimizer.py -q --noconftest` | 42 passed | 见 [2026-09-12 复盘](../../retrospect/2026-09-12_Photo-Upload-422-and-Huangxing-Geocode.md) |
 | 2026-09-12 | PC1–PC3 聚类/逆地理 | `python -m pytest tests/unit/test_photo_*.py tests/unit/test_geo_*.py tests/unit/test_llm.py tests/test_route_optimizer.py tests/test_merge.py -q --noconftest` | 70 passed | 另：`npx tsc -b`；确认 visit_stop 后行程节点数不变 |
 | 2026-09-13 | PC4 邻图 | `python -m pytest tests/unit/test_photo_neighbor.py tests/unit/test_photo_match.py -q --noconftest`；`npx tsc -b`；武功山夹具混传 GPS+无 EXIF | 17 邻图+打分 passed；前端 tsc 通过；job 成功，C 为 `batch_neighbor` 0.55 sandwich、`captured_at=None`、`is_confirmed=false` | 同批邻图抄地点，不调多模态 |
+| 2026-09-13 | PD3 空档 + 去掉停留 | `npx tsc -b`（`src/frontend`） | 通过 | 类型 B 按时间插空档；confirmed 停留有照片也可 dismiss |
+| 2026-09-13 | 对话改归属 | `python -m pytest tests/unit/test_photo_chat.py tests/unit/test_trip_chat.py -q --noconftest`；`npx tsc -b` | 24 passed；前端 tsc 通过 | 只提议；采纳写 assignment / dismiss 停留；不猜 GPS |
+| 2026-09-13 | 对话改挂入口 | 同上 | 按地点/未归类/当前打开的照片指定，不靠文件名 | |
+| 2026-09-13 | PD4 回放+连翻 | `npx tsc -b`（`src/frontend`） | 通过 | 回忆页回放停留；灯箱按当天脊连翻；不连假路线 |
 
 以后每次实现，至少记录：
 
@@ -366,9 +373,9 @@ MVP 文档里的「10 张里 8 张自动挂对」是**演示愿望**，不是 py
 ### 7.2 有意推迟（产品方案阶段三及以后）
 
 1. **视觉认地标（PV1）：** 以后可选增强，**不能当 PC4 主路径**。必须：只在当天几个候选里选、可关闭、低置信仍给人、单独验收。PC4 已落地且未调多模态。不和「图片攻略解析」混为一谈。  
-2. **对话改归属：** Trip Assistant 增加工具（例如改 `photo_assignments`），默认只提议。  
+2. **对话改归属：** ✅ Trip Assistant `propose_photo_change` 提议改 `photo_assignments`、去掉 `visit_stops`，人点采纳。不猜 GPS。  
 3. **对象存储、分享剥 EXIF、关闭视觉分析开关。**  
-4. **游记 / 轨迹回放 / 按拍摄顺序重写计划。** 实际到访已收口到 PC1–PC3：确认后写 `visit_stops`，不覆盖 `itinerary_items`。  
+4. **游记** 另开需求。轨迹回放 + 灯箱连翻已落地：回放只走停留，不连假路线，不改计划 `seq`。  
 5. **人物检测、聚类、关系图：** 摘要见 [照片归档与回忆.md](../照片归档与回忆.md) §7；当下落地见第 11 节，不要插入 PA1。
 
 ### 7.3 下一步
@@ -433,7 +440,10 @@ MVP 文档里的「10 张里 8 张自动挂对」是**演示愿望**，不是 py
 | 2026-09-12 | PD1 | 回忆章节改拍摄日：跨天/计划外日期单独成章，不改 itinerary | `npx tsc -b` | 未提交 |
 | 2026-09-13 | PD2 | 定位：同一趟旅行两种模式；行程/回忆互链、珠上计划 Day、`/map?item=` | `npx tsc -b` | 未提交 |
 | 2026-09-13 | PC4 | 同批邻图：连续段抄锚点地点，`batch_neighbor` 封顶 0.55，待确认文案；不写 captured_at、不调多模态 | 邻图+打分 17 passed；tsc 通过；武功山夹具混传 API 验证 sandwich | 未提交 |
-| 2026-09-13 | 回忆纠错 | 点开照片可改挂 / 从这里拿掉 / 删除；不改计划节点 | `npx tsc -b` | 未提交 |
+| 2026-09-13 | 回忆纠错 | 点开照片可改挂 / 从这里拿掉 / 删除；不改计划节点 | `npx tsc -b` | 已提交 4f7d4fe |
+| 2026-09-13 | 回忆淡钉 | 其他拍摄日半透明小钉；开关「显示其他拍摄日」默认开 | `npx tsc -b` | 未提交 |
+| 2026-09-13 | 回忆视野 | 换拍摄日只框当天钉；点「显示其他拍摄日」才把多天纳入视野 | `npx tsc -b` | 未提交 |
+| 2026-09-13 | PD3 | 类型 B 按拍摄时间插空档；计划外停留有照片也可去掉 | `npx tsc -b` | 未提交 |
 
 ---
 
@@ -477,7 +487,7 @@ MVP 文档里的「10 张里 8 张自动挂对」是**演示愿望**，不是 py
 
 - 不另做一张可编辑 Day 列表当「真实行程」。  
 - 不把无确认的推断钉成实心关卡。  
-- 不用照片顺序覆盖计划 `seq` / 规划折线。实际连线另画一层。
+- 不用照片顺序覆盖计划 `seq` / 规划折线。不按拍摄时间另画「实际路线」（没有真实轨迹）。
 
 视觉上仍像关卡图：实现上还是现有 `TripMap`，不是新地图引擎。
 
@@ -512,6 +522,8 @@ MVP 文档里的「10 张里 8 张自动挂对」是**演示愿望**，不是 py
   PD1：回忆抽屉当天节点脊 / 照片墙
   PD2：行程/回忆互链与定位文案
   PC4：同批无 EXIF 邻图带动（仍须确认；未调多模态）
+  对话改归属：propose_photo_change 只提议，人点采纳
+  PD4：回忆页回放足迹 + 灯箱当天连翻
 
 下一步（见执行计划）
   PB1：预训练 person 检测 + 用户给框起名
