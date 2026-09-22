@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { buildStarterPrompts, starterPlaceholder } from "@/lib/chatStarters";
 import { useTrip } from "@/hooks/useTrip";
+import { useTripPhotos } from "@/hooks/useTripPhotos";
 import { useTripStore } from "@/stores/tripStore";
 import type { ItineraryDelta, Trip, TripChatWriteMode } from "@/lib/types";
 
@@ -48,14 +50,6 @@ function isPhotoDelta(delta: ItineraryDelta): boolean {
   );
 }
 
-
-const STARTER_PROMPTS = [
-  "删掉雷峰塔",
-  "第二天会下雨吗",
-  "把雷峰塔换成灵隐寺",
-  "挪到第 2 天",
-  "按这段攻略加点：…",
-];
 
 function deltaActionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action;
@@ -564,9 +558,11 @@ async function streamTripChat(
 export default function ChatPanel({ tripId }: { tripId: string }) {
   const queryClient = useQueryClient();
   const { data: trip } = useTrip(tripId);
+  const { photos } = useTripPhotos(tripId);
   const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
   const focusItemId = useTripStore((s) => s.focusItemId);
   const focusPhotoId = useTripStore((s) => s.focusPhotoId);
+  const dirtyTrip = useTripStore((s) => s.dirtyTrip);
   const applyServerTrip = useTripStore((s) => s.applyServerTrip);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -579,9 +575,20 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
 
-  const focusName = trip?.days
-    ?.flatMap((day) => day.items ?? [])
-    .find((item) => item.id === focusItemId)?.poi_name;
+  const tripView = dirtyTrip?.id === tripId ? dirtyTrip : trip;
+  const days = tripView?.days ?? [];
+  const focusName = days.flatMap((day) => day.items ?? []).find((item) => item.id === focusItemId)?.poi_name;
+  const focusedPhoto = focusPhotoId
+    ? (photos.data ?? []).find((photo) => photo.id === focusPhotoId) ?? null
+    : null;
+  const starterPrompts = buildStarterPrompts({
+    days,
+    selectedDayIndex,
+    focusItemId,
+    focusPhotoId,
+    focusedPhoto,
+  });
+  const composerPlaceholder = starterPlaceholder(starterPrompts, Boolean(focusPhotoId));
   const contextLabel = `当前关注点：Day ${selectedDayIndex + 1}${focusName ? ` · ${focusName}` : ""}${focusPhotoId ? " · 已打开一张照片" : ""}`;
 
   useEffect(() => {
@@ -761,10 +768,11 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
           <div className="flex h-full flex-col justify-center px-3 py-4">
             <p className="mb-2 text-[12px] text-ink-tertiary">可以这样说</p>
             <div className="flex flex-col items-start gap-1.5">
-              {STARTER_PROMPTS.map((prompt) => (
+              {starterPrompts.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
+                  title={prompt}
                   onClick={() => {
                     setInput(prompt);
                     inputRef.current?.focus();
@@ -804,7 +812,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
                 void handleSend();
               }
             }}
-            placeholder="例如：删掉雷峰塔 / 第二天会下雨吗"
+            placeholder={composerPlaceholder}
             className="chat-composer-input w-full resize-none bg-transparent px-3 pt-3 text-[13px] leading-5 text-ink outline-none placeholder:text-ink-tertiary disabled:cursor-not-allowed disabled:opacity-60"
           />
           <div className="flex items-center justify-between gap-2 px-2 pb-1">
