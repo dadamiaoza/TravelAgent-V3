@@ -17,6 +17,10 @@ def test_itinerary_gen_does_not_bind_travel_time_tool() -> None:
     names = [_tool_name(tool) for tool in ITINERARY_GEN_TOOLS]
     assert names == ["search_attractions"]
     assert "get_travel_time" not in ITINERARY_GEN_SYSTEM_PROMPT
+    assert "一律填 0" not in ITINERARY_GEN_SYSTEM_PROMPT
+    assert "travel_estimate_source" in ITINERARY_GEN_SYSTEM_PROMPT
+    assert "day_continuity_note" in ITINERARY_GEN_SYSTEM_PROMPT
+    assert "停留" in ITINERARY_GEN_SYSTEM_PROMPT
 
 
 def test_draft_calls_optimize_itinerary_directly() -> None:

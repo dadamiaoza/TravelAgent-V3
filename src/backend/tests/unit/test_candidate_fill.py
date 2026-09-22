@@ -79,6 +79,35 @@ def test_fill_with_candidates_copies_visit_fields() -> None:
     assert item["best_time"] == "morning"
     assert item["cost_note"] == "门票免费"
     assert item["visit_tips"] == "沿湖慢走，避开中午阳光。"
+    assert item["travel_minutes_from_prev"] == 0
+    assert "travel_estimate_source" not in item
+
+
+def test_fill_with_candidates_keeps_guide_leg_separate_from_stay() -> None:
+    entities = [
+        {"poi_name": "西湖", "day_index": 1, "seq": 1, "suggested_duration_h": 3},
+        {
+            "poi_name": "雷峰塔",
+            "day_index": 1,
+            "seq": 2,
+            "suggested_duration_h": 1.5,
+            "travel_minutes_from_prev": 40,
+        },
+    ]
+    draft = itinerary_service.fill_itinerary_draft(
+        destination="杭州",
+        city="杭州",
+        start_date=date(2030, 1, 1),
+        end_date=date(2030, 1, 1),
+        selected_entities=entities,
+    )
+    first, second = draft["days"][0]["items"]
+    assert first["duration_h"] == 3
+    assert first["travel_minutes_from_prev"] == 0
+    assert second["duration_h"] == 1.5
+    assert second["travel_minutes_from_prev"] == 40
+    assert second["travel_estimate_minutes"] == 40
+    assert second["travel_estimate_source"] == "guide"
 
 
 def test_fill_without_candidates_calls_planner() -> None:

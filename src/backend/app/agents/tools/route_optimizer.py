@@ -1,12 +1,13 @@
-"""路线优化工具 — 地理编码 + 路径规划 + POI 重排序。
+"""路线优化工具 — 地理编码 + 路径计时 + 有条件的最近邻降级。
 
-Step 7.6 升级：从"只填坐标"升级为"真实路径排序"。
-- 高德 Direction API 构建旅行时间矩阵
-  - 城市模式：按距离自动选 walking/transit
-  - 景区模式：只使用 walking/driving，不虚构索道/接驳车路线
-- 贪心最近邻重排序（每日第一个 POI 固定）
-- 回填真实 travel_minutes_from_prev
-- API 不可用时降级到 Haversine 距离估算
+默认信任 fill 给出的顺序（LLM / 候选），只在顺序无效、同日跨城、
+明显绕路或高德大面积失败时才退回最近邻。日程耗时优先采用高德；
+高德失败时按攻略路段 → LLM 估计 → Haversine 采纳，不把三种来源取平均。
+
+高德 Direction 只请求最终顺序的相邻路段（约 N-1 次/天）。排序和 +50% 基线
+只用 Haversine，不再构建 N×(N-1) 高德矩阵。5 个点的全量矩阵曾是 20 次请求。
+见 docs/retrospectives/development-notes.md §23、§28。知识地图 §11 里的有向
+旅行时间矩阵是当时的做法，不能再用来决定顺序或计算降级基线。
 """
 import json
 import logging
@@ -43,6 +44,17 @@ _SCENIC_UNVERIFIED_MODES = {"hiking", "shuttle", "cable_car"}
 
 # 同城一日点之间不应跳到外省同名路；跨城请写 POI 自己的 city
 _CROSS_CITY_JUMP_M = 250_000
+
+# fill 总耗时相对最近邻基线 ≥ +50%，且绝对多出 ≥ 30 分钟，才降级重排
+_NN_RELATIVE_LIMIT = 1.5
+_NN_ABSOLUTE_EXCESS_MIN = 30
+
+# 高德路段未核验达到一半（含）时，认为大面积不可达
+_AMAP_UNVERIFIED_LEG_RATIO = 0.5
+
+# 估计值与采用值同时满足绝对差和相对差才提示，避免短途噪声
+_DISCREPANCY_ABS_MIN = 15
+_DISCREPANCY_REL = 0.40
 
 
 def _geocode_with_fallback(
@@ -92,32 +104,41 @@ def _geocode_with_fallback(
         return accepted
     return geocode_poi(name, city=preferred_city)
 
-def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
-    """对行程中的 POI 进行地理编码、路径优化排序和交通时间填充。
+def optimize_itinerary(
+    itinerary_json: str,
+    reorder: bool | None = None,
+    respect_fill_order: bool = True,
+) -> str:
+    """地理编码并填充路段时间。默认保留 fill 顺序，必要时降级最近邻。
 
     流程：
-    1. 地理编码所有 POI → 填 lat/lng/city
-    2. 尝试构建真实旅行时间矩阵（高德 Direction API）
-       - 每对 POI 按 Haversine 距离自动选 walking 或 transit
-       - 任一 API 调用失败 → 该日整体降级
-    3. 贪心最近邻重排序（每日第一个 POI 固定为起点）
-    4. 回填 travel_minutes_from_prev（真实或估算值）
-    5. 更新 seq 序号、移除内部 city 字段
+    1. 地理编码所有 POI → 填 lat/lng
+    2. respect_fill_order=True（默认）时按当前顺序计时，不做最近邻重排
+    3. 顺序无效、同日跨城跳跃、总耗时明显差于最近邻，或高德路段大面积失败时，
+       整日降级为最近邻，并标记 order_source=nearest_neighbor
+    4. reorder=False 时锁定调用方顺序（不因绕路降级）
+    5. respect_fill_order=False 或 reorder=True 时直接最近邻
+    6. 日程分钟优先高德；失败则攻略路段 → LLM 估计 → Haversine
+    7. 相邻日首尾过远只写 day_boundary_warning，不把景点挪到另一天
 
     Args:
         itinerary_json: JSON 字符串，结构为
             {"days": [{"day_index": 1, "theme": "...", "items": [
                 {"seq": 1, "poi_name": "...", "duration_h": 0.0, "travel_minutes_from_prev": 0}
             ]}]}
+        reorder: False 锁定顺序；True 强制最近邻；省略时由 respect_fill_order 决定。
+        respect_fill_order: 生产路径默认 True。False 表示显式重排（如 reoptimize）。
 
     Returns:
-        JSON 字符串，每个 item 新增 lat/lng，travel_minutes_from_prev 已更新，
-        seq 已按优化后的顺序重新编号。
+        JSON 字符串。每个 item 含 lat/lng、采用的 travel_minutes_from_prev，
+        以及 travel_amap_minutes / travel_estimate_* / travel_discrepancy。
+        每天有 order_source=fill|nearest_neighbor。
     """
     itinerary = json.loads(itinerary_json)
     # 行程级城市作为全局兜底；单个 POI 可用自己的 city 覆盖
     fallback_city = itinerary.get("city", "")
     amap_available = bool(settings.amap_api_key)
+    policy = _resolve_order_policy(reorder, respect_fill_order)
 
     for day in itinerary.get("days", []):
         items = day.get("items", [])
@@ -126,6 +147,15 @@ def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
 
         route_type = _infer_route_type_from_items(day)
         day["route_type"] = route_type
+
+        invalid_order = False
+        if policy == "respect":
+            invalid_order = _normalize_fill_order(items) == "invalid"
+
+        if any(not str(item.get("poi_name") or "").strip() for item in items):
+            day["order_source"] = "nearest_neighbor"
+            day["order_degrade_reason"] = "invalid_order"
+            continue
 
         # 第一步：地理编码所有 POI（优先使用 POI 级城市，并带上上一节点作为周边参考）
         prev_center: tuple[float, float] | None = None
@@ -142,48 +172,296 @@ def optimize_itinerary(itinerary_json: str, reorder: bool = True) -> str:
             item["poi_type"] = result.get("poi_type")
             prev_center = (item["lat"], item["lng"])
 
-        # 第二步：尝试构建真实旅行时间矩阵
-        reordered = False
+        order_source, degrade_reason = _apply_order_and_timing(
+            items,
+            route_type=route_type,
+            policy=policy,
+            amap_available=amap_available,
+            invalid_order=invalid_order,
+        )
+        day["order_source"] = order_source
+        if degrade_reason:
+            day["order_degrade_reason"] = degrade_reason
+        else:
+            day.pop("order_degrade_reason", None)
 
-        if reorder and amap_available and len(items) <= 4:
-            # 小规模仍使用完整真实矩阵，保持原排序行为（便于测试与少量点）
-            try:
-                matrix = _build_travel_time_matrix(items, route_type=route_type)
-                index_map = _reorder_by_nearest_neighbor(items, matrix)
-                _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
-                reordered = True
-            except Exception:
-                logger.warning("小规模真实矩阵构建异常，降级到估算", exc_info=True)
-
-        matrix = None
-        if not reordered and amap_available:
-            try:
-                if reorder:
-                    # 较大规模：排序只用 Haversine 估算矩阵，不请求高德
-                    hav_matrix = _build_haversine_matrix(items)
-                    _reorder_by_nearest_neighbor(items, hav_matrix)
-
-                matrix = _build_sequence_travel_matrix(items, route_type=route_type)
-            except Exception:
-                logger.warning("相邻路段矩阵构建异常，降级到坐标估算", exc_info=True)
-
-        if not reordered:
-            if matrix is not None:
-                index_map = list(range(len(items)))
-                _fill_travel_times_from_matrix(items, matrix, index_map, route_type=route_type)
-            else:
-                # 无 API 或构建失败：保持原始顺序（不重新排序）
-                _fill_travel_times_fallback(items, route_type=route_type)
-
-        # 第四步：更新 seq 序号
         for i, item in enumerate(items):
             item["seq"] = i + 1
 
-        # 第五步：移除内部字段，不暴露给下游
         for item in items:
             item.pop("city", None)
+            item.pop("_amap_minutes", None)
+            item.pop("_est_minutes", None)
+            item.pop("_est_source", None)
 
+    _annotate_cross_day_boundaries(itinerary.get("days") or [])
     return json.dumps(itinerary, ensure_ascii=False)
+
+
+def _resolve_order_policy(reorder: bool | None, respect_fill_order: bool) -> str:
+    """lock = 永不重排；nn = 直接最近邻；respect = 保留 fill，除非 sanity 失败。"""
+    if reorder is False:
+        return "lock"
+    if reorder is True or not respect_fill_order:
+        return "nn"
+    return "respect"
+
+
+def _positive_minutes(raw) -> int | None:
+    if raw is None or raw is False or raw == "":
+        return None
+    try:
+        minutes = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    if minutes <= 0:
+        return None
+    return minutes
+
+
+def _normalize_fill_order(items: list[dict]) -> str | None:
+    """唯一 seq 时按 seq 排成 fill 顺序。重复且不一致的 seq 视为无效顺序。"""
+    if not all(isinstance(item, dict) for item in items):
+        return "invalid"
+    parsed: list[int | None] = []
+    for item in items:
+        if item.get("seq") is None:
+            return None
+        try:
+            parsed.append(int(item["seq"]))
+        except (TypeError, ValueError):
+            return "invalid"
+    seqs = [seq for seq in parsed if seq is not None]
+    if len(set(seqs)) == len(seqs):
+        order = sorted(range(len(items)), key=lambda index: seqs[index])
+        if order != list(range(len(items))):
+            ranked = [items[index] for index in order]
+            items.clear()
+            items.extend(ranked)
+        return None
+    if len(set(seqs)) == 1:
+        return None
+    return "invalid"
+
+
+def _read_fill_estimate(item: dict) -> tuple[int | None, str | None]:
+    """读取 fill 留下的路段估计。没有 source 的正数分钟视为 LLM 估计。"""
+    source = item.get("travel_estimate_source")
+    raw = item.get("travel_estimate_minutes")
+    if raw is None:
+        raw = item.get("travel_minutes_from_prev")
+    minutes = _positive_minutes(raw)
+    if minutes is None:
+        return None, None
+    if source in {"guide", "llm"}:
+        return minutes, source
+    return minutes, "llm"
+
+
+def _stash_fill_estimates(items: list[dict]) -> None:
+    for index, item in enumerate(items):
+        item.pop("_est_minutes", None)
+        item.pop("_est_source", None)
+        if index == 0:
+            continue
+        minutes, source = _read_fill_estimate(item)
+        if minutes is None:
+            continue
+        item["_est_minutes"] = minutes
+        item["_est_source"] = source
+
+
+def _has_cross_city_jump(items: list[dict]) -> bool:
+    for prev, curr in zip(items, items[1:]):
+        if prev.get("lat") is None or curr.get("lat") is None:
+            continue
+        dist_m = _haversine_distance(prev["lat"], prev["lng"], curr["lat"], curr["lng"])
+        if dist_m > _CROSS_CITY_JUMP_M:
+            return True
+    return False
+
+
+def _path_minutes(matrix: dict, order: list[int]) -> int:
+    total = 0
+    for origin, dest in zip(order, order[1:]):
+        total += _matrix_minutes(matrix, (origin, dest))
+    return total
+
+
+def _fill_much_worse_than_nn(items: list[dict]) -> bool:
+    """用 Haversine 估计比较 fill 顺序和最近邻。这里不调用高德。"""
+    count = len(items)
+    if count <= 2:
+        return False
+    if any(item.get("lat") is None or item.get("lng") is None for item in items):
+        return False
+    matrix = _build_haversine_matrix(items)
+    fill_total = _path_minutes(matrix, list(range(count)))
+    nn_total = _path_minutes(matrix, _nearest_neighbor_order(count, matrix))
+    if nn_total <= 0:
+        return False
+    excess = fill_total - nn_total
+    return fill_total >= nn_total * _NN_RELATIVE_LIMIT and excess >= _NN_ABSOLUTE_EXCESS_MIN
+
+
+def _reorder_nn(items: list[dict]) -> None:
+    if len(items) <= 2:
+        return
+    if any(item.get("lat") is None or item.get("lng") is None for item in items):
+        return
+    _reorder_by_nearest_neighbor(items, _build_haversine_matrix(items))
+
+
+def _time_current_order(items: list[dict], route_type: str, amap_available: bool) -> None:
+    """按当前顺序只请求相邻段。调用前必须已经决定好顺序。"""
+    for item in items:
+        item.pop("_amap_minutes", None)
+    matrix = None
+    if amap_available and len(items) > 1:
+        try:
+            matrix = _build_sequence_travel_matrix(items, route_type=route_type)
+        except Exception:
+            logger.warning("相邻路段矩阵构建异常，降级到坐标估算", exc_info=True)
+            matrix = None
+    if matrix is not None:
+        _fill_travel_times_from_matrix(
+            items, matrix, list(range(len(items))), route_type=route_type
+        )
+    else:
+        _fill_travel_times_fallback(items, route_type=route_type)
+
+
+def _amap_widespread_failure(items: list[dict], amap_available: bool) -> bool:
+    if not amap_available:
+        return False
+    legs = items[1:]
+    if not legs:
+        return False
+    unverified = sum(1 for item in legs if _positive_minutes(item.get("_amap_minutes")) is None)
+    return unverified / len(legs) >= _AMAP_UNVERIFIED_LEG_RATIO
+
+
+def _discrepancy_message(estimate: int | None, adopted: int) -> str | None:
+    if estimate is None or adopted <= 0:
+        return None
+    diff = abs(estimate - adopted)
+    if diff >= _DISCREPANCY_ABS_MIN and diff / adopted >= _DISCREPANCY_REL:
+        return f"路段估计 {estimate} 分钟，日程采用 {adopted} 分钟"
+    return None
+
+
+def _commit_adopted_times(items: list[dict]) -> None:
+    """高德成功用高德；否则 guide → llm → 已写入的 Haversine。不取平均。"""
+    for index, item in enumerate(items):
+        estimate = item.pop("_est_minutes", None)
+        source = item.pop("_est_source", None)
+        amap_minutes = _positive_minutes(item.pop("_amap_minutes", None))
+        if index == 0:
+            item["travel_minutes_from_prev"] = 0
+            item["travel_minutes"] = 0
+            item["travel_amap_minutes"] = None
+            item["travel_estimate_minutes"] = None
+            item["travel_estimate_source"] = None
+            item["travel_discrepancy"] = None
+            continue
+
+        if amap_minutes is not None:
+            adopted = amap_minutes
+        elif source == "guide" and estimate is not None:
+            adopted = estimate
+        elif source == "llm" and estimate is not None:
+            adopted = estimate
+        else:
+            adopted = _positive_minutes(item.get("travel_minutes_from_prev")) or 0
+
+        item["travel_amap_minutes"] = amap_minutes
+        item["travel_estimate_minutes"] = estimate
+        item["travel_estimate_source"] = source if estimate is not None else None
+        item["travel_minutes_from_prev"] = adopted
+        item["travel_minutes"] = adopted
+        message = _discrepancy_message(estimate, adopted)
+        item["travel_discrepancy"] = message
+        if message:
+            advice = (item.get("travel_advice") or "").strip()
+            if message not in advice:
+                item["travel_advice"] = f"{advice} {message}".strip()
+
+
+def _apply_order_and_timing(
+    items: list[dict],
+    *,
+    route_type: str,
+    policy: str,
+    amap_available: bool,
+    invalid_order: bool,
+) -> tuple[str, str | None]:
+    _stash_fill_estimates(items)
+    order_source = "fill"
+    reason: str | None = None
+
+    if policy == "nn":
+        _reorder_nn(items)
+        order_source = "nearest_neighbor"
+        reason = "explicit_reorder"
+    elif policy == "respect":
+        if invalid_order:
+            _reorder_nn(items)
+            order_source = "nearest_neighbor"
+            reason = "invalid_order"
+        elif _has_cross_city_jump(items):
+            _reorder_nn(items)
+            order_source = "nearest_neighbor"
+            reason = "cross_city_jump"
+        elif _fill_much_worse_than_nn(items):
+            _reorder_nn(items)
+            order_source = "nearest_neighbor"
+            reason = "travel_time"
+
+    _time_current_order(items, route_type, amap_available)
+    if policy == "respect" and order_source == "fill" and _amap_widespread_failure(items, amap_available):
+        logger.info("高德路段大面积未核验，降级最近邻")
+        _reorder_nn(items)
+        _time_current_order(items, route_type, amap_available)
+        order_source = "nearest_neighbor"
+        reason = "amap_unverified"
+
+    if reason:
+        logger.info("当日顺序来源=%s，原因=%s", order_source, reason)
+    _commit_adopted_times(items)
+    return order_source, reason
+
+
+def _annotate_cross_day_boundaries(days: list) -> None:
+    """相邻日终点和次日起点过远时只告警，不自动换天。"""
+    usable: list[tuple[dict, list[dict]]] = []
+    for day in days:
+        if not isinstance(day, dict):
+            continue
+        located = [
+            item
+            for item in day.get("items") or []
+            if isinstance(item, dict) and item.get("lat") is not None and item.get("lng") is not None
+        ]
+        usable.append((day, located))
+    ordered = sorted(usable, key=lambda pair: int(pair[0].get("day_index") or 0))
+    for (prev_day, prev_items), (next_day, next_items) in zip(ordered, ordered[1:]):
+        if not prev_items or not next_items:
+            continue
+        end = prev_items[-1]
+        start = next_items[0]
+        dist_m = _haversine_distance(end["lat"], end["lng"], start["lat"], start["lng"])
+        if dist_m <= _CROSS_CITY_JUMP_M:
+            continue
+        km = max(1, round(dist_m / 1000))
+        warning = (
+            f"第{prev_day.get('day_index')}天终点「{end.get('poi_name')}」与"
+            f"第{next_day.get('day_index')}天起点「{start.get('poi_name')}」相距约 {km} 公里，"
+            "跨天衔接偏远。本次不会自动把景点改到另一天。"
+        )
+        next_day["day_boundary_warning"] = warning
+        advice = (start.get("travel_advice") or "").strip()
+        if warning not in advice:
+            start["travel_advice"] = f"{advice} {warning}".strip()
 
 
 # ── 交通方式选择 ──
@@ -484,9 +762,10 @@ def _build_haversine_matrix(items: list[dict]) -> dict:
 def _build_sequence_travel_matrix(
     items: list[dict], route_type: str = "city"
 ) -> dict | None:
-    """只构建相邻节点的旅行时间矩阵，用于保持顺序的 reoptimize。
+    """只为当前顺序的相邻路段请求高德，约 N-1 次。
 
-    相比全量 N×N 矩阵，只在有需要时调用高德，避免点击“重新计算路线”卡死。
+    不构建全量 N×(N-1) Direction 矩阵。全量矩阵会按 5 个点 20 次请求烧掉配额和时间，
+    见 docs/retrospectives/development-notes.md §23、§28。
     """
     n = len(items)
     if n <= 1:
@@ -516,55 +795,6 @@ def _build_sequence_travel_matrix(
     return matrix
 
 
-def _build_travel_time_matrix(items: list[dict], route_type: str = "city") -> dict | None:
-    """构建 N×(N-1) 有向旅行时间矩阵。
-
-    对每对 (i→j, i≠j)，先算 Haversine 距离决定交通方式，
-    再调高德 Direction API 获取真实旅行时间。
-    景区模式不会调用公交/地铁，只使用步行或驾车。
-
-    key 为 (from_index, to_index) 原始索引。
-
-    任一 API 调用失败 → 返回 None（触发降级）。
-    """
-    n = len(items)
-    if n <= 1:
-        return {}
-
-    matrix = {}
-
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-
-            dist = _haversine_distance(
-                items[i]["lat"], items[i]["lng"],
-                items[j]["lat"], items[j]["lng"],
-            )
-            leg_route_type = _infer_leg_route_type(items[i], items[j], route_type)
-            mode = _select_mode(dist, route_type=leg_route_type)
-            city = items[j].get("city", "")
-
-            route_info = _amap_direction_direct(
-                items[i]["lng"], items[i]["lat"],
-                items[j]["lng"], items[j]["lat"],
-                mode=mode, city=city,
-            )
-
-            if route_info is None:
-                logger.warning(
-                    "Direction API 失败: %s → %s，该日降级到估算",
-                    items[i]["poi_name"], items[j]["poi_name"],
-                )
-                return None
-
-            # 兼容旧的 int 返回（测试 mock），真实返回是 {minutes,mode,path}
-            matrix[(i, j)] = route_info
-
-    return matrix
-
-
 # ── 贪心最近邻排序 ──
 
 def _matrix_minutes(matrix: dict, key: tuple[int, int]) -> int:
@@ -577,6 +807,22 @@ def _matrix_minutes(matrix: dict, key: tuple[int, int]) -> int:
     return int(value)
 
 
+def _nearest_neighbor_order(count: int, matrix: dict) -> list[int]:
+    """贪心最近邻。index 0 固定为起点，只重排其余点。"""
+    if count <= 2:
+        return list(range(count))
+
+    ordered = [0]
+    remaining = set(range(1, count))
+    current = 0
+    while remaining:
+        nearest = min(remaining, key=lambda j: _matrix_minutes(matrix, (current, j)))
+        ordered.append(nearest)
+        remaining.discard(nearest)
+        current = nearest
+    return ordered
+
+
 def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
     """贪心最近邻重排 POI。
 
@@ -585,25 +831,10 @@ def _reorder_by_nearest_neighbor(items: list[dict], matrix: dict) -> list[int]:
     Returns:
         index_map: new_pos → original_index 的映射列表
     """
-    n = len(items)
-    if n <= 2:
-        return list(range(n))
-
-    ordered = [0]          # 第一个 POI 固定
-    remaining = set(range(1, n))
-    current = 0
-
-    while remaining:
-        nearest = min(remaining, key=lambda j: _matrix_minutes(matrix, (current, j)))
-        ordered.append(nearest)
-        remaining.discard(nearest)
-        current = nearest
-
-    # 原地重建列表
+    ordered = _nearest_neighbor_order(len(items), matrix)
     reordered = [items[i] for i in ordered]
     items.clear()
     items.extend(reordered)
-
     return ordered
 
 
@@ -660,6 +891,7 @@ def _fill_travel_times_from_matrix(
 
         if isinstance(route_info, dict):
             items[i]["travel_minutes_from_prev"] = route_info.get("minutes", 0)
+            items[i]["_amap_minutes"] = route_info.get("minutes")
             api_mode = route_info.get("mode") or "walking"
             api_path = route_info.get("path") or None
 
@@ -682,6 +914,7 @@ def _fill_travel_times_from_matrix(
                 items[i]["travel_advice"] = None
         else:
             items[i]["travel_minutes_from_prev"] = route_info
+            items[i]["_amap_minutes"] = route_info
             items[i]["transport_mode"] = None
             items[i]["route_polyline"] = None
             items[i]["route_verified"] = False
