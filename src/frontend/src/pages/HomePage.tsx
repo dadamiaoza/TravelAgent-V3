@@ -23,11 +23,11 @@ export default function HomePage() {
   const visibleTrips = many && !expanded ? trips.slice(0, PREVIEW_COUNT) : trips;
 
   return (
-    <main className="min-h-screen bg-chrome px-4 py-10 sm:px-6">
+    <main className="min-h-screen bg-chrome px-5 py-16 sm:px-8 sm:py-20">
       <div className="mx-auto max-w-2xl">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight text-ink">AI 旅行规划助手</h1>
-          <p className="mt-2 text-sm text-ink-secondary">
+        <div className="mb-12 text-center">
+          <h1 className="text-4xl font-semibold tracking-tight text-ink">AI 旅行规划助手</h1>
+          <p className="mt-3 text-sm text-ink-tertiary">
             创建新行程，或从已有行程继续规划
           </p>
         </div>
@@ -35,8 +35,8 @@ export default function HomePage() {
         <TripPromptForm />
 
         {trips.length > 0 && (
-          <section className="mt-6 rounded-2xl border border-line-tertiary bg-white p-4 shadow-[0_1px_2px_rgba(20,20,20,0.04),0_8px_24px_rgba(20,20,20,0.04)] sm:p-5">
-            <h2 className="text-sm font-semibold text-ink">
+          <section className="mt-14">
+            <h2 className="px-1 text-sm text-ink-tertiary">
               已有行程（{trips.length}）
             </h2>
 
@@ -45,7 +45,7 @@ export default function HomePage() {
                 <Link
                   key={trip.id}
                   to={`/trips/${trip.id}`}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-line-tertiary bg-white px-4 py-3 transition hover:border-sky-300"
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-line-tertiary bg-white px-4 py-3.5 transition hover:border-[rgb(20_20_20/0.16)]"
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-medium text-ink">{trip.destination}</span>
@@ -74,7 +74,7 @@ export default function HomePage() {
           </section>
         )}
 
-        <p className="mt-8 text-center">
+        <p className="mt-12 text-center">
           <Link
             to="/sources"
             className="text-sm text-ink-tertiary underline-offset-4 hover:text-ink-secondary hover:underline"

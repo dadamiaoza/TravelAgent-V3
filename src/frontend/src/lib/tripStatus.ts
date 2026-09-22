@@ -13,7 +13,7 @@ export function tripStatusLabel(status: string): string {
 export function tripStatusClassName(status: string): string {
   switch (status) {
     case "generating":
-      return "bg-sky-50 text-sky-800";
+      return "bg-blue-50 text-blue-800";
     case "generation_failed":
       return "bg-rose-50 text-rose-700";
     default:

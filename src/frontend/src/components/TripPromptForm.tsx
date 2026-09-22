@@ -23,10 +23,13 @@ const EXAMPLE_PROMPTS = [
 ] as const;
 
 const fieldClass =
-  "w-full min-w-0 rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-tertiary focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100";
+  "w-full min-w-0 rounded-2xl border border-line-tertiary bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
 
 const primaryButtonClass =
-  "w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60";
+  "w-full rounded-full bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60";
+
+const chipClass =
+  "inline-flex items-center rounded-full border px-4 py-1.5 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-sm";
 
 function messageFromError(err: unknown, fallback: string): string {
   const raw = err instanceof Error ? err.message.trim() : "";
@@ -37,7 +40,7 @@ function messageFromError(err: unknown, fallback: string): string {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-1 block text-xs text-ink-tertiary">{label}</span>
+      <span className="mb-1.5 block text-xs text-ink-tertiary">{label}</span>
       {children}
     </label>
   );
@@ -166,9 +169,9 @@ export default function TripPromptForm() {
   }
 
   return (
-    <div className="rounded-2xl border border-line-tertiary bg-white p-5 shadow-[0_1px_2px_rgba(20,20,20,0.04),0_12px_32px_rgba(20,20,20,0.05)] sm:p-6">
+    <div className="rounded-3xl border border-line-tertiary bg-white px-6 py-7 shadow-[0_1px_2px_rgba(20,20,20,0.04)] sm:px-8 sm:py-8">
       <div>
-        <label htmlFor="trip-request" className="mb-2 block text-sm font-medium text-ink">
+        <label htmlFor="trip-request" className="mb-3 block text-sm text-ink-secondary">
           用一句话描述你的旅行需求
         </label>
         <textarea
@@ -188,7 +191,7 @@ export default function TripPromptForm() {
           placeholder="例如：帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高"
           className={fieldClass}
         />
-        <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="示例需求">
+        <div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="示例需求">
           {EXAMPLE_PROMPTS.map((example) => {
             const selected = text === example.text;
             return (
@@ -198,10 +201,10 @@ export default function TripPromptForm() {
                 onClick={() => applyExample(example.text)}
                 disabled={busy}
                 aria-pressed={selected}
-                className={`rounded-full border px-3 py-1 text-sm transition disabled:opacity-60 ${
+                className={`${chipClass} transition disabled:opacity-60 ${
                   selected
-                    ? "border-sky-300 bg-sky-50 text-sky-800"
-                    : "border-line-tertiary bg-chrome text-ink-secondary hover:border-sky-200 hover:text-ink"
+                    ? "border-blue-600/40 bg-white text-blue-700"
+                    : "border-line-tertiary bg-chrome/80 text-ink-secondary hover:bg-white/80 hover:text-ink"
                 }`}
               >
                 {example.label}
@@ -216,7 +219,7 @@ export default function TripPromptForm() {
           type="button"
           onClick={handleSuggest}
           disabled={busy}
-          className={`${primaryButtonClass} mt-4`}
+          className={`${primaryButtonClass} mt-6`}
         >
           {phase === "suggesting" ? "正在整理需求…" : "开始规划"}
         </button>
@@ -229,11 +232,11 @@ export default function TripPromptForm() {
       )}
 
       {suggestion && (
-        <div ref={cardRef} className="mt-5 border-t border-line-tertiary pt-5">
-          <div className="mb-3 flex items-start justify-between gap-3">
+        <div ref={cardRef} className="mt-8 border-t border-line-tertiary pt-8">
+          <div className="mb-5 flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-sm font-semibold text-ink">确认这些信息</h2>
-              <p className="mt-1 text-xs text-ink-secondary">改完后就可以生成行程</p>
+              <h2 className="text-base font-semibold text-ink">确认这些信息</h2>
+              <p className="mt-1 text-sm text-ink-tertiary">改完后就可以生成行程</p>
             </div>
             <button
               type="button"
@@ -245,8 +248,8 @@ export default function TripPromptForm() {
             </button>
           </div>
 
-          <div className="space-y-3 rounded-xl border border-sky-100 bg-sky-50/50 p-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="目的地">
                 <input
                   value={destination}
@@ -291,12 +294,12 @@ export default function TripPromptForm() {
             </div>
 
             <div>
-              <p className="mb-2 text-xs text-ink-tertiary">想去的地方</p>
+              <p className="mb-2.5 text-xs text-ink-tertiary">想去的地方</p>
               {mustVisit.length > 0 && (
-                <ul className="mb-2 flex flex-wrap gap-2">
+                <ul className="mb-3 flex flex-wrap gap-2">
                   {mustVisit.map((place, index) => (
                     <li key={`${place}-${index}`}>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-line-tertiary bg-white px-2.5 py-1 text-sm text-ink">
+                      <span className={`${chipClass} gap-1.5 border-line-tertiary bg-chrome/80 text-ink`}>
                         {place}
                         <button
                           type="button"
@@ -324,13 +327,13 @@ export default function TripPromptForm() {
                     }
                   }}
                   placeholder="添加一个地方，回车确认"
-                  className="min-w-0 flex-1 rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-tertiary focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                  className="min-w-0 flex-1 rounded-full border border-line-tertiary bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
                 <button
                   type="button"
                   onClick={addMustVisit}
                   disabled={!mustVisitDraft.trim()}
-                  className="shrink-0 rounded-xl border border-line-tertiary bg-white px-3 text-sm text-ink-secondary hover:text-ink disabled:opacity-40"
+                  className="shrink-0 rounded-full border border-line-tertiary bg-white/70 px-4 text-sm text-ink-secondary backdrop-blur-sm hover:text-ink disabled:opacity-40"
                 >
                   添加
                 </button>
