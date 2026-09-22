@@ -3,6 +3,11 @@
 默认信任 fill 给出的顺序（LLM / 候选），只在顺序无效、同日跨城、
 明显绕路或高德大面积失败时才退回最近邻。日程耗时优先采用高德；
 高德失败时按攻略路段 → LLM 估计 → Haversine 采纳，不把三种来源取平均。
+
+高德 Direction 只请求最终顺序的相邻路段（约 N-1 次/天）。排序和 +50% 基线
+只用 Haversine，不再构建 N×(N-1) 高德矩阵。5 个点的全量矩阵曾是 20 次请求。
+见 docs/retrospectives/development-notes.md §23、§28。知识地图 §11 里的有向
+旅行时间矩阵是当时的做法，不能再用来决定顺序或计算降级基线。
 """
 import json
 import logging
@@ -284,7 +289,7 @@ def _path_minutes(matrix: dict, order: list[int]) -> int:
 
 
 def _fill_much_worse_than_nn(items: list[dict]) -> bool:
-    """用同一套 Haversine 估计比较 fill 顺序和最近邻，避免和真实路况混比。"""
+    """用 Haversine 估计比较 fill 顺序和最近邻。这里不调用高德。"""
     count = len(items)
     if count <= 2:
         return False
@@ -308,6 +313,7 @@ def _reorder_nn(items: list[dict]) -> None:
 
 
 def _time_current_order(items: list[dict], route_type: str, amap_available: bool) -> None:
+    """按当前顺序只请求相邻段。调用前必须已经决定好顺序。"""
     for item in items:
         item.pop("_amap_minutes", None)
     matrix = None
@@ -756,9 +762,10 @@ def _build_haversine_matrix(items: list[dict]) -> dict:
 def _build_sequence_travel_matrix(
     items: list[dict], route_type: str = "city"
 ) -> dict | None:
-    """只构建相邻节点的旅行时间矩阵，用于保持顺序的 reoptimize。
+    """只为当前顺序的相邻路段请求高德，约 N-1 次。
 
-    相比全量 N×N 矩阵，只在有需要时调用高德，避免点击“重新计算路线”卡死。
+    不构建全量 N×(N-1) Direction 矩阵。全量矩阵会按 5 个点 20 次请求烧掉配额和时间，
+    见 docs/retrospectives/development-notes.md §23、§28。
     """
     n = len(items)
     if n <= 1:
@@ -785,55 +792,6 @@ def _build_sequence_travel_matrix(
             )
             continue
         matrix[(i - 1, i)] = route_info
-    return matrix
-
-
-def _build_travel_time_matrix(items: list[dict], route_type: str = "city") -> dict | None:
-    """构建 N×(N-1) 有向旅行时间矩阵。
-
-    对每对 (i→j, i≠j)，先算 Haversine 距离决定交通方式，
-    再调高德 Direction API 获取真实旅行时间。
-    景区模式不会调用公交/地铁，只使用步行或驾车。
-
-    key 为 (from_index, to_index) 原始索引。
-
-    任一 API 调用失败 → 返回 None（触发降级）。
-    """
-    n = len(items)
-    if n <= 1:
-        return {}
-
-    matrix = {}
-
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-
-            dist = _haversine_distance(
-                items[i]["lat"], items[i]["lng"],
-                items[j]["lat"], items[j]["lng"],
-            )
-            leg_route_type = _infer_leg_route_type(items[i], items[j], route_type)
-            mode = _select_mode(dist, route_type=leg_route_type)
-            city = items[j].get("city", "")
-
-            route_info = _amap_direction_direct(
-                items[i]["lng"], items[i]["lat"],
-                items[j]["lng"], items[j]["lat"],
-                mode=mode, city=city,
-            )
-
-            if route_info is None:
-                logger.warning(
-                    "Direction API 失败: %s → %s，该日降级到估算",
-                    items[i]["poi_name"], items[j]["poi_name"],
-                )
-                return None
-
-            # 兼容旧的 int 返回（测试 mock），真实返回是 {minutes,mode,path}
-            matrix[(i, j)] = route_info
-
     return matrix
 
 

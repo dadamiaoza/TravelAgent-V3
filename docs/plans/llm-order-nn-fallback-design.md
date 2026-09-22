@@ -49,6 +49,7 @@
 ## 落地对照
 - 生成路径 `route_itinerary_draft` 默认 `respect_fill_order=True`：按 fill 顺序地理编码并逐段计时。
 - 降级整日最近邻（起点固定），`order_source` 为 `fill` 或 `nearest_neighbor`。阈值是 Haversine 估计相对最近邻 +50% 且绝对多出 ≥30 分钟；同日跳跃复用 250km。高德路段至少一半没有分钟数时也降级。没有密钥不算“大面积失败”，只走估计回退。
+- 高德 Direction 只打最终顺序的相邻段（约 N-1 次/天）。+50% 基线和最近邻重排都用 Haversine，不构建 N×(N-1) 高德矩阵。5 个点的全量矩阵曾是 20 次请求，见 [development-notes §23/§28](../retrospectives/development-notes.md)。知识地图 §11 的有向矩阵不再用于决定顺序。
 - 日程采用值写在 `travel_minutes_from_prev` / `travel_minutes`。高德成功优先；否则 guide → llm → Haversine，不取平均。绝对差 ≥15 分钟且相对差 ≥40% 时写 `travel_discrepancy`，并附在 `travel_advice` 上以便卡片展示。
 - 坏 JSON 仍抛出，由生成任务按格式错误重试；没有合法顺序的当天标记降级。
 - 显式重排：`respect_fill_order=False`（重新计算路线 / reoptimize）。`reorder=False` 仍锁定调用方顺序，只补时间。

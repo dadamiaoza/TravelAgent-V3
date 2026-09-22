@@ -189,6 +189,45 @@ def test_amap_failure_fallback_chain_does_not_average_sources() -> None:
     assert "15" in adopted["travel_discrepancy"]
 
 
+def test_amap_direction_is_only_consecutive_legs() -> None:
+    """5 stops must not build an all-pairs Direction matrix (that was 20 calls)."""
+    names = ["A", "B", "C", "D", "E"]
+    coords = {name: {"lat": 30.0 + index * 0.02, "lng": 120.0} for index, name in enumerate(names)}
+    calls: list[tuple[float, float]] = []
+
+    def direction(lng1, lat1, lng2, lat2, mode, city=""):
+        calls.append((round(lat1, 5), round(lat2, 5)))
+        return {"minutes": 8, "mode": mode, "path": [[lng1, lat1], [lng2, lat2]]}
+
+    result = _run(_day(names), coords, direction)
+    assert result["days"][0]["order_source"] == "fill"
+    lats = [round(30.0 + index * 0.02, 5) for index in range(5)]
+    assert calls == [(lats[index], lats[index + 1]) for index in range(4)]
+
+
+def test_nn_degrade_still_uses_sequential_amap_only() -> None:
+    """Reorder with Haversine, then time only the chosen path. 3 stops → 2 calls, not 6."""
+    coords = {
+        "A": {"lat": 30.00, "lng": 120.00},
+        "B": {"lat": 30.20, "lng": 120.00},
+        "C": {"lat": 30.05, "lng": 120.00},
+    }
+    calls: list[tuple[float, float]] = []
+
+    def direction(lng1, lat1, lng2, lat2, mode, city=""):
+        calls.append((round(lat1, 5), round(lat2, 5)))
+        return {"minutes": 8, "mode": mode, "path": [[lng1, lat1], [lng2, lat2]]}
+
+    result = _run(_day(["A", "B", "C"]), coords, direction)
+    day = result["days"][0]
+    assert day["order_source"] == "nearest_neighbor"
+    assert [item["poi_name"] for item in day["items"]] == ["A", "C", "B"]
+    assert len(calls) == 2
+    assert calls[0][0] == round(30.00, 5)
+    assert calls[0][1] == round(30.05, 5)
+    assert calls[1][0] == round(30.05, 5)
+
+
 def test_cross_day_boundary_warns_without_moving_pois() -> None:
     coords = {
         "西湖": {"lat": 30.24, "lng": 120.14, "city": "杭州"},

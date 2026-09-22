@@ -188,7 +188,7 @@ def test_route_optimizer_agent(agent):
 # ── 辅助函数：构造模拟旅行时间矩阵 ──
 
 def _make_fake_matrix(side_effect_fn):
-    """用 mock 替换 _amap_direction_direct，通过 _build_travel_time_matrix 生成矩阵。
+    """用 mock 替换 _amap_direction_direct。计时只走相邻路段，不建全量高德矩阵。
 
     需要同时 mock settings.amap_api_key 让代码进入 API 路径。
     """
