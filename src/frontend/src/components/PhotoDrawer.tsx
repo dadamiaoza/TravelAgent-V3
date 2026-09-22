@@ -1,4 +1,4 @@
-import { useRef, type PointerEvent } from "react";
+import { useEffect, useRef, type PointerEvent } from "react";
 import type { PhotoAsset } from "@/lib/types";
 import type { SpineBead } from "@/lib/recallSpine";
 
@@ -11,33 +11,56 @@ function BeadButton({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const ring =
     bead.kind === "visit"
       ? selected
-        ? "border-amber-500 ring-2 ring-amber-200"
+        ? "border-amber-600 ring-2 ring-amber-400 ring-offset-2"
         : "border-amber-400"
       : bead.kind === "unsorted"
         ? selected
-          ? "border-slate-500 ring-2 ring-slate-300"
+          ? "border-slate-600 ring-2 ring-slate-400 ring-offset-2"
           : "border-dashed border-slate-400"
         : selected
-          ? "border-sky-600 ring-2 ring-sky-200"
+          ? "border-sky-700 ring-2 ring-sky-500 ring-offset-2"
           : "border-sky-500";
+  const currentColor =
+    bead.kind === "visit" ? "text-amber-800" : bead.kind === "unsorted" ? "text-slate-800" : "text-sky-800";
   const src = bead.thumbUrl;
+
+  useEffect(() => {
+    if (!selected) return;
+    buttonRef.current?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  }, [selected]);
+
   return (
     <button
+      ref={buttonRef}
       type="button"
+      aria-current={selected ? "true" : undefined}
+      aria-pressed={selected}
       onClick={onSelect}
-      className="flex w-[4.5rem] shrink-0 flex-col items-center gap-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+      className="flex w-[4.75rem] shrink-0 flex-col items-center gap-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
     >
       <span
-        className={`relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border-2 bg-white shadow-sm ${ring}`}
+        className={`relative flex items-center justify-center overflow-hidden rounded-full border-2 bg-white ${
+          selected ? `h-14 w-14 shadow-md ${ring}` : `h-12 w-12 shadow-sm ${ring}`
+        }`}
       >
         {src ? (
           <img src={src} alt="" className="h-full w-full object-cover" />
         ) : (
           <span className="px-1 text-center text-[10px] font-semibold leading-tight text-slate-500">
             {bead.label.slice(0, 4)}
+          </span>
+        )}
+        {selected && (
+          <span
+            className={`absolute inset-x-0 top-0 py-0.5 text-center text-[9px] font-semibold leading-3 text-white ${
+              bead.kind === "visit" ? "bg-amber-600/90" : bead.kind === "unsorted" ? "bg-slate-700/90" : "bg-sky-600/90"
+            }`}
+          >
+            当前
           </span>
         )}
         <span
@@ -48,7 +71,13 @@ function BeadButton({
           {bead.photoCount}
         </span>
       </span>
-      <span className="line-clamp-2 text-center text-[11px] leading-tight text-slate-700">{bead.label}</span>
+      <span
+        className={`line-clamp-2 text-center text-[11px] leading-tight ${
+          selected ? `font-semibold ${currentColor}` : "text-slate-700"
+        }`}
+      >
+        {bead.label}
+      </span>
       {bead.caption && (
         <span className="text-[10px] leading-tight text-slate-400">{bead.caption}</span>
       )}
@@ -68,6 +97,7 @@ export default function PhotoDrawer({
   onBack,
   photos,
   onPhotoClick,
+  onDismissVisitStop,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -80,6 +110,7 @@ export default function PhotoDrawer({
   onBack: () => void;
   photos: PhotoAsset[];
   onPhotoClick: (photoId: string) => void;
+  onDismissVisitStop?: () => void;
 }) {
   const dragRef = useRef<{ startY: number; moved: boolean } | null>(null);
 
@@ -149,6 +180,15 @@ export default function PhotoDrawer({
               <h2 className="truncate text-base font-semibold text-slate-900">
                 {mode === "album" ? title : "这一天的地点"}
               </h2>
+              {mode === "album" && onDismissVisitStop && (
+                <button
+                  type="button"
+                  className="mt-0.5 text-xs text-red-600 hover:underline"
+                  onClick={onDismissVisitStop}
+                >
+                  去掉这个停留
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -190,12 +230,14 @@ export default function PhotoDrawer({
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-              {photos.length === 0 ? (
-                <p className="py-8 text-center text-sm text-slate-500">
-                  {selectedBeadId?.startsWith("unsorted")
-                    ? "没有未归类的照片。"
-                    : "这个地点还没有归档照片。点开已有照片可改挂或删除。"}
-                </p>
+                  {photos.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-slate-500">
+                      {selectedBeadId?.startsWith("unsorted")
+                        ? "这些照片还没有地点。点开已有照片可改挂到计划点。"
+                        : selectedBeadId?.startsWith("visit:")
+                          ? "这个停留已经没有照片。可以去掉它，不会改计划。"
+                          : "这个地点还没有归档照片。点开已有照片可改挂或删除。"}
+                    </p>
               ) : (
                 <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
                   {photos.map((photo) => {

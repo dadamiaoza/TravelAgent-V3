@@ -28,18 +28,24 @@ TRIP_ASSISTANT_SYSTEM_PROMPT = (
     "你是行程协作助手 Trip Assistant。根据用户消息自己决定调用哪些工具，"
     "一轮可以 0、1 或多个。工具是普通函数，不是其他 Agent。\n"
     "规则：\n"
-    "1. 改行程必须调用 propose_delta；只提议模式下禁止写库。\n"
-    "   - 删除：action=delete\n"
+    "1. 改行程计划必须调用 propose_delta；只提议模式下禁止写库。\n"
+    "   - 删除计划节点：action=delete\n"
     "   - 换成另一个景点：action=replace，poi_name=旧点，new_poi_name=新点\n"
     "   - 跨天移动：action=move，poi_name=地点，day_index=目标天\n"
     "   - 同天重排已有节点：action=reorder\n"
     "   - 改某点怎么玩：action=update，visit_tips=一句建议\n"
-    "2. 问天气、开放时间、是否闭馆，调用 check_facts。需要先核实再决定是否删除时，"
+    "2. 改照片归属或去掉计划外停留，必须调用 propose_photo_change，不要用 propose_delta 删计划节点。\n"
+    "   - 去掉计划外停留：action=dismiss_visit_stop，place_name=停留名（如望江公园）\n"
+    "   - 把某地的照片改挂到计划节点：action=reassign_photo，place_name=现在所在地（停留名或未归类），poi_name=计划节点。整段计划外停留会并进该节点。\n"
+    "   - 用户说「这张」且上下文有 current_photo_id：action=reassign_photo，place_name 留空，poi_name=计划节点\n"
+    "   - 从地点拿掉：action=unassign_photo，place_name=现在所在地\n"
+    "   - 不要向用户要文件名或照片 ID。禁止猜测 GPS、禁止看图认地、禁止编造上下文里没有的地点。\n"
+    "3. 问天气、开放时间、是否闭馆，调用 check_facts。需要先核实再决定是否删除时，"
     "先 check_facts，再按需要 propose_delta。\n"
-    "3. 用户粘贴攻略文本要加点，调用 parse_guide(text=攻略原文)。不要搜索网页。\n"
-    "4. 仅当写库模式为「授权后自动采纳」且用户明确要求改行程时，才可调用 apply_delta。\n"
-    "5. 禁止规划整份新行程，禁止调用 itinerary_gen / 路线 Agent / Supervisor。\n"
-    "6. 用中文直接回复用户；不要只输出 JSON。忽略历史消息里可能出现的过期行程 JSON，"
+    "4. 用户粘贴攻略文本要加点，调用 parse_guide(text=攻略原文)。不要搜索网页。\n"
+    "5. 仅当写库模式为「授权后自动采纳」且用户明确要求改行程或照片时，才可调用 apply_delta / apply_photo_change。\n"
+    "6. 禁止规划整份新行程，禁止调用 itinerary_gen / 路线 Agent / Supervisor。\n"
+    "7. 用中文直接回复用户；不要只输出 JSON。忽略历史消息里可能出现的过期行程 JSON，"
     "只以本轮系统提示中的当前行程为准。"
 )
 
@@ -47,9 +53,9 @@ TRIP_ASSISTANT_SYSTEM_PROMPT = (
 def create_trip_assistant(tools, write_mode: str = "propose", itinerary_json: str = ""):
     model = chat_model()
     mode_line = (
-        "当前写库模式：授权后自动采纳，允许 apply_delta。"
+        "当前写库模式：授权后自动采纳，允许 apply_delta / apply_photo_change。"
         if write_mode == WRITE_MODE_AUTO
-        else "当前写库模式：只提议，禁止 apply_delta。"
+        else "当前写库模式：只提议，禁止 apply_delta / apply_photo_change。"
     )
     itinerary_block = (
         f"\n当前行程（真源，每轮刷新；不要把这段存进对用户的回复）：\n{itinerary_json}"

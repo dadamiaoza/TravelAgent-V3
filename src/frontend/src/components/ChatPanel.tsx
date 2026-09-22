@@ -33,7 +33,21 @@ const ACTION_LABELS: Record<string, string> = {
   move: "移动地点",
   reorder: "调整顺序",
   replace: "换成新地点",
+  dismiss_visit_stop: "去掉计划外停留",
+  reassign_photo: "改挂照片",
+  unassign_photo: "拿掉照片归属",
+  attach_visit_stop: "停留并进计划节点",
 };
+
+function isPhotoDelta(delta: ItineraryDelta): boolean {
+  return (
+    delta.action === "dismiss_visit_stop" ||
+    delta.action === "reassign_photo" ||
+    delta.action === "unassign_photo" ||
+    delta.action === "attach_visit_stop"
+  );
+}
+
 
 const STARTER_PROMPTS = [
   "删掉雷峰塔",
@@ -74,6 +88,9 @@ function deltaTargetText(delta: ItineraryDelta): string {
 }
 
 function deltaImpact(delta: ItineraryDelta): string {
+  if (isPhotoDelta(delta)) {
+    return "只改照片归属或计划外停留，不会改行程计划。";
+  }
   if (delta.action === "delete") {
     return "删除后当天节点数减少，后续时间会重新计算。";
   }
@@ -501,7 +518,7 @@ async function streamTripChat(
     message: string;
     thread_id?: string;
     write_mode?: TripChatWriteMode;
-    context?: { day_index?: number; item_id?: string };
+    context?: { day_index?: number; item_id?: string; photo_id?: string };
   },
   onEvent: (event: string, data: Record<string, unknown>) => void,
 ) {
@@ -549,6 +566,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const { data: trip } = useTrip(tripId);
   const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
   const focusItemId = useTripStore((s) => s.focusItemId);
+  const focusPhotoId = useTripStore((s) => s.focusPhotoId);
   const applyServerTrip = useTripStore((s) => s.applyServerTrip);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -564,7 +582,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const focusName = trip?.days
     ?.flatMap((day) => day.items ?? [])
     .find((item) => item.id === focusItemId)?.poi_name;
-  const contextLabel = `当前上下文：Day ${selectedDayIndex + 1}${focusName ? ` · ${focusName}` : ""}`;
+  const contextLabel = `当前关注点：Day ${selectedDayIndex + 1}${focusName ? ` · ${focusName}` : ""}${focusPhotoId ? " · 已打开一张照片" : ""}`;
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -577,6 +595,17 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     queryClient.setQueryData(["trip", tripId], data);
     applyServerTrip(data);
   }
+  function refreshPhotos() {
+    queryClient.invalidateQueries({ queryKey: ["trip-photos", tripId] });
+    queryClient.invalidateQueries({ queryKey: ["trip-photo-summary", tripId] });
+    queryClient.invalidateQueries({ queryKey: ["trip-visit-stops", tripId] });
+  }
+
+  async function refreshAll() {
+    await refreshTrip();
+    refreshPhotos();
+  }
+
 
   function markDeltasAccepted(deltas: ItineraryDelta[], messageId: string) {
     setHandled((prev) => {
@@ -623,6 +652,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
           context: {
             day_index: selectedDayIndex + 1,
             item_id: focusItemId ?? undefined,
+            photo_id: focusPhotoId ?? undefined,
           },
         },
         (event, data) => {
@@ -634,7 +664,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             patchAi(aiMessageId, (current) => ({ ...current, content: current.content + chunk }));
           } else if (event === "applied") {
             const applied = (data.deltas as ItineraryDelta[]) ?? [];
-            void refreshTrip().catch(() => undefined);
+            void refreshAll().catch(() => undefined);
             markDeltasAccepted(applied, aiMessageId);
             patchAi(aiMessageId, (current) => noteApplied(current, applied));
           } else if (event === "done") {
@@ -652,7 +682,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
               ),
             );
             if (applied.length > 0) {
-              void refreshTrip().catch(() => undefined);
+              void refreshAll().catch(() => undefined);
               markDeltasAccepted(applied, aiMessageId);
             }
           }
@@ -677,6 +707,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
       const data = await api.post<Trip>(`/trips/${tripId}/deltas/apply`, { delta });
       queryClient.setQueryData(["trip", tripId], data);
       applyServerTrip(data);
+      refreshPhotos();
     } catch {
       setHandled((prev) => ({ ...prev, [key]: "failed" }));
     }
@@ -692,6 +723,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
         const data = await api.post<Trip>(`/trips/${tripId}/deltas/apply`, { delta });
         queryClient.setQueryData(["trip", tripId], data);
         applyServerTrip(data);
+        refreshPhotos();
       } catch {
         setHandled((prev) => ({ ...prev, [key]: "failed" }));
       }
@@ -817,7 +849,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
           </div>
           <p className="flex items-center justify-between gap-2 px-2.5 pb-2 text-[11px] text-ink-tertiary">
             <span className="truncate">
-              {writeMode === "propose" ? "改行程需你点采纳" : "本会话允许助手直接改行程"}
+              {writeMode === "propose" ? "改行程或照片需你点采纳" : "本会话允许助手直接改行程和照片"}
             </span>
             <span className="shrink-0">Enter 发送</span>
           </p>

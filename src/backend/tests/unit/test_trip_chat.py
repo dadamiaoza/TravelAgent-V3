@@ -81,12 +81,12 @@ def _tools(session: TripChatSession) -> dict:
 
 def test_propose_mode_does_not_expose_apply_delta() -> None:
     names = set(_tools(_session(WRITE_MODE_PROPOSE)))
-    assert names == {"propose_delta", "check_facts", "parse_guide"}
+    assert names == {"propose_delta", "check_facts", "parse_guide", "propose_photo_change"}
 
 
 def test_auto_mode_exposes_apply_delta() -> None:
     names = set(_tools(_session(WRITE_MODE_AUTO)))
-    assert names == {"propose_delta", "check_facts", "parse_guide", "apply_delta"}
+    assert names == {"propose_delta", "check_facts", "parse_guide", "propose_photo_change", "apply_delta", "apply_photo_change"}
 
 
 def test_propose_delete_by_name_records_delta_without_writing() -> None:

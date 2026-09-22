@@ -104,6 +104,9 @@ export interface ItineraryDeltaPayload {
   lat?: number | null;
   lng?: number | null;
   item_ids?: string[] | null;
+  photo_id?: string | null;
+  photo_ids?: string[] | null;
+  visit_stop_id?: string | null;
 }
 
 export interface ItineraryDelta {
@@ -123,6 +126,12 @@ export interface TripChatOut {
 }
 
 export type TripChatWriteMode = "propose" | "auto_apply";
+
+export interface TripChatContext {
+  day_index?: number;
+  item_id?: string;
+  photo_id?: string;
+}
 
 
 export interface GenerationJobStage {

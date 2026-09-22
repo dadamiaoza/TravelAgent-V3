@@ -19,6 +19,19 @@ interface VisitStopPin {
   thumbUrl: string | null;
 }
 
+interface GhostPin {
+  id: string;
+  kind: "plan" | "visit";
+  chapterKey: string;
+  place_name: string;
+  lat: number;
+  lng: number;
+  count: number;
+  thumbUrl: string | null;
+  itemId?: string;
+  visitStopId?: string;
+}
+
 interface TripMapProps {
   selectedDayIndex: number;
   onSelectDay: (index: number) => void;
@@ -32,6 +45,13 @@ interface TripMapProps {
   focusVisitStopId?: string | null;
   onSelectVisitStop?: (stopId: string) => void;
   showPlanLayer?: boolean;
+  ghostPins?: GhostPin[];
+  onSelectGhost?: (pin: GhostPin) => void;
+  /** Recall only: "day" fits current-chapter pins; "all" includes other-day ghosts. */
+  fitScope?: "day" | "all";
+  /** Recall only: bump when the user asks the camera to move (chapter or 显示其他拍摄日). */
+  fitNonce?: number;
+  fitKey?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -130,6 +150,21 @@ function visitPinContent(
     <span style="position:absolute;right:-4px;bottom:-4px;min-width:18px;padding:0 5px;border-radius:9999px;background:${ring};color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;border:2px solid #fff;">${photo.count}</span>
   </div>`;
 }
+function ghostPinContent(
+  photo: { count: number; thumbUrl: string | null } | undefined,
+  poiName: string,
+  ring: string,
+): string {
+  const size = 32;
+  if (!photo?.thumbUrl) {
+    return `<div style="width:${size}px;height:${size}px;border-radius:9999px;background:${ring};color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 8px rgba(15,23,42,0.18);opacity:0.35;cursor:pointer;">${escapeHtml(poiName.slice(0, 2))}</div>`;
+  }
+  return `<div style="position:relative;width:${size}px;height:${size}px;cursor:pointer;opacity:0.35;">
+    <img src="${escapeHtml(photo.thumbUrl)}" alt="${escapeHtml(poiName)}"
+      style="width:${size}px;height:${size}px;border-radius:9999px;object-fit:cover;border:2px solid ${ring};box-shadow:0 2px 8px rgba(15,23,42,0.18);" />
+    <span style="position:absolute;right:-4px;bottom:-4px;min-width:16px;padding:0 4px;border-radius:9999px;background:${ring};color:#fff;font-size:9px;font-weight:700;line-height:14px;text-align:center;border:2px solid #fff;">${photo.count}</span>
+  </div>`;
+}
 function photoPinContent(
   seq: number,
   photo: { count: number; thumbUrl: string | null } | undefined,
@@ -163,9 +198,16 @@ export default function TripMap({
   focusVisitStopId = null,
   onSelectVisitStop,
   showPlanLayer = true,
+  ghostPins = [],
+  onSelectGhost,
+  fitScope = "day",
+  fitNonce = 0,
+  fitKey = "",
 }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlaysRef = useRef<AMapOverlay[]>([]);
+  const dayFitOverlaysRef = useRef<AMapOverlay[]>([]);
+  const ghostFitOverlaysRef = useRef<AMapOverlay[]>([]);
   const markersRef = useRef<Map<string, AMapMarker>>(new Map());
   const highlightTimerRef = useRef<number | null>(null);
   const infoWindowRef = useRef<AMapInfoWindow | null>(null);
@@ -177,6 +219,10 @@ export default function TripMap({
   const { key, securityCode } = getAmapConfig();
   const isRecall = variant === "recall";
 
+  function findItem(itemId: string): ItineraryItem | undefined {
+    return days.flatMap((day) => day.items ?? []).find((item) => item.id === itemId);
+  }
+
   function markerHtml(item: ItineraryItem, focused: boolean): string {
     if (isRecall) {
       const hasPhotos = Boolean(photoByItem?.[item.id]?.count);
@@ -187,28 +233,29 @@ export default function TripMap({
 
   function resetMarkerHighlights() {
     markersRef.current.forEach((marker, itemId) => {
-      const day = days[selectedDayIndex];
-      const item = day?.items.find((it) => it.id === itemId);
+      const item = findItem(itemId);
       if (item) marker.setContent(markerHtml(item, false));
     });
   }
 
   function focusMarker(itemId: string) {
     if (!map) return;
-    const day = days[selectedDayIndex];
-    const item = day?.items.find((it) => it.id === itemId);
+    const item = findItem(itemId);
     const marker = markersRef.current.get(itemId);
-    if (!item || !marker) return;
+    if (!item || !marker || item.lat == null || item.lng == null) return;
 
     resetMarkerHighlights();
     marker.setContent(markerHtml(item, true));
     map.setZoomAndCenter(16, [item.lng!, item.lat!]);
 
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
-    highlightTimerRef.current = window.setTimeout(() => {
-      marker.setContent(markerHtml(item, false));
-      highlightTimerRef.current = null;
-    }, 2500);
+    highlightTimerRef.current = null;
+    if (!isRecall) {
+      highlightTimerRef.current = window.setTimeout(() => {
+        marker.setContent(markerHtml(item, false));
+        highlightTimerRef.current = null;
+      }, 2500);
+    }
   }
 
   useEffect(() => {
@@ -246,17 +293,31 @@ export default function TripMap({
     infoWindowRef.current = null;
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
     overlaysRef.current = [];
+    dayFitOverlaysRef.current = [];
+    ghostFitOverlaysRef.current = [];
     markersRef.current.clear();
 
-    const validItems = day.items.filter(
-      (item) => item.lat != null && item.lng != null,
+    const validItems = (day.items ?? []).filter((item) => item.lat != null && item.lng != null);
+    const uniqueLocated: ItineraryItem[] = [];
+    const seenIds = new Set<string>();
+    for (const item of days.flatMap((row) => row.items ?? [])) {
+      if (item.lat == null || item.lng == null || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      uniqueLocated.push(item);
+    }
+    const ghostItemIds = new Set(
+      ghostPins.filter((pin) => pin.itemId).map((pin) => pin.itemId as string),
     );
-    const plannedItems =
-      isRecall && !showPlanLayer
-        ? validItems.filter((item) => Boolean(photoByItem?.[item.id]?.count))
-        : validItems;
+    const solidItems = isRecall
+      ? uniqueLocated.filter((item) => Boolean(photoByItem?.[item.id]?.count))
+      : validItems;
+    const faintPlanItems =
+      isRecall && showPlanLayer
+        ? validItems.filter((item) => !photoByItem?.[item.id]?.count && !ghostItemIds.has(item.id))
+        : [];
+    const pinItems = isRecall ? [...solidItems, ...faintPlanItems] : validItems;
 
-    if (validItems.length === 0 && visitStops.length === 0) {
+    if (pinItems.length === 0 && visitStops.length === 0 && ghostPins.length === 0) {
       setError(`Day ${day.day_index} 暂无坐标数据`);
       return;
     }
@@ -266,11 +327,12 @@ export default function TripMap({
     const infoWindow = isRecall ? null : new amap.InfoWindow();
     infoWindowRef.current = infoWindow;
 
-    plannedItems.forEach((item) => {
+    pinItems.forEach((item) => {
       const marker = new amap.Marker({
         position: [item.lng!, item.lat!],
         title: item.poi_name,
         content: markerHtml(item, focusItemId === item.id),
+        zIndex: photoByItem?.[item.id]?.count ? 110 : 90,
       });
       marker.on("click", () => {
         if (infoWindow) {
@@ -282,6 +344,10 @@ export default function TripMap({
       marker.setMap(map);
       markersRef.current.set(item.id, marker);
       overlaysRef.current.push(marker);
+      const hasPhotos = Boolean(photoByItem?.[item.id]?.count);
+      if (!isRecall || hasPhotos) {
+        dayFitOverlaysRef.current.push(marker);
+      }
     });
 
     const drawPlanLine = !isRecall || showPlanLayer;
@@ -338,9 +404,28 @@ export default function TripMap({
       marker.setMap(map);
       markersRef.current.set(`visit:${stop.id}`, marker);
       overlaysRef.current.push(marker);
+      dayFitOverlaysRef.current.push(marker);
     });
 
-    if (overlaysRef.current.length > 0) {
+    ghostPins.forEach((pin) => {
+      const marker = new amap.Marker({
+        position: [pin.lng, pin.lat],
+        title: `${pin.place_name} · 其他拍摄日`,
+        content: ghostPinContent(
+          { count: pin.count, thumbUrl: pin.thumbUrl },
+          pin.place_name,
+          pin.kind === "visit" ? "#d97706" : "#0284c7",
+        ),
+        zIndex: 70,
+      });
+      marker.on("click", () => onSelectGhost?.(pin));
+      marker.setMap(map);
+      markersRef.current.set(pin.id, marker);
+      overlaysRef.current.push(marker);
+      ghostFitOverlaysRef.current.push(marker);
+    });
+
+    if (!isRecall && overlaysRef.current.length > 0) {
       map.setFitView(overlaysRef.current);
     }
   }, [
@@ -349,22 +434,47 @@ export default function TripMap({
     selectedDayIndex,
     days,
     photoByItem,
-    focusItemId,
     onSelectItem,
     isRecall,
     visitStops,
-    focusVisitStopId,
     onSelectVisitStop,
     showPlanLayer,
+    ghostPins,
+    onSelectGhost,
   ]);
 
   useEffect(() => {
-    if (!map || !focusItemId) return;
-    focusMarker(focusItemId);
-  }, [focusItemId, map, selectedDayIndex, days]);
+    if (!map || !isRecall) return;
+    if (focusItemId || focusVisitStopId) return;
+    const targets =
+      fitScope === "all"
+        ? [...dayFitOverlaysRef.current, ...ghostFitOverlaysRef.current]
+        : dayFitOverlaysRef.current;
+    if (targets.length > 0) {
+      map.setFitView(targets);
+    }
+  }, [map, isRecall, fitScope, fitNonce, fitKey, focusItemId, focusVisitStopId, selectedDayIndex]);
 
   useEffect(() => {
-    if (!map || !focusVisitStopId) return;
+    if (!map || !focusItemId) {
+      if (isRecall && map && !focusItemId) resetMarkerHighlights();
+      return;
+    }
+    focusMarker(focusItemId);
+  }, [focusItemId, map, selectedDayIndex, days, isRecall]);
+
+  useEffect(() => {
+    if (!map || !focusVisitStopId) {
+      if (isRecall && map) {
+        visitStops.forEach((stop) => {
+          const marker = markersRef.current.get(`visit:${stop.id}`);
+          if (marker) {
+            marker.setContent(visitPinContent({ count: stop.count, thumbUrl: stop.thumbUrl }, false, stop.place_name));
+          }
+        });
+      }
+      return;
+    }
     const stop = visitStops.find((item) => item.id === focusVisitStopId);
     if (!stop) return;
     map.setZoomAndCenter(16, [stop.lng, stop.lat]);
@@ -372,12 +482,15 @@ export default function TripMap({
     if (marker) {
       marker.setContent(visitPinContent({ count: stop.count, thumbUrl: stop.thumbUrl }, true, stop.place_name));
       if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
-      highlightTimerRef.current = window.setTimeout(() => {
-        marker.setContent(visitPinContent({ count: stop.count, thumbUrl: stop.thumbUrl }, false, stop.place_name));
-        highlightTimerRef.current = null;
-      }, 2500);
+      highlightTimerRef.current = null;
+      if (!isRecall) {
+        highlightTimerRef.current = window.setTimeout(() => {
+          marker.setContent(visitPinContent({ count: stop.count, thumbUrl: stop.thumbUrl }, false, stop.place_name));
+          highlightTimerRef.current = null;
+        }, 2500);
+      }
     }
-  }, [focusVisitStopId, map, visitStops]);
+  }, [focusVisitStopId, map, visitStops, isRecall]);
 
   useEffect(() => {
     return () => {

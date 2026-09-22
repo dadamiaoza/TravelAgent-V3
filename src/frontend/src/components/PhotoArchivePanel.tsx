@@ -39,6 +39,7 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
   const remove = useDeletePhoto(trip.id);
   const [selected, setSelected] = useState<string[]>([]);
   const [preview, setPreview] = useState<PhotoAsset | null>(null);
+  const [visitStopsOpen, setVisitStopsOpen] = useState(false);
   const items = useMemo(
     () =>
       (trip.days ?? []).flatMap((day) =>
@@ -52,6 +53,7 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
 
   const pending = (photos.data ?? []).filter(isPending);
   const suggestedStops = (visitStops.data ?? []).filter((stop) => stop.status === "suggested");
+  const confirmedVisitStops = (visitStops.data ?? []).filter((stop) => stop.status === "confirmed");
 
   function onFiles(list: FileList | null, itemId?: string) {
     if (!list?.length) return;
@@ -92,6 +94,7 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
       <p className="text-sm text-gray-600">
         共 {(photos.data ?? []).length} 张
         {suggestedStops.length > 0 ? ` · ${suggestedStops.length} 处建议停留` : ""}
+        {confirmedVisitStops.length > 0 ? ` · ${confirmedVisitStops.length} 处计划外停留` : ""}
         {pending.length > 0 ? ` · ${pending.length} 张待确认` : ""}
       </p>
 
@@ -157,6 +160,52 @@ export default function PhotoArchivePanel({ trip }: { trip: Trip }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {confirmedVisitStops.length > 0 && (
+        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 text-left"
+            aria-expanded={visitStopsOpen}
+            onClick={() => setVisitStopsOpen((open) => !open)}
+          >
+            <span className="flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-800">计划外停留</span>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                {confirmedVisitStops.length} 个节点
+              </span>
+            </span>
+            <span className="text-xs text-slate-500">{visitStopsOpen ? "收起" : "展开"}</span>
+          </button>
+          {visitStopsOpen && (
+            <>
+              <p className="mt-2 text-xs text-slate-500">挂错了也可以去掉。照片会回到未归类，不会改行程计划。</p>
+              <ul className="mt-2 max-h-[13.25rem] space-y-2 overflow-y-auto overscroll-contain pr-1">
+                {confirmedVisitStops.map((stop) => (
+                  <li key={stop.id} className="flex min-h-9 items-center justify-between gap-2 rounded border border-slate-100 bg-white px-2 py-1.5">
+                    <p className="text-sm text-gray-900">
+                      {stop.place_name}
+                      <span className="ml-1 text-xs text-slate-500">{stop.photo_count} 张</span>
+                    </p>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs text-red-600 hover:underline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const extra = stop.photo_count > 0 ? "上面的照片会回到未归类，" : "";
+                        if (!window.confirm(`去掉「${stop.place_name}」？${extra}不会改行程计划。`)) return;
+                        patchStop.mutate({ stopId: stop.id, action: "dismiss" });
+                      }}
+                    >
+                      去掉
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
 
