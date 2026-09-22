@@ -1,53 +1,129 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import type { Trip, TripSuggestOut } from "@/lib/types";
 
+const EXAMPLE_PROMPTS = [
+  {
+    label: "杭州3日",
+    text: "帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高",
+  },
+  {
+    label: "重庆周末",
+    text: "周末去重庆玩两天，2个人，想吃火锅、看夜景，节奏轻松一点",
+  },
+  {
+    label: "亲子",
+    text: "带孩子去上海玩3天，希望行程轻松、少排队，适合亲子",
+  },
+  {
+    label: "美食向",
+    text: "成都4日美食行程，2个人，想吃地道小吃，也留出逛街的时间",
+  },
+] as const;
+
+const fieldClass =
+  "w-full min-w-0 rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-tertiary focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100";
+
+const primaryButtonClass =
+  "w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60";
+
+function messageFromError(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message.trim() : "";
+  if (!raw || /提示词|API error/i.test(raw)) return fallback;
+  return raw;
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block min-w-0">
+      <span className="mb-1 block text-xs text-ink-tertiary">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 export default function TripPromptForm() {
   const navigate = useNavigate();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const focusRequest = useRef(false);
   const [text, setText] = useState("");
+  const [suggestedText, setSuggestedText] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<TripSuggestOut | null>(null);
   const [destination, setDestination] = useState("");
-    const [city, setCity] = useState("");
+  const [city, setCity] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [peopleCount, setPeopleCount] = useState("1");
   const [optimizedPrompt, setOptimizedPrompt] = useState("");
-  const [mustVisit, setMustVisit] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [mustVisit, setMustVisit] = useState<string[]>([]);
+  const [mustVisitDraft, setMustVisitDraft] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "suggesting" | "creating">("idle");
   const [error, setError] = useState<string | null>(null);
+  const busy = phase !== "idle";
 
-  async function handleOptimize() {
-    if (!text.trim()) {
-      setError("请先输入你的旅行想法");
+  useEffect(() => {
+    if (!suggestion) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [suggestion]);
+
+  useEffect(() => {
+    if (!focusRequest.current) return;
+    focusRequest.current = false;
+    const field = textareaRef.current;
+    if (!field) return;
+    field.focus();
+    const pos = field.value.length;
+    field.setSelectionRange(pos, pos);
+  }, [text]);
+
+  function applyExample(example: string) {
+    setError(null);
+    setSuggestion(null);
+    setSuggestedText(null);
+    if (example === text) {
+      textareaRef.current?.focus();
       return;
     }
-    setLoading(true);
+    focusRequest.current = true;
+    setText(example);
+  }
+
+  function addMustVisit() {
+    const name = mustVisitDraft.trim();
+    if (!name) return;
+    setMustVisit((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    setMustVisitDraft("");
+  }
+
+  async function handleSuggest() {
+    const request = text.trim();
+    if (!request) {
+      setError("请先说说你想怎么玩");
+      textareaRef.current?.focus();
+      return;
+    }
+    setPhase("suggesting");
     setError(null);
     try {
-      const result = await api.post<TripSuggestOut>("/trips/suggest", { text });
+      const result = await api.post<TripSuggestOut>("/trips/suggest", { text: request });
       setSuggestion(result);
-        setCity(result.city ?? "");
+      setSuggestedText(request);
+      setCity(result.city ?? "");
       setDestination(result.destination ?? "");
       setStartDate(result.start_date ?? "");
       setEndDate(result.end_date ?? "");
       setPeopleCount(String(result.people_count ?? 1));
       setOptimizedPrompt(result.optimized_prompt ?? "");
-      setMustVisit((result.must_visit ?? []).join("，"));
+      setMustVisit((result.must_visit ?? []).map((item) => item.trim()).filter(Boolean));
+      setMustVisitDraft("");
+      setShowDetails(false);
     } catch (err) {
-      const raw = err instanceof Error ? err.message : "";
-      try {
-        const parsed = JSON.parse(raw) as { detail?: unknown };
-        setError(
-          typeof parsed.detail === "string"
-            ? parsed.detail
-            : "提示词优化失败，请稍后重试",
-        );
-      } catch {
-        setError("提示词优化失败，请稍后重试");
-      }
+      setError(messageFromError(err, "暂时没能整理出行程，请稍后重试"));
     } finally {
-      setLoading(false);
+      setPhase("idle");
     }
   }
 
@@ -60,148 +136,247 @@ export default function TripPromptForm() {
       setError("请填写出发和结束日期");
       return;
     }
+    if (startDate > endDate) {
+      setError("结束日期不能早于出发日期");
+      return;
+    }
     const count = Number(peopleCount);
     if (!Number.isInteger(count) || count < 1 || count > 20) {
-      setError("人数必须是 1-20 的整数");
+      setError("人数需要是 1 到 20 人");
       return;
     }
 
-    setLoading(true);
+    setPhase("creating");
     setError(null);
     try {
       const trip = await api.post<Trip>("/trips", {
         destination: destination.trim(),
-          city: city.trim() || undefined,
+        city: city.trim() || undefined,
         start_date: startDate,
         end_date: endDate,
         people_count: count,
         user_prompt: optimizedPrompt.trim() || undefined,
-        must_visit: mustVisit
-          .split(/[，,]/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        must_visit: mustVisit,
       });
       navigate(`/trips/${trip.id}`);
-    } catch {
-      setError("生成失败，请稍后重试");
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      setError(messageFromError(err, "行程还没生成成功，请稍后重试"));
+      setPhase("idle");
     }
   }
 
-  const inputClass =
-    "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
-
   return (
-    <div className="space-y-4 rounded-lg border bg-white p-6 shadow-sm">
+    <div className="rounded-2xl border border-line-tertiary bg-white p-5 shadow-[0_1px_2px_rgba(20,20,20,0.04),0_12px_32px_rgba(20,20,20,0.05)] sm:p-6">
       <div>
-        <label className="mb-1 block text-sm font-medium">
+        <label htmlFor="trip-request" className="mb-2 block text-sm font-medium text-ink">
           用一句话描述你的旅行需求
         </label>
         <textarea
+          id="trip-request"
+          ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setText(next);
+            if (error) setError(null);
+            if (suggestedText !== null && next.trim() !== suggestedText) {
+              setSuggestion(null);
+              setSuggestedText(null);
+            }
+          }}
           rows={4}
           placeholder="例如：帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高"
-          className={inputClass}
+          className={fieldClass}
         />
+        <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="示例需求">
+          {EXAMPLE_PROMPTS.map((example) => {
+            const selected = text === example.text;
+            return (
+              <button
+                key={example.label}
+                type="button"
+                onClick={() => applyExample(example.text)}
+                disabled={busy}
+                aria-pressed={selected}
+                className={`rounded-full border px-3 py-1 text-sm transition disabled:opacity-60 ${
+                  selected
+                    ? "border-sky-300 bg-sky-50 text-sky-800"
+                    : "border-line-tertiary bg-chrome text-ink-secondary hover:border-sky-200 hover:text-ink"
+                }`}
+              >
+                {example.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <button
-        type="button"
-        onClick={handleOptimize}
-        disabled={loading}
-        className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-      >
-        {loading ? "正在优化提示词…" : "优化提示词"}
-      </button>
+      {!suggestion && (
+        <button
+          type="button"
+          onClick={handleSuggest}
+          disabled={busy}
+          className={`${primaryButtonClass} mt-4`}
+        >
+          {phase === "suggesting" ? "正在整理需求…" : "开始规划"}
+        </button>
+      )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {!suggestion && error && (
+        <p className="mt-3 text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
 
       {suggestion && (
-        <div className="space-y-3 rounded-md border border-blue-100 bg-blue-50/50 p-4">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">优化后的提示词</h3>
-            <textarea
-              value={optimizedPrompt}
-              onChange={(e) => setOptimizedPrompt(e.target.value)}
-              rows={3}
-              className={inputClass}
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              你可以直接修改这段提示词，生成时会作为用户补充需求传给 AI。
-            </p>
+        <div ref={cardRef} className="mt-5 border-t border-line-tertiary pt-5">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">确认这些信息</h2>
+              <p className="mt-1 text-xs text-ink-secondary">改完后就可以生成行程</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSuggest}
+              disabled={busy}
+              className="shrink-0 text-sm text-ink-tertiary underline-offset-4 hover:text-ink-secondary hover:underline disabled:opacity-60"
+            >
+              {phase === "suggesting" ? "正在整理…" : "重新整理"}
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">目的地</label>
-              <input
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">城市（用于地理编码）</label>
+          <div className="space-y-3 rounded-xl border border-sky-100 bg-sky-50/50 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="目的地">
+                <input
+                  value={destination}
+                  onChange={(e) => setDestination(e.target.value)}
+                  className={fieldClass}
+                />
+              </Field>
+              <Field label="城市">
                 <input
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
-                  placeholder="例如：萍乡"
-                  className={inputClass}
+                  placeholder="例如：杭州"
+                  className={fieldClass}
                 />
+              </Field>
+              <Field label="出发">
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className={fieldClass}
+                />
+              </Field>
+              <Field label="结束">
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className={fieldClass}
+                />
+              </Field>
+              <Field label="人数">
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={peopleCount}
+                  onChange={(e) => setPeopleCount(e.target.value)}
+                  className={fieldClass}
+                />
+              </Field>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs text-ink-tertiary">想去的地方</p>
+              {mustVisit.length > 0 && (
+                <ul className="mb-2 flex flex-wrap gap-2">
+                  {mustVisit.map((place, index) => (
+                    <li key={`${place}-${index}`}>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-line-tertiary bg-white px-2.5 py-1 text-sm text-ink">
+                        {place}
+                        <button
+                          type="button"
+                          aria-label={`移除${place}`}
+                          onClick={() =>
+                            setMustVisit((prev) => prev.filter((_, i) => i !== index))
+                          }
+                          className="text-ink-tertiary hover:text-ink"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex gap-2">
+                <input
+                  value={mustVisitDraft}
+                  onChange={(e) => setMustVisitDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addMustVisit();
+                    }
+                  }}
+                  placeholder="添加一个地方，回车确认"
+                  className="min-w-0 flex-1 rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-tertiary focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                />
+                <button
+                  type="button"
+                  onClick={addMustVisit}
+                  disabled={!mustVisitDraft.trim()}
+                  className="shrink-0 rounded-xl border border-line-tertiary bg-white px-3 text-sm text-ink-secondary hover:text-ink disabled:opacity-40"
+                >
+                  添加
+                </button>
               </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">人数</label>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={peopleCount}
-                onChange={(e) => setPeopleCount(e.target.value)}
-                className={inputClass}
-              />
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">出发日期</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">结束日期</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-          </div>
 
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">
-              必去地点（用逗号分隔）
-            </label>
-            <input
-              value={mustVisit}
-              onChange={(e) => setMustVisit(e.target.value)}
-              placeholder="例如：武功山，安源路矿工人运动纪念馆"
-              className={inputClass}
-            />
-          </div>
+            <div>
+              <button
+                type="button"
+                aria-expanded={showDetails}
+                onClick={() => setShowDetails((open) => !open)}
+                className="text-sm text-ink-secondary underline-offset-4 hover:text-ink hover:underline"
+              >
+                {showDetails ? "收起详细需求" : "查看/编辑详细需求"}
+              </button>
+              {showDetails && (
+                <div className="mt-2">
+                  <textarea
+                    value={optimizedPrompt}
+                    onChange={(e) => setOptimizedPrompt(e.target.value)}
+                    rows={3}
+                    aria-label="详细需求"
+                    className={fieldClass}
+                  />
+                  <p className="mt-1 text-xs text-ink-tertiary">
+                    这段说明会一起用于生成行程，可以直接修改。
+                  </p>
+                </div>
+              )}
+            </div>
 
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={loading}
-            className="w-full rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
-          >
-            {loading ? "正在生成行程…" : "确认并生成行程"}
-          </button>
+            {error && (
+              <p className="text-sm text-red-600" role="alert">
+                {error}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={busy}
+              className={primaryButtonClass}
+            >
+              {phase === "creating" ? "正在生成行程…" : "确认并生成行程"}
+            </button>
+          </div>
         </div>
       )}
     </div>
