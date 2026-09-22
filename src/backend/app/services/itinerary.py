@@ -51,6 +51,36 @@ def _emit_stage(on_stage: StageCallback | None, key: str, progress: int, message
         on_stage(key, progress, message)
 
 
+def _positive_leg_minutes(value) -> int | None:
+    """A positive travel-leg minute count. Stay duration is not a leg."""
+    if value is None or value is False or value == "":
+        return None
+    try:
+        minutes = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if minutes <= 0:
+        return None
+    return minutes
+
+
+def _guide_leg_minutes(item: dict) -> int | None:
+    """Explicit A→B minutes from a guide or selected candidate.
+
+    suggested_duration_h / duration_h are time spent at the POI, not the leg.
+    """
+    for key in (
+        "travel_estimate_minutes",
+        "travel_minutes_from_prev",
+        "travel_minutes",
+        "leg_minutes",
+    ):
+        minutes = _positive_leg_minutes(item.get(key))
+        if minutes is not None:
+            return minutes
+    return None
+
+
 def assemble_days_from_entities(
     entities: list[dict],
     *,
@@ -79,6 +109,12 @@ def assemble_days_from_entities(
                 "duration_h": item.get("suggested_duration_h") or 1.5,
                 "travel_minutes_from_prev": 0,
             }
+            if seq > 1:
+                guide_minutes = _guide_leg_minutes(item)
+                if guide_minutes is not None:
+                    entry["travel_minutes_from_prev"] = guide_minutes
+                    entry["travel_estimate_minutes"] = guide_minutes
+                    entry["travel_estimate_source"] = "guide"
             if item.get("lat") is not None:
                 entry["lat"] = item["lat"]
             if item.get("lng") is not None:
@@ -145,9 +181,20 @@ def fill_itinerary_draft(
     return itinerary
 
 
-def route_itinerary_draft(itinerary: dict) -> dict:
-    """Always run the Python route optimizer. Never an agent."""
-    return json.loads(optimize_itinerary(json.dumps(itinerary, ensure_ascii=False)))
+def route_itinerary_draft(itinerary: dict, *, respect_fill_order: bool = True) -> dict:
+    """Always run the Python route optimizer. Never an agent.
+
+    Production generation keeps fill order unless sanity checks fail.
+    Pass respect_fill_order=False to force nearest-neighbor reordering.
+    The default call stays a single positional argument so existing stubs
+    that only accept the JSON payload continue to work.
+    """
+    payload = json.dumps(itinerary, ensure_ascii=False)
+    if respect_fill_order:
+        routed = optimize_itinerary(payload)
+    else:
+        routed = optimize_itinerary(payload, respect_fill_order=False)
+    return json.loads(routed)
 
 
 def generate_itinerary_draft(

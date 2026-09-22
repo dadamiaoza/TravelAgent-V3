@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class RouteReplanner(Protocol):
-    """Recompute travel times/routes for a day without changing order."""
+    """Recompute travel times. Explicit reoptimize may reorder within the day."""
 
     def reoptimize(
         self,
@@ -19,7 +19,7 @@ class RouteReplanner(Protocol):
         route_type: str,
         items: list[dict],
     ) -> list[dict]:
-        """Return updated item dicts in the same order as input."""
+        """Return updated item dicts. Order may follow nearest-neighbor."""
         ...
 
 

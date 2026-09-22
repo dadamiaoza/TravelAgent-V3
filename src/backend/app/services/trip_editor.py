@@ -526,7 +526,18 @@ def reoptimize_day(
         db.rollback()
         raise HTTPException(status_code=500, detail="Reoptimize failed")
 
-    for item, updated in zip(sorted(day.items, key=lambda it: it.seq), updated_items):
+    buckets: dict[str, list] = {}
+    for item in day.items:
+        buckets.setdefault(item.poi_name, []).append(item)
+    for bucket in buckets.values():
+        bucket.sort(key=lambda it: it.seq)
+
+    for seq, updated in enumerate(updated_items, start=1):
+        bucket = buckets.get(updated.get("poi_name") or "")
+        if not bucket:
+            continue
+        item = bucket.pop(0)
+        item.seq = updated.get("seq") or seq
         item.lat = updated.get("lat", item.lat)
         item.lng = updated.get("lng", item.lng)
         item.transport_mode = updated.get("transport_mode", item.transport_mode)

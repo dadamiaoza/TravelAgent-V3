@@ -1,8 +1,8 @@
 """Amap-based route replanner adapter.
 
-Implements the RouteReplanner port by delegating to the existing
-route_optimizer tool. Keeping this in infrastructure isolates the Agent/Tool
-dependency from the application service layer.
+Implements the RouteReplanner port by delegating to the route optimizer.
+Explicit reoptimize asks for nearest-neighbor order (respect_fill_order=False).
+Generation keeps fill order unless sanity checks fail.
 """
 import json
 
@@ -25,7 +25,7 @@ class AmapRouteReplanner:
         result = json.loads(
             optimize_itinerary(
                 json.dumps({"city": city, "days": [day_json]}, ensure_ascii=False),
-                reorder=False,
+                respect_fill_order=False,
             )
         )
         return (result.get("days") or [{}])[0].get("items") or []
