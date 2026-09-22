@@ -44,7 +44,7 @@
 |---|---|
 | 后端 | Python 3.12 + FastAPI |
 | Agent 编排 | LangGraph + langgraph-supervisor |
-| LLM | MiniMax M2.7（OpenAI 兼容接口） |
+| LLM | MiniMax M3（OpenAI 兼容接口） |
 | 数据库 | PostgreSQL 16 |
 | ORM / 迁移 | SQLAlchemy + Alembic |
 | 前端 | React 18 + Vite + TypeScript |

@@ -1,6 +1,7 @@
 import { Routes, Route } from "react-router-dom";
 import HomePage from "@/pages/HomePage";
-import TripPage from "@/pages/TripPage";
+import TripPage, { TripItineraryPage } from "@/pages/TripPage";
+import TripMapPage from "@/pages/TripMapPage";
 import SourcePage from "@/pages/SourcePage";
 
 export default function App() {
@@ -8,7 +9,10 @@ export default function App() {
     <div className="min-h-screen bg-background">
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/trips/:tripId" element={<TripPage />} />
+        <Route path="/trips/:tripId" element={<TripPage />}>
+          <Route index element={<TripItineraryPage />} />
+          <Route path="map" element={<TripMapPage />} />
+        </Route>
         <Route path="/sources" element={<SourcePage />} />
       </Routes>
     </div>

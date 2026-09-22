@@ -5,13 +5,13 @@ decisions across multi-turn conversations and across server restarts.
 """
 
 from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import connect
 from psycopg.rows import dict_row
 
 from app.agents.tools.attractions import search_attractions
 from app.core.config import settings
+from app.core.llm import chat_model
 
 _conn = connect(settings.database_url, autocommit=True, prepare_threshold=0, row_factory=dict_row)
 _checkpointer = PostgresSaver(_conn)
@@ -47,11 +47,7 @@ ITINERARY_GEN_SYSTEM_PROMPT = (
 
 def create_itinerary_gen():
     """Create an itinerary planning agent with PostgresSaver checkpointer."""
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
 
     return create_agent(
         model=model,

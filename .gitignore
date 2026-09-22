@@ -24,5 +24,8 @@ Thumbs.db
 # Interview prep (local only)
 .inter/
 
+# Photo archive local uploads (never commit user photos)
+src/backend/uploads/
+
 # TypeScript incremental cache
 *.tsbuildinfo

@@ -5,9 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
-from app.core.config import settings
 from sqlalchemy.orm import Session
+
+from app.core.llm import chat_model
 
 from app.agents.guide_parser import create_guide_parser
 from app.db.session import get_db
@@ -65,11 +65,7 @@ def infer_trip_from_source(source_id: UUID, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
     prompt = (
         "你是旅行规划助手。请根据以下攻略内容推断行程基本信息。\n"
         "只输出 JSON，不要其他文字，格式："

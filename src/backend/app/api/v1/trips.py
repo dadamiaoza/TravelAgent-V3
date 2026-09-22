@@ -8,13 +8,12 @@ from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
-from langchain_openai import ChatOpenAI
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.llm import chat_model
 from app.db.session import get_db
 from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem, GenerationJob
@@ -63,11 +62,7 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 @router.post("/suggest", response_model=TripSuggestOut)
 def suggest_trip(body: TripSuggestRequest):
     """把用户自然语言优化为结构化行程参数 + 优化提示词。"""
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
     prompt = (
         "你是旅行规划提示词优化助手。请把用户的自然语言需求解析为结构化行程参数，"
         "并生成一段更精确的优化提示词。\n"
@@ -78,7 +73,13 @@ def suggest_trip(body: TripSuggestRequest):
           "optimized_prompt 保持简洁，不要写太长。\n"
         f"用户输入：{body.text}\n"
     )
-    response = model.invoke(prompt)
+    try:
+        response = model.invoke(prompt)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="提示词优化暂时连不上模型服务，请稍后重试",
+        ) from exc
     content = response.content.strip()
     # 去掉模型思考块，避免其中的花括号干扰 JSON 提取
     content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
@@ -89,10 +90,12 @@ def suggest_trip(body: TripSuggestRequest):
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end <= start:
-        raise HTTPException(status_code=500, detail="Failed to optimize trip prompt")
+        raise HTTPException(status_code=502, detail="模型返回格式异常，请稍后重试")
 
-    import json as _json
-    data = _json.loads(content[start:end + 1])
+    try:
+        data = json.loads(content[start:end + 1])
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="模型返回格式异常，请稍后重试") from exc
     return TripSuggestOut(
         destination=(data.get("destination") or "").strip() or None,
           city=(data.get("city") or "").strip() or None,

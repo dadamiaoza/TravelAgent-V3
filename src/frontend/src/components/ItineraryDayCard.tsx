@@ -1,4 +1,4 @@
-import type { DayView } from "@/lib/types";
+import type { DayView, PhotoAsset } from "@/lib/types";
 import ItineraryItemCard from "@/components/ItineraryItemCard";
 import {
   useReoptimizeItineraryDay,
@@ -13,11 +13,17 @@ export default function ItineraryDayCard({
   tripId,
   focusedItemId,
   onSelectItem,
+  photosByItemId,
+  onUploadToItem,
+  uploading,
 }: {
   day: DayView;
   tripId: string;
   focusedItemId?: string | null;
   onSelectItem?: (itemId: string) => void;
+  photosByItemId?: Record<string, PhotoAsset[]>;
+  onUploadToItem?: (itemId: string, files: FileList) => void;
+  uploading?: boolean;
 }) {
   const updateTripLocally = useTripStore((s) => s.updateTripLocally);
   const reoptimize = useReoptimizeItineraryDay(tripId);
@@ -136,6 +142,9 @@ export default function ItineraryDayCard({
                   sequence={index + 1}
                   selected={focusedItemId === item.id}
                   onSelect={() => onSelectItem?.(item.id)}
+                  photos={photosByItemId?.[item.id] ?? []}
+                  onUpload={(files) => onUploadToItem?.(item.id, files)}
+                  uploading={uploading}
                 />
               </div>
             </div>

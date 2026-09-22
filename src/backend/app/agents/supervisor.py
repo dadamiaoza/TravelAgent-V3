@@ -14,7 +14,6 @@ Architecture:
   The supervisor is itself an Agent where the "tools" are other Agents.
   langgraph_supervisor.create_supervisor auto-generates handoff tools.
 """
-from langchain_openai import ChatOpenAI
 from langgraph_supervisor import create_supervisor
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import connect
@@ -25,6 +24,7 @@ from app.agents.itinerary_gen import create_itinerary_gen
 from app.agents.route_optimizer import create_route_optimizer
 from app.agents.fact_checker import create_fact_checker
 from app.core.config import settings
+from app.core.llm import chat_model
 
 # ── Module-level DB connection for supervisor's own PostgresSaver ──
 _conn = connect(settings.database_url, autocommit=True, prepare_threshold=0, row_factory=dict_row)
@@ -37,11 +37,7 @@ def create_supervisor_agent():
     Returns a compiled LangGraph workflow that manages all 4 sub-agents.
     The supervisor decides which agent(s) to invoke based on user input.
     """
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
 
     # ── Create sub-agents with unique names ──
     guide_parser = create_guide_parser()

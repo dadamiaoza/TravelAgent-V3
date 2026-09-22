@@ -164,3 +164,74 @@ export interface GenerationJob {
   finished_at?: string | null;
   next_run_at?: string | null;
 }
+
+export interface PhotoCandidate {
+  item_id: string;
+  poi_name?: string | null;
+  score?: number | null;
+}
+
+export interface PhotoAssignment {
+  item_id?: string | null;
+  visit_stop_id?: string | null;
+  visit_stop_status?: string | null;
+  visit_stop_name?: string | null;
+  assignment_type: string;
+  confidence: number;
+  is_confirmed: boolean;
+  evidence?: Record<string, unknown> | null;
+}
+
+export interface PhotoAsset {
+  id: string;
+  trip_id: string;
+  original_filename: string;
+  captured_at?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  status: string;
+  error?: string | null;
+  thumbnail_url?: string | null;
+  preview_url?: string | null;
+  assignment?: PhotoAssignment | null;
+  candidates: PhotoCandidate[];
+}
+
+export interface PhotoUploadOut {
+  job_id: string;
+  photos: { id: string; original_filename: string; duplicate: boolean }[];
+}
+
+export interface PhotoJobOut {
+  id: string;
+  status: string;
+  progress: number;
+  error?: string | null;
+}
+
+export interface PhotoMapSummaryItem {
+  kind?: "item" | "visit_stop";
+  item_id?: string | null;
+  visit_stop_id?: string | null;
+  place_name?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  count: number;
+  thumbnail_photo_id?: string | null;
+}
+
+export interface VisitStop {
+  id: string;
+  trip_id: string;
+  lat: number;
+  lng: number;
+  place_name: string;
+  linked_item_id?: string | null;
+  linked_item_name?: string | null;
+  status: string;
+  time_start?: string | null;
+  time_end?: string | null;
+  photo_count: number;
+  photos: PhotoAsset[];
+}
+

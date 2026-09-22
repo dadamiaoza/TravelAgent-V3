@@ -7,9 +7,7 @@ list with mention_count and source_names.
 import json
 import re
 
-from langchain_openai import ChatOpenAI
-
-from app.core.config import settings
+from app.core.llm import chat_model
 
 
 def merge_candidates(sources: list[tuple[str, list[dict]]]) -> list[dict]:
@@ -33,11 +31,7 @@ def merge_candidates(sources: list[tuple[str, list[dict]]]) -> list[dict]:
                 result.append(item)
         return result
 
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
 
     prompt = _build_merge_prompt(sources)
     response = model.invoke(prompt)

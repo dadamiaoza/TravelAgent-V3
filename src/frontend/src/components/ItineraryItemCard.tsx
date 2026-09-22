@@ -1,7 +1,13 @@
 import { useState } from "react";
-import type { ItineraryItem } from "@/lib/types";
+import { Link } from "react-router-dom";
+import type { ItineraryItem, PhotoAsset } from "@/lib/types";
 import { useDeleteItineraryItem } from "@/hooks/useItineraryMutations";
+import { useDeletePhoto, usePatchPhotoAssignment } from "@/hooks/useTripPhotos";
+import { useTrip } from "@/hooks/useTrip";
+import { planItemOptions } from "@/lib/photos";
 import { useTripStore } from "@/stores/tripStore";
+import PhotoBadge from "@/components/PhotoBadge";
+import PhotoLightbox from "@/components/PhotoLightbox";
 
 const TRANSPORT_LABELS: Record<string, string> = {
   walking: "🚶 步行",
@@ -84,14 +90,24 @@ export default function ItineraryItemCard({
   sequence,
   selected,
   onSelect,
+  photos = [],
+  onUpload,
+  uploading,
 }: {
   item: ItineraryItem;
   tripId: string;
   sequence?: number;
   selected?: boolean;
   onSelect?: () => void;
+  photos?: PhotoAsset[];
+  onUpload?: (files: FileList) => void;
+  uploading?: boolean;
 }) {
   const deleteItem = useDeleteItineraryItem(tripId);
+  const unassignPhoto = usePatchPhotoAssignment(tripId);
+  const removePhoto = useDeletePhoto(tripId);
+  const tripQuery = useTrip(tripId);
+  const assignItems = planItemOptions(tripQuery.data?.days);
   const updateTripLocally = useTripStore((s) => s.updateTripLocally);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -99,6 +115,9 @@ export default function ItineraryItemCard({
   const [startTime, setStartTime] = useState(item.start_time?.slice(0, 5) ?? "");
   const [endTime, setEndTime] = useState(item.end_time?.slice(0, 5) ?? "");
   const [notes, setNotes] = useState(item.notes ?? "");
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const previewPhotos = photos.filter((photo) => photo.thumbnail_url || photo.preview_url);
+  const badgePhoto = previewPhotos[0];
 
   const start = formatTime(item.start_time);
   const end = formatTime(item.end_time);
@@ -205,9 +224,19 @@ export default function ItineraryItemCard({
                 )}
               </div>
             </div>
-            <span className="shrink-0 text-xs tabular-nums text-gray-500">
-              {timeText}
-            </span>
+            <div className="flex shrink-0 items-start gap-2">
+              {badgePhoto?.thumbnail_url && (
+                <PhotoBadge
+                  thumbnailUrl={badgePhoto.thumbnail_url}
+                  photoCount={photos.length}
+                  alt={item.poi_name}
+                  onClick={() => setLightboxIndex(0)}
+                />
+              )}
+              <span className="text-xs tabular-nums text-gray-500">
+                {timeText}
+              </span>
+            </div>
           </div>
           <div className="mt-2 flex items-center gap-3">
             <button
@@ -220,6 +249,15 @@ export default function ItineraryItemCard({
             >
               编辑
             </button>
+            {photos.length > 0 && (
+              <Link
+                to={`/trips/${tripId}/map?item=${item.id}`}
+                onClick={(event) => event.stopPropagation()}
+                className="text-xs text-sky-700 hover:underline"
+              >
+                在回忆中看
+              </Link>
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -233,7 +271,45 @@ export default function ItineraryItemCard({
             >
               删除
             </button>
+            <label className="text-xs text-blue-600 hover:underline">
+              {uploading ? "上传中…" : "上传到这里"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="hidden"
+                disabled={uploading}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  if (e.target.files?.length) onUpload?.(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
+          {lightboxIndex != null && previewPhotos[lightboxIndex] && (
+            <PhotoLightbox
+              photos={previewPhotos}
+              index={lightboxIndex}
+              alt={item.poi_name}
+              items={assignItems}
+              onClose={() => setLightboxIndex(null)}
+              onIndexChange={setLightboxIndex}
+              onReassign={(photoId, itemId) => {
+                unassignPhoto.mutate({ photoId, action: "reassign", itemId });
+                setLightboxIndex(null);
+              }}
+              onUnassign={(photoId) => {
+                unassignPhoto.mutate({ photoId, action: "unassign" });
+                setLightboxIndex(null);
+              }}
+              onDelete={(photoId) => {
+                removePhoto.mutate(photoId);
+                setLightboxIndex(null);
+              }}
+            />
+          )}
         </>
       ) : (
         <div className="space-y-2">

@@ -40,7 +40,7 @@ class TestMergeCandidates:
             {"poi_name": "雷峰塔", "lat": None, "lng": None, "mention_count": 1, "source_names": ["攻略B"]},
         ]
 
-        with patch("app.services.merge.ChatOpenAI") as mock_llm:
+        with patch("app.services.merge.chat_model") as mock_llm:
             mock_instance = MagicMock()
             mock_llm.return_value = mock_instance
             mock_instance.invoke.return_value.content = json.dumps(mock_response, ensure_ascii=False)
@@ -62,7 +62,7 @@ class TestMergeCandidates:
 
         wrapped = 'Here is the merged result:\n[{"poi_name": "西湖", "mention_count": 2, "source_names": ["攻略A", "攻略B"]}]\nDone.'
 
-        with patch("app.services.merge.ChatOpenAI") as mock_llm:
+        with patch("app.services.merge.chat_model") as mock_llm:
             mock_instance = MagicMock()
             mock_llm.return_value = mock_instance
             mock_instance.invoke.return_value.content = wrapped

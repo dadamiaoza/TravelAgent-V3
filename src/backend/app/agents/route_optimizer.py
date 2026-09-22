@@ -8,19 +8,14 @@ This agent does NOT use a Checkpointer (no multi-turn memory needed — it's a
 one-shot transformation).
 """
 from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 
 from app.agents.tools.route_optimizer import optimize_itinerary
-from app.core.config import settings
+from app.core.llm import chat_model
 
 
 def create_route_optimizer():
     """Create a route optimizer agent with the optimize_itinerary tool."""
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-    )
+    model = chat_model()
 
     return create_agent(
         model=model,
