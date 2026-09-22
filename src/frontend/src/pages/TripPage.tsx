@@ -126,7 +126,7 @@ export function TripItineraryPage() {
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
       <TripDetail trip={trip} />
-      <div className="h-fit lg:sticky lg:top-4">
+      <div className="lg:sticky lg:top-4 lg:self-start">
         <ChatPanel tripId={trip.id} />
       </div>
     </div>

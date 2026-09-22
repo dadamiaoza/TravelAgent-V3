@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --bg-chrome: #f5f5f5;
+  --bg-unified-elevated: #fcfcfc;
+  --text-primary: #141414;
+  --text-secondary: rgb(20 20 20 / 0.66);
+  --text-tertiary: rgb(20 20 20 / 0.45);
+  --border-tertiary: rgb(20 20 20 / 0.08);
+}
+
+.chat-composer-input {
+  field-sizing: content;
+  min-height: 2.75rem;
+  max-height: 9rem;
+}
