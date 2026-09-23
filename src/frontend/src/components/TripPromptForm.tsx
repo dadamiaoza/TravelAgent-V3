@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import type { Trip, TripSuggestOut } from "@/lib/types";
+import {
+  detectDayCount,
+  explicitDateRange,
+  explicitPeople,
+  guideFoldPreview,
+  logisticsKind,
+  looksLikeGuide,
+} from "@/lib/guideInput";
+import type { SourceDocument, SourceEntity, Trip, TripSuggestOut } from "@/lib/types";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -43,26 +51,49 @@ function monthDay(iso: string): string {
   return `${Number(match[2])}/${Number(match[3])}`;
 }
 
-function confirmSummary(
-  destination: string,
-  city: string,
-  start: string,
-  end: string,
-  people: string,
-): string {
-  const place = destination.trim() || "目的地待定";
-  const cityName = city.trim();
-  const startLabel = monthDay(start);
-  const endLabel = monthDay(end);
+function confirmSummary(input: {
+  destination: string;
+  city: string;
+  start: string;
+  end: string;
+  people: string;
+  dayCount: number | null;
+  preferDayCount: boolean;
+  showPeople: boolean;
+}): string {
+  const destination = input.destination.trim();
+  const city = input.city.trim();
+  const head =
+    city && (!destination || destination.includes(city))
+      ? city
+      : destination || city || "目的地待定";
+  const startLabel = monthDay(input.start);
+  const endLabel = monthDay(input.end);
   const when =
-    startLabel && endLabel ? `${startLabel}–${endLabel}` : startLabel || endLabel || "日期待定";
-  const countLabel = people.trim() ? `${people.trim()}人` : "";
-  const parts = [place];
-  if (cityName && cityName !== place) parts.push(cityName);
-  parts.push(when);
-  if (countLabel) parts.push(countLabel);
+    input.preferDayCount && input.dayCount
+      ? `${input.dayCount}日`
+      : startLabel && endLabel
+        ? `${startLabel}–${endLabel}`
+        : startLabel || endLabel || (input.dayCount ? `${input.dayCount}日` : "日期待定");
+  const parts = [head, when];
+  if (input.showPeople && input.people.trim()) parts.push(`${input.people.trim()}人`);
   return parts.join(" · ");
 }
+
+function localISODate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addDays(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return localISODate(date);
+}
+
+const CHIP_LIMIT = 6;
 
 function messageFromError(err: unknown, fallback: string): string {
   const raw = err instanceof Error ? err.message.trim() : "";
@@ -95,8 +126,14 @@ export default function TripPromptForm() {
   const [optimizedPrompt, setOptimizedPrompt] = useState("");
   const [mustVisit, setMustVisit] = useState<string[]>([]);
   const [mustVisitDraft, setMustVisitDraft] = useState("");
-  const [showDetails, setShowDetails] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [inputMode, setInputMode] = useState<"sentence" | "guide">("sentence");
+  const [guideHint, setGuideHint] = useState(false);
+  const [foldPreview, setFoldPreview] = useState("");
+  const [dayCount, setDayCount] = useState<number | null>(null);
+  const [preferDayCount, setPreferDayCount] = useState(false);
+  const [showPeople, setShowPeople] = useState(true);
+  const [parsedEntities, setParsedEntities] = useState<SourceEntity[]>([]);
   const [phase, setPhase] = useState<"idle" | "suggesting" | "creating">("idle");
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== "idle";
@@ -156,12 +193,114 @@ export default function TripPromptForm() {
       setOptimizedPrompt(result.optimized_prompt ?? "");
       setMustVisit((result.must_visit ?? []).map((item) => item.trim()).filter(Boolean));
       setMustVisitDraft("");
-      setShowDetails(false);
+      setParsedEntities([]);
+      setDayCount(null);
+      setPreferDayCount(false);
+      setShowPeople(true);
+      setFoldPreview(guideFoldPreview(result.optimized_prompt ?? ""));
       setEditing(false);
     } catch (err) {
       setError(messageFromError(err, "暂时没能整理出行程，请稍后重试"));
     } finally {
       setPhase("idle");
+    }
+  }
+
+  async function handleGuide() {
+    const request = text.trim();
+    if (!request) {
+      setError("请先粘贴攻略");
+      textareaRef.current?.focus();
+      return;
+    }
+    setPhase("suggesting");
+    setError(null);
+    try {
+      const title = request.split("\n").map((line) => line.trim()).find(Boolean)?.slice(0, 30) || "攻略";
+      const created = await api.post<SourceDocument>("/sources", { title, text: request });
+      const parsed = await api.post<SourceDocument>(`/sources/${created.id}/parse`, {});
+      const entities = parsed.entities ?? [];
+      let destination = title;
+      let city = "";
+      const fromEntities = entities.length
+        ? Math.max(...entities.map((item) => item.day_index || 1))
+        : 1;
+      let inferredDays = Math.max(detectDayCount(request) ?? 1, fromEntities);
+      try {
+        const inferred = await api.post<{ destination: string; city?: string | null; day_count: number }>(
+          `/sources/${created.id}/infer-trip`,
+          {},
+        );
+        destination = inferred.destination || destination;
+        city = inferred.city ?? "";
+        inferredDays = inferred.day_count || inferredDays;
+      } catch {
+        // Day marks and place names still fill the card when inference is unavailable.
+      }
+      const dated = explicitDateRange(request);
+      const people = explicitPeople(request);
+      const start = dated?.start ?? localISODate(new Date());
+      const notes = entities
+        .map((item) => item.visit_tips ?? "")
+        .filter(Boolean);
+      const visits = entities.filter((item) => !logisticsKind(item.poi_name));
+      setSuggestion({
+        destination,
+        city,
+        start_date: start,
+        end_date: dated?.end ?? addDays(start, Math.max(inferredDays, 1) - 1),
+        people_count: people ?? 1,
+        optimized_prompt: request,
+        must_visit: visits.map((item) => item.poi_name),
+      });
+      setSuggestedText(request);
+      setDestination(destination);
+      setCity(city);
+      setStartDate(start);
+      setEndDate(dated?.end ?? addDays(start, Math.max(inferredDays, 1) - 1));
+      setPeopleCount(String(people ?? 1));
+      setOptimizedPrompt(request);
+      setMustVisit(visits.map((item) => item.poi_name.trim()).filter(Boolean));
+      setMustVisitDraft("");
+      setParsedEntities(entities);
+      setDayCount(inferredDays);
+      setPreferDayCount(!dated);
+      setShowPeople(people !== null);
+      setFoldPreview(guideFoldPreview(request, notes));
+      setEditing(false);
+    } catch (err) {
+      setError(messageFromError(err, "暂时没能解析这篇攻略，请稍后重试"));
+    } finally {
+      setPhase("idle");
+    }
+  }
+
+  function handlePrimary() {
+    if (inputMode === "guide") {
+      void handleGuide();
+      return;
+    }
+    void handleSuggest();
+  }
+
+  function chooseMode(next: "sentence" | "guide") {
+    if (next === inputMode) return;
+    setInputMode(next);
+    setGuideHint(false);
+    setSuggestion(null);
+    setSuggestedText(null);
+    setError(null);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = event.clipboardData.getData("text");
+    const field = event.currentTarget;
+    const start = field.selectionStart ?? field.value.length;
+    const end = field.selectionEnd ?? field.value.length;
+    const next = `${field.value.slice(0, start)}${pasted}${field.value.slice(end)}`;
+    if (inputMode === "sentence" && looksLikeGuide(next)) {
+      setInputMode("guide");
+      setGuideHint(true);
     }
   }
 
@@ -199,6 +338,21 @@ export default function TripPromptForm() {
         people_count: count,
         user_prompt: optimizedPrompt.trim() || undefined,
         must_visit: mustVisit,
+        ...(parsedEntities.length > 0
+          ? {
+              selected_entities: parsedEntities.map((entity) => ({
+                poi_name: entity.poi_name,
+                day_index: entity.day_index,
+                seq: entity.seq,
+                lat: entity.lat ?? null,
+                lng: entity.lng ?? null,
+                suggested_duration_h: entity.suggested_duration_h ?? null,
+                best_time: entity.best_time ?? null,
+                cost_estimate: entity.cost_estimate ?? null,
+                visit_tips: entity.visit_tips ?? null,
+              })),
+            }
+          : {}),
       });
       navigate(`/trips/${trip.id}`);
     } catch (err) {
@@ -207,18 +361,61 @@ export default function TripPromptForm() {
     }
   }
 
-  const summary = confirmSummary(destination, city, startDate, endDate, peopleCount);
+  const summary = confirmSummary({
+    destination,
+    city,
+    start: startDate,
+    end: endDate,
+    people: peopleCount,
+    dayCount,
+    preferDayCount,
+    showPeople,
+  });
+  const rerunLabel = phase === "suggesting"
+    ? inputMode === "guide"
+      ? "正在解析…"
+      : "正在整理…"
+    : "重新整理";
+  const visiblePlaces = mustVisit.slice(0, CHIP_LIMIT);
+  const hiddenPlaceCount = Math.max(0, mustVisit.length - CHIP_LIMIT);
+  const modeChip = (selected: boolean) =>
+    `${chipClass} transition disabled:opacity-60 ${
+      selected
+        ? "border-blue-600/40 bg-white text-blue-700"
+        : "border-line-tertiary bg-chrome/80 text-ink-secondary hover:text-ink"
+    }`;
 
   return (
     <div className="rounded-3xl border border-line-tertiary bg-white px-6 py-7 shadow-[0_1px_2px_rgba(20,20,20,0.04)] sm:px-8 sm:py-8">
       <div>
-        <label htmlFor="trip-request" className="mb-3 block text-sm text-ink-secondary">
-          用一句话描述你的旅行需求
-        </label>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <label htmlFor="trip-request" className="text-sm text-ink-secondary">
+            {inputMode === "guide" ? "粘贴一篇攻略" : "用一句话描述你的旅行需求"}
+          </label>
+          <div className="flex gap-2" role="group" aria-label="输入方式">
+            <button
+              type="button"
+              aria-pressed={inputMode === "sentence"}
+              onClick={() => chooseMode("sentence")}
+              className={modeChip(inputMode === "sentence")}
+            >
+              一句话
+            </button>
+            <button
+              type="button"
+              aria-pressed={inputMode === "guide"}
+              onClick={() => chooseMode("guide")}
+              className={modeChip(inputMode === "guide")}
+            >
+              粘贴攻略
+            </button>
+          </div>
+        </div>
         <textarea
           id="trip-request"
           ref={textareaRef}
           value={text}
+          onPaste={handlePaste}
           onChange={(e) => {
             const next = e.target.value;
             setText(next);
@@ -228,10 +425,18 @@ export default function TripPromptForm() {
               setSuggestedText(null);
             }
           }}
-          rows={4}
-          placeholder="例如：帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高"
+          rows={inputMode === "guide" ? 8 : 4}
+          placeholder={
+            inputMode === "guide"
+              ? "例如：长沙3日。交通：长沙南。D1 五一广场 → 坡子街。住：五一/芙蓉。Tips：省博提前约"
+              : "例如：帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高"
+          }
           className={fieldClass}
         />
+        {guideHint && inputMode === "guide" && (
+          <p className="mt-2 text-xs text-ink-tertiary">看起来像攻略，将按攻略解析</p>
+        )}
+        {inputMode === "sentence" && (
         <div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="示例需求">
           {EXAMPLE_PROMPTS.map((example) => {
             const selected = text === example.text;
@@ -253,16 +458,23 @@ export default function TripPromptForm() {
             );
           })}
         </div>
+        )}
       </div>
 
       {!suggestion && (
         <button
           type="button"
-          onClick={handleSuggest}
+          onClick={handlePrimary}
           disabled={busy}
           className={`${primaryButtonClass} mt-6`}
         >
-          {phase === "suggesting" ? "正在整理需求…" : "开始规划"}
+          {phase === "suggesting"
+            ? inputMode === "guide"
+              ? "正在解析攻略…"
+              : "正在整理需求…"
+            : inputMode === "guide"
+              ? "解析并规划"
+              : "开始规划"}
         </button>
       )}
 
@@ -279,11 +491,11 @@ export default function TripPromptForm() {
               <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={handleSuggest}
+                  onClick={handlePrimary}
                   disabled={busy}
                   className="text-sm text-ink-tertiary hover:text-ink-secondary disabled:opacity-60"
                 >
-                  {phase === "suggesting" ? "正在整理…" : "重新整理"}
+                  {rerunLabel}
                 </button>
                 <button
                   type="button"
@@ -314,7 +526,10 @@ export default function TripPromptForm() {
                   <input
                     type="date"
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => {
+                      setPreferDayCount(false);
+                      setStartDate(e.target.value);
+                    }}
                     className={compactFieldClass}
                   />
                 </Field>
@@ -322,7 +537,10 @@ export default function TripPromptForm() {
                   <input
                     type="date"
                     value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
+                    onChange={(e) => {
+                      setPreferDayCount(false);
+                      setEndDate(e.target.value);
+                    }}
                     className={compactFieldClass}
                   />
                 </Field>
@@ -332,7 +550,10 @@ export default function TripPromptForm() {
                     min={1}
                     max={20}
                     value={peopleCount}
-                    onChange={(e) => setPeopleCount(e.target.value)}
+                    onChange={(e) => {
+                      setShowPeople(true);
+                      setPeopleCount(e.target.value);
+                    }}
                     className={compactFieldClass}
                   />
                 </Field>
@@ -368,6 +589,13 @@ export default function TripPromptForm() {
                   className="h-8 w-28 min-w-0 rounded-full border border-line-tertiary bg-white px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
               </div>
+              <textarea
+                value={optimizedPrompt}
+                onChange={(e) => setOptimizedPrompt(e.target.value)}
+                rows={4}
+                aria-label="完整需求"
+                className="w-full rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
             </div>
           ) : (
             <div>
@@ -381,11 +609,11 @@ export default function TripPromptForm() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleSuggest}
+                  onClick={handlePrimary}
                   disabled={busy}
                   className="shrink-0 text-sm text-ink-tertiary hover:text-ink-secondary disabled:opacity-60"
                 >
-                  {phase === "suggesting" ? "正在整理…" : "重新整理"}
+                  {rerunLabel}
                 </button>
                 <button
                   type="button"
@@ -398,37 +626,36 @@ export default function TripPromptForm() {
               </div>
               {mustVisit.length > 0 && (
                 <ul className="mt-2 flex gap-1.5 overflow-x-auto">
-                  {mustVisit.map((place, index) => (
+                  {visiblePlaces.map((place, index) => (
                     <li key={`${place}-${index}`} className="shrink-0">
-                      <span className={confirmChipClass}>
-                        {place}
-                      </span>
+                      <span className={confirmChipClass}>{place}</span>
                     </li>
                   ))}
+                  {hiddenPlaceCount > 0 && (
+                    <li className="shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setEditing(true)}
+                        className={`${confirmChipClass} text-ink-secondary`}
+                      >
+                        +{hiddenPlaceCount}
+                      </button>
+                    </li>
+                  )}
                 </ul>
+              )}
+              {foldPreview && (
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="mt-2 flex w-full min-w-0 items-center gap-3 text-left"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink-secondary">{foldPreview}</span>
+                  <span className="shrink-0 text-sm text-ink-tertiary">查看完整需求</span>
+                </button>
               )}
             </div>
           )}
-
-          <div className="mt-3">
-            <button
-              type="button"
-              aria-expanded={showDetails}
-              onClick={() => setShowDetails((open) => !open)}
-              className="text-sm text-ink-tertiary hover:text-ink-secondary"
-            >
-              {showDetails ? "收起完整需求" : "查看完整需求"}
-            </button>
-            {showDetails && (
-              <textarea
-                value={optimizedPrompt}
-                onChange={(e) => setOptimizedPrompt(e.target.value)}
-                rows={3}
-                aria-label="完整需求"
-                className="mt-2 w-full rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              />
-            )}
-          </div>
 
           {error && (
             <p className="mt-3 text-sm text-red-600" role="alert">

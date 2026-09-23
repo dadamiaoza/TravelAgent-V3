@@ -74,14 +74,6 @@ export default function HomePage() {
           </section>
         )}
 
-        <p className="mt-12 text-center">
-          <Link
-            to="/sources"
-            className="text-sm text-ink-tertiary underline-offset-4 hover:text-ink-secondary hover:underline"
-          >
-            去解析攻略
-          </Link>
-        </p>
       </div>
     </main>
   );
