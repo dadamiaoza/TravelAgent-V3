@@ -155,8 +155,12 @@ export default function TripPromptForm() {
 
   useEffect(() => {
     if (!suggestion) return;
-    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [suggestion]);
+    const narrow = window.matchMedia("(max-width: 639px)").matches;
+    cardRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: narrow && editing ? "start" : "nearest",
+    });
+  }, [suggestion, editing]);
 
   useEffect(() => {
     if (!focusRequest.current) return;
@@ -513,7 +517,15 @@ export default function TripPromptForm() {
       {!suggestion && error && <FormAlert>{error}</FormAlert>}
 
       {suggestion && (
-        <div ref={cardRef} className={`mt-6 border-t border-line-tertiary pt-5 ${editing ? "max-sm:pb-24" : ""}`}>
+        <div
+          ref={cardRef}
+          className={`mt-6 border-t border-line-tertiary pt-5 ${
+            editing
+              ? "max-sm:sticky max-sm:top-2 max-sm:z-10 max-sm:flex max-sm:max-h-[calc(100dvh-1rem)] max-sm:min-h-0 max-sm:flex-col max-sm:overflow-hidden"
+              : ""
+          }`}
+        >
+          <div className={editing ? "max-sm:min-h-0 max-sm:flex-1 max-sm:overflow-y-auto max-sm:overscroll-contain max-sm:pb-2" : undefined}>
           {editing ? (
             <div className="space-y-3">
               <div className="flex items-center justify-end gap-3">
@@ -686,11 +698,12 @@ export default function TripPromptForm() {
           )}
 
           {error && <FormAlert>{error}</FormAlert>}
+          </div>
 
           <div
             className={
               editing
-                ? "max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:z-30 max-sm:border-t max-sm:border-line-tertiary max-sm:bg-elevated max-sm:px-11 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:pt-3 max-sm:shadow-sm sm:static sm:mt-3"
+                ? "max-sm:shrink-0 max-sm:border-t max-sm:border-line-tertiary max-sm:bg-elevated max-sm:pt-3 sm:mt-3"
                 : "mt-3"
             }
           >
