@@ -525,7 +525,7 @@ export default function TripPromptForm() {
               : ""
           }`}
         >
-          <div className={editing ? "max-sm:min-h-0 max-sm:flex-1 max-sm:overflow-y-auto max-sm:overscroll-contain max-sm:pb-2" : undefined}>
+          <div className={editing ? "max-sm:min-h-0 max-sm:flex-1 max-sm:overflow-y-auto max-sm:overscroll-contain max-sm:pb-6" : undefined}>
           {editing ? (
             <div className="space-y-3">
               <div className="flex items-center justify-end gap-3">
