@@ -31,19 +31,22 @@ const EXAMPLE_PROMPTS = [
 ] as const;
 
 const fieldClass =
-  "w-full min-w-0 rounded-2xl border border-line-tertiary bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
+  "w-full min-w-0 rounded-xl border border-line-tertiary bg-chrome px-4 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-[rgb(20_20_20/0.16)] focus:outline-none";
 
 const compactFieldClass =
-  "h-9 w-full min-w-0 rounded-xl border border-line-tertiary bg-white px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
+  "h-9 w-full min-w-0 rounded-xl border border-line-tertiary bg-chrome px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-[rgb(20_20_20/0.16)] focus:outline-none";
 
 const primaryButtonClass =
   "w-full rounded-full bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60";
 
 const chipClass =
-  "inline-flex items-center rounded-full border px-4 py-1.5 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-sm";
+  "inline-flex items-center rounded-full border px-4 py-1.5 text-sm";
 
 const confirmChipClass =
-  "inline-flex shrink-0 items-center rounded-full border border-line-tertiary bg-chrome/80 px-3 py-1 text-sm text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-sm";
+  "inline-flex shrink-0 items-center rounded-full border border-line-tertiary bg-chrome px-3 py-1 text-sm text-ink";
+
+const formAlertClass =
+  "mt-3 rounded-xl border border-line-tertiary bg-rose-50 px-3 py-2 text-sm text-rose-700";
 
 function monthDay(iso: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -99,6 +102,14 @@ function messageFromError(err: unknown, fallback: string): string {
   const raw = err instanceof Error ? err.message.trim() : "";
   if (!raw || /提示词|API error/i.test(raw)) return fallback;
   return raw;
+}
+
+function FormAlert({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" className={formAlertClass}>
+      {children}
+    </p>
+  );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -381,12 +392,12 @@ export default function TripPromptForm() {
   const modeChip = (selected: boolean) =>
     `${chipClass} transition disabled:opacity-60 ${
       selected
-        ? "border-blue-600/40 bg-white text-blue-700"
-        : "border-line-tertiary bg-chrome/80 text-ink-secondary hover:text-ink"
+        ? "border-blue-600/40 bg-elevated text-blue-700 shadow-sm"
+        : "border-line-tertiary bg-chrome text-ink-secondary hover:text-ink"
     }`;
 
   return (
-    <div className="rounded-3xl border border-line-tertiary bg-white px-6 py-7 shadow-[0_1px_2px_rgba(20,20,20,0.04)] sm:px-8 sm:py-8">
+    <div className="rounded-2xl border border-line-tertiary bg-elevated px-6 py-7 shadow-sm sm:px-8 sm:py-8">
       <div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <label htmlFor="trip-request" className="text-sm text-ink-secondary">
@@ -449,8 +460,8 @@ export default function TripPromptForm() {
                 aria-pressed={selected}
                 className={`${chipClass} transition disabled:opacity-60 ${
                   selected
-                    ? "border-blue-600/40 bg-white text-blue-700"
-                    : "border-line-tertiary bg-chrome/80 text-ink-secondary hover:bg-white/80 hover:text-ink"
+                    ? "border-blue-600/40 bg-elevated text-blue-700 shadow-sm"
+                    : "border-line-tertiary bg-chrome text-ink-secondary hover:text-ink"
                 }`}
               >
                 {example.label}
@@ -478,11 +489,7 @@ export default function TripPromptForm() {
         </button>
       )}
 
-      {!suggestion && error && (
-        <p className="mt-3 text-sm text-red-600" role="alert">
-          {error}
-        </p>
-      )}
+      {!suggestion && error && <FormAlert>{error}</FormAlert>}
 
       {suggestion && (
         <div ref={cardRef} className="mt-6 border-t border-line-tertiary pt-5">
@@ -586,7 +593,7 @@ export default function TripPromptForm() {
                   }}
                   placeholder="添加地点"
                   aria-label="添加想去的地方"
-                  className="h-8 w-28 min-w-0 rounded-full border border-line-tertiary bg-white px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  className="h-8 w-28 min-w-0 rounded-full border border-line-tertiary bg-chrome px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-[rgb(20_20_20/0.16)] focus:outline-none"
                 />
               </div>
               <textarea
@@ -594,7 +601,7 @@ export default function TripPromptForm() {
                 onChange={(e) => setOptimizedPrompt(e.target.value)}
                 rows={4}
                 aria-label="完整需求"
-                className="w-full rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-xl border border-line-tertiary bg-chrome px-3 py-2 text-sm text-ink focus:border-[rgb(20_20_20/0.16)] focus:outline-none"
               />
             </div>
           ) : (
@@ -657,11 +664,7 @@ export default function TripPromptForm() {
             </div>
           )}
 
-          {error && (
-            <p className="mt-3 text-sm text-red-600" role="alert">
-              {error}
-            </p>
-          )}
+          {error && <FormAlert>{error}</FormAlert>}
 
           <button
             type="button"
