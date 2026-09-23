@@ -100,6 +100,14 @@ function addDays(iso: string, days: number): string {
   return localISODate(date);
 }
 
+function daysBetween(start: string, end: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return null;
+  const startMs = new Date(`${start}T00:00:00`).getTime();
+  const endMs = new Date(`${end}T00:00:00`).getTime();
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return null;
+  return Math.round((endMs - startMs) / 86_400_000);
+}
+
 const CHIP_LIMIT = 6;
 
 function messageFromError(err: unknown, fallback: string): string {
@@ -196,6 +204,20 @@ export default function TripPromptForm() {
     focusRequest.current = true;
     const spacer = /\s$/.test(text) ? "" : " ";
     setText(`${text}${spacer}${prompt}`);
+  }
+
+  function changeStartDate(nextStart: string) {
+    setPreferDayCount(false);
+    setStartDate(nextStart);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextStart)) return;
+    if (dayCount != null && Number.isInteger(dayCount) && dayCount >= 1) {
+      setEndDate(addDays(nextStart, dayCount - 1));
+      return;
+    }
+    if (!startDate || !endDate) return;
+    const span = daysBetween(startDate, endDate);
+    if (span == null) return;
+    setEndDate(addDays(nextStart, span));
   }
 
   function addMustVisit() {
@@ -566,10 +588,7 @@ export default function TripPromptForm() {
                   <input
                     type="date"
                     value={startDate}
-                    onChange={(e) => {
-                      setPreferDayCount(false);
-                      setStartDate(e.target.value);
-                    }}
+                    onChange={(e) => changeStartDate(e.target.value)}
                     className={compactFieldClass}
                   />
                 </Field>
