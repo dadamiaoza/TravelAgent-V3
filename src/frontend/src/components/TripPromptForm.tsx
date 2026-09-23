@@ -11,22 +11,26 @@ import {
 } from "@/lib/guideInput";
 import type { SourceDocument, SourceEntity, Trip, TripSuggestOut } from "@/lib/types";
 
-const EXAMPLE_PROMPTS = [
+const INSPIRATION_PROMPTS = [
   {
-    label: "杭州3日",
-    text: "帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高",
-  },
-  {
-    label: "重庆周末",
+    label: "周末城市",
     text: "周末去重庆玩两天，2个人，想吃火锅、看夜景，节奏轻松一点",
   },
   {
-    label: "亲子",
+    label: "美食出行",
+    text: "成都4日美食行程，2个人，想吃地道小吃，也留出逛街的时间",
+  },
+  {
+    label: "亲子轻松",
     text: "带孩子去上海玩3天，希望行程轻松、少排队，适合亲子",
   },
   {
-    label: "美食向",
-    text: "成都4日美食行程，2个人，想吃地道小吃，也留出逛街的时间",
+    label: "城市漫步",
+    text: "帮我规划杭州3日游，2个人，喜欢历史和美食，预算不要太高",
+  },
+  {
+    label: "古迹慢游",
+    text: "想去一座古城慢慢逛3天，2个人，喜欢历史街区和博物馆，每天别排太满",
   },
 ] as const;
 
@@ -164,16 +168,30 @@ export default function TripPromptForm() {
     field.setSelectionRange(pos, pos);
   }, [text]);
 
-  function applyExample(example: string) {
+  function writeInspiration(prompt: string) {
     setError(null);
     setSuggestion(null);
     setSuggestedText(null);
-    if (example === text) {
+    const trimmed = text.trim();
+    const untouchedPreset = INSPIRATION_PROMPTS.some((item) => item.text === trimmed);
+    // Empty input, or a chip prompt the user has not edited: replace so switching inspirations stays clean.
+    if (!trimmed || untouchedPreset) {
+      if (text === prompt) {
+        textareaRef.current?.focus();
+        return;
+      }
+      focusRequest.current = true;
+      setText(prompt);
+      return;
+    }
+    // Keep what the user already wrote and append the prompt after a space.
+    if (text.includes(prompt)) {
       textareaRef.current?.focus();
       return;
     }
     focusRequest.current = true;
-    setText(example);
+    const spacer = /\s$/.test(text) ? "" : " ";
+    setText(`${text}${spacer}${prompt}`);
   }
 
   function addMustVisit() {
@@ -448,27 +466,30 @@ export default function TripPromptForm() {
           <p className="mt-2 text-xs text-ink-tertiary">看起来像攻略，将按攻略解析</p>
         )}
         {inputMode === "sentence" && (
-        <div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="示例需求">
-          {EXAMPLE_PROMPTS.map((example) => {
-            const selected = text === example.text;
-            return (
-              <button
-                key={example.label}
-                type="button"
-                onClick={() => applyExample(example.text)}
-                disabled={busy}
-                aria-pressed={selected}
-                className={`${chipClass} transition disabled:opacity-60 ${
-                  selected
-                    ? "border-blue-600/40 bg-elevated text-blue-700 shadow-sm"
-                    : "border-line-tertiary bg-chrome text-ink-secondary hover:text-ink"
-                }`}
-              >
-                {example.label}
-              </button>
-            );
-          })}
-        </div>
+          <div className="mt-4">
+            <p className="mb-2 text-xs text-ink-tertiary">灵感</p>
+            <div className="flex flex-wrap gap-2.5" role="group" aria-label="旅行灵感">
+              {INSPIRATION_PROMPTS.map((example) => {
+                const selected = text.trim() === example.text;
+                return (
+                  <button
+                    key={example.label}
+                    type="button"
+                    onClick={() => writeInspiration(example.text)}
+                    disabled={busy}
+                    aria-pressed={selected}
+                    className={`${chipClass} transition disabled:opacity-60 ${
+                      selected
+                        ? "border-blue-600/40 bg-elevated text-blue-700 shadow-sm"
+                        : "border-line-tertiary bg-chrome text-ink-secondary hover:text-ink"
+                    }`}
+                  >
+                    {example.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
 
@@ -492,7 +513,7 @@ export default function TripPromptForm() {
       {!suggestion && error && <FormAlert>{error}</FormAlert>}
 
       {suggestion && (
-        <div ref={cardRef} className="mt-6 border-t border-line-tertiary pt-5">
+        <div ref={cardRef} className={`mt-6 border-t border-line-tertiary pt-5 ${editing ? "max-sm:pb-24" : ""}`}>
           {editing ? (
             <div className="space-y-3">
               <div className="flex items-center justify-end gap-3">
@@ -513,7 +534,7 @@ export default function TripPromptForm() {
                   收起
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              <div className="grid grid-cols-1 gap-y-2 sm:grid-cols-2 sm:gap-x-3">
                 <Field label="目的地">
                   <input
                     value={destination}
@@ -666,14 +687,22 @@ export default function TripPromptForm() {
 
           {error && <FormAlert>{error}</FormAlert>}
 
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={busy}
-            className={`${primaryButtonClass} mt-3`}
+          <div
+            className={
+              editing
+                ? "max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:z-30 max-sm:border-t max-sm:border-line-tertiary max-sm:bg-elevated max-sm:px-11 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:pt-3 max-sm:shadow-sm sm:static sm:mt-3"
+                : "mt-3"
+            }
           >
-            {phase === "creating" ? "正在生成行程…" : "确认并生成行程"}
-          </button>
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={busy}
+              className={primaryButtonClass}
+            >
+              {phase === "creating" ? "正在生成行程…" : "确认并生成行程"}
+            </button>
+          </div>
         </div>
       )}
     </div>
