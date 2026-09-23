@@ -25,11 +25,44 @@ const EXAMPLE_PROMPTS = [
 const fieldClass =
   "w-full min-w-0 rounded-2xl border border-line-tertiary bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
 
+const compactFieldClass =
+  "h-9 w-full min-w-0 rounded-xl border border-line-tertiary bg-white px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
+
 const primaryButtonClass =
   "w-full rounded-full bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60";
 
 const chipClass =
   "inline-flex items-center rounded-full border px-4 py-1.5 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-sm";
+
+const confirmChipClass =
+  "inline-flex shrink-0 items-center rounded-full border border-line-tertiary bg-chrome/80 px-3 py-1 text-sm text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-sm";
+
+function monthDay(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return "";
+  return `${Number(match[2])}/${Number(match[3])}`;
+}
+
+function confirmSummary(
+  destination: string,
+  city: string,
+  start: string,
+  end: string,
+  people: string,
+): string {
+  const place = destination.trim() || "目的地待定";
+  const cityName = city.trim();
+  const startLabel = monthDay(start);
+  const endLabel = monthDay(end);
+  const when =
+    startLabel && endLabel ? `${startLabel}–${endLabel}` : startLabel || endLabel || "日期待定";
+  const countLabel = people.trim() ? `${people.trim()}人` : "";
+  const parts = [place];
+  if (cityName && cityName !== place) parts.push(cityName);
+  parts.push(when);
+  if (countLabel) parts.push(countLabel);
+  return parts.join(" · ");
+}
 
 function messageFromError(err: unknown, fallback: string): string {
   const raw = err instanceof Error ? err.message.trim() : "";
@@ -40,7 +73,7 @@ function messageFromError(err: unknown, fallback: string): string {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-1.5 block text-xs text-ink-tertiary">{label}</span>
+      <span className="mb-1 block text-xs text-ink-tertiary">{label}</span>
       {children}
     </label>
   );
@@ -63,6 +96,7 @@ export default function TripPromptForm() {
   const [mustVisit, setMustVisit] = useState<string[]>([]);
   const [mustVisitDraft, setMustVisitDraft] = useState("");
   const [showDetails, setShowDetails] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [phase, setPhase] = useState<"idle" | "suggesting" | "creating">("idle");
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== "idle";
@@ -123,6 +157,7 @@ export default function TripPromptForm() {
       setMustVisit((result.must_visit ?? []).map((item) => item.trim()).filter(Boolean));
       setMustVisitDraft("");
       setShowDetails(false);
+      setEditing(false);
     } catch (err) {
       setError(messageFromError(err, "暂时没能整理出行程，请稍后重试"));
     } finally {
@@ -132,19 +167,23 @@ export default function TripPromptForm() {
 
   async function handleGenerate() {
     if (!destination.trim()) {
+      setEditing(true);
       setError("请填写目的地");
       return;
     }
     if (!startDate || !endDate) {
+      setEditing(true);
       setError("请填写出发和结束日期");
       return;
     }
     if (startDate > endDate) {
+      setEditing(true);
       setError("结束日期不能早于出发日期");
       return;
     }
     const count = Number(peopleCount);
     if (!Number.isInteger(count) || count < 1 || count > 20) {
+      setEditing(true);
       setError("人数需要是 1 到 20 人");
       return;
     }
@@ -167,6 +206,8 @@ export default function TripPromptForm() {
       setPhase("idle");
     }
   }
+
+  const summary = confirmSummary(destination, city, startDate, endDate, peopleCount);
 
   return (
     <div className="rounded-3xl border border-line-tertiary bg-white px-6 py-7 shadow-[0_1px_2px_rgba(20,20,20,0.04)] sm:px-8 sm:py-8">
@@ -232,91 +273,87 @@ export default function TripPromptForm() {
       )}
 
       {suggestion && (
-        <div ref={cardRef} className="mt-8 border-t border-line-tertiary pt-8">
-          <div className="mb-5 flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-base font-semibold text-ink">确认这些信息</h2>
-              <p className="mt-1 text-sm text-ink-tertiary">改完后就可以生成行程</p>
-            </div>
-            <button
-              type="button"
-              onClick={handleSuggest}
-              disabled={busy}
-              className="shrink-0 text-sm text-ink-tertiary underline-offset-4 hover:text-ink-secondary hover:underline disabled:opacity-60"
-            >
-              {phase === "suggesting" ? "正在整理…" : "重新整理"}
-            </button>
-          </div>
-
-          <div className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="目的地">
-                <input
-                  value={destination}
-                  onChange={(e) => setDestination(e.target.value)}
-                  className={fieldClass}
-                />
-              </Field>
-              <Field label="城市">
-                <input
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="例如：杭州"
-                  className={fieldClass}
-                />
-              </Field>
-              <Field label="出发">
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className={fieldClass}
-                />
-              </Field>
-              <Field label="结束">
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className={fieldClass}
-                />
-              </Field>
-              <Field label="人数">
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={peopleCount}
-                  onChange={(e) => setPeopleCount(e.target.value)}
-                  className={fieldClass}
-                />
-              </Field>
-            </div>
-
-            <div>
-              <p className="mb-2.5 text-xs text-ink-tertiary">想去的地方</p>
-              {mustVisit.length > 0 && (
-                <ul className="mb-3 flex flex-wrap gap-2">
-                  {mustVisit.map((place, index) => (
-                    <li key={`${place}-${index}`}>
-                      <span className={`${chipClass} gap-1.5 border-line-tertiary bg-chrome/80 text-ink`}>
-                        {place}
-                        <button
-                          type="button"
-                          aria-label={`移除${place}`}
-                          onClick={() =>
-                            setMustVisit((prev) => prev.filter((_, i) => i !== index))
-                          }
-                          className="text-ink-tertiary hover:text-ink"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex gap-2">
+        <div ref={cardRef} className="mt-6 border-t border-line-tertiary pt-5">
+          {editing ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleSuggest}
+                  disabled={busy}
+                  className="text-sm text-ink-tertiary hover:text-ink-secondary disabled:opacity-60"
+                >
+                  {phase === "suggesting" ? "正在整理…" : "重新整理"}
+                </button>
+                <button
+                  type="button"
+                  aria-expanded={editing}
+                  onClick={() => setEditing(false)}
+                  className="text-sm font-medium text-blue-700"
+                >
+                  收起
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                <Field label="目的地">
+                  <input
+                    value={destination}
+                    onChange={(e) => setDestination(e.target.value)}
+                    className={compactFieldClass}
+                  />
+                </Field>
+                <Field label="城市">
+                  <input
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="例如：杭州"
+                    className={compactFieldClass}
+                  />
+                </Field>
+                <Field label="出发">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className={compactFieldClass}
+                  />
+                </Field>
+                <Field label="结束">
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className={compactFieldClass}
+                  />
+                </Field>
+                <Field label="人数">
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={peopleCount}
+                    onChange={(e) => setPeopleCount(e.target.value)}
+                    className={compactFieldClass}
+                  />
+                </Field>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {mustVisit.map((place, index) => (
+                  <span
+                    key={`${place}-${index}`}
+                    className={`${confirmChipClass} gap-1`}
+                  >
+                    {place}
+                    <button
+                      type="button"
+                      aria-label={`移除${place}`}
+                      onClick={() => setMustVisit((prev) => prev.filter((_, i) => i !== index))}
+                      className="text-ink-tertiary hover:text-ink"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
                 <input
                   value={mustVisitDraft}
                   onChange={(e) => setMustVisitDraft(e.target.value)}
@@ -326,60 +363,87 @@ export default function TripPromptForm() {
                       addMustVisit();
                     }
                   }}
-                  placeholder="添加一个地方，回车确认"
-                  className="min-w-0 flex-1 rounded-full border border-line-tertiary bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  placeholder="添加地点"
+                  aria-label="添加想去的地方"
+                  className="h-8 w-28 min-w-0 rounded-full border border-line-tertiary bg-white px-3 text-sm text-ink placeholder:text-ink-tertiary focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
-                <button
-                  type="button"
-                  onClick={addMustVisit}
-                  disabled={!mustVisitDraft.trim()}
-                  className="shrink-0 rounded-full border border-line-tertiary bg-white/70 px-4 text-sm text-ink-secondary backdrop-blur-sm hover:text-ink disabled:opacity-40"
-                >
-                  添加
-                </button>
               </div>
             </div>
-
+          ) : (
             <div>
-              <button
-                type="button"
-                aria-expanded={showDetails}
-                onClick={() => setShowDetails((open) => !open)}
-                className="text-sm text-ink-secondary underline-offset-4 hover:text-ink hover:underline"
-              >
-                {showDetails ? "收起详细需求" : "查看/编辑详细需求"}
-              </button>
-              {showDetails && (
-                <div className="mt-2">
-                  <textarea
-                    value={optimizedPrompt}
-                    onChange={(e) => setOptimizedPrompt(e.target.value)}
-                    rows={3}
-                    aria-label="详细需求"
-                    className={fieldClass}
-                  />
-                  <p className="mt-1 text-xs text-ink-tertiary">
-                    这段说明会一起用于生成行程，可以直接修改。
-                  </p>
-                </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="min-w-0 flex-1 truncate text-left text-sm font-medium text-ink"
+                >
+                  {summary}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSuggest}
+                  disabled={busy}
+                  className="shrink-0 text-sm text-ink-tertiary hover:text-ink-secondary disabled:opacity-60"
+                >
+                  {phase === "suggesting" ? "正在整理…" : "重新整理"}
+                </button>
+                <button
+                  type="button"
+                  aria-expanded={editing}
+                  onClick={() => setEditing(true)}
+                  className="shrink-0 text-sm font-medium text-blue-700"
+                >
+                  修改
+                </button>
+              </div>
+              {mustVisit.length > 0 && (
+                <ul className="mt-2 flex gap-1.5 overflow-x-auto">
+                  {mustVisit.map((place, index) => (
+                    <li key={`${place}-${index}`} className="shrink-0">
+                      <span className={confirmChipClass}>
+                        {place}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
+          )}
 
-            {error && (
-              <p className="text-sm text-red-600" role="alert">
-                {error}
-              </p>
-            )}
-
+          <div className="mt-3">
             <button
               type="button"
-              onClick={handleGenerate}
-              disabled={busy}
-              className={primaryButtonClass}
+              aria-expanded={showDetails}
+              onClick={() => setShowDetails((open) => !open)}
+              className="text-sm text-ink-tertiary hover:text-ink-secondary"
             >
-              {phase === "creating" ? "正在生成行程…" : "确认并生成行程"}
+              {showDetails ? "收起完整需求" : "查看完整需求"}
             </button>
+            {showDetails && (
+              <textarea
+                value={optimizedPrompt}
+                onChange={(e) => setOptimizedPrompt(e.target.value)}
+                rows={3}
+                aria-label="完整需求"
+                className="mt-2 w-full rounded-xl border border-line-tertiary bg-white px-3 py-2 text-sm text-ink focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            )}
           </div>
+
+          {error && (
+            <p className="mt-3 text-sm text-red-600" role="alert">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={busy}
+            className={`${primaryButtonClass} mt-3`}
+          >
+            {phase === "creating" ? "正在生成行程…" : "确认并生成行程"}
+          </button>
         </div>
       )}
     </div>

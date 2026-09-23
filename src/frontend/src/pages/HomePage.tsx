@@ -28,7 +28,7 @@ export default function HomePage() {
         <div className="mb-12 text-center">
           <h1 className="text-4xl font-semibold tracking-tight text-ink">AI 旅行规划助手</h1>
           <p className="mt-3 text-sm text-ink-tertiary">
-            创建新行程，或从已有行程继续规划
+            用一句话，开始一段旅程
           </p>
         </div>
 
