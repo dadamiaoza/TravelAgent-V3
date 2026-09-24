@@ -6,6 +6,14 @@ const TRIP_STATUS_LABELS: Record<string, string> = {
   generation_failed: "生成失败",
 };
 
+export function tripDateRangeLabel(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string {
+  if (!start || !end) return "日期未定";
+  return `${start} 至 ${end}`;
+}
+
 export function tripStatusLabel(status: string): string {
   return TRIP_STATUS_LABELS[status] ?? "处理中";
 }

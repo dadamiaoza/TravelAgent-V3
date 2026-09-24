@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -160,7 +161,11 @@ def test_create_trip_rolls_back_when_job_creation_fails(monkeypatch) -> None:
 
     with SessionLocal() as db:
         with pytest.raises(RuntimeError, match="injected job insert failure"):
-            trips_api.create_trip(body, db)
+            trips_api.create_trip(
+                body,
+                SimpleNamespace(state=SimpleNamespace(device_id=str(uuid4()))),
+                db,
+            )
 
     with SessionLocal() as db:
         assert db.query(Trip).filter(Trip.destination == destination).first() is None

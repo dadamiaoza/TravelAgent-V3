@@ -3,8 +3,8 @@
 export interface Trip {
   id: string;
   destination: string;
-  start_date: string;
-  end_date: string;
+  start_date: string | null;
+  end_date: string | null;
   people_count: number;
   budget_min?: number | null;
   budget_max?: number | null;

@@ -31,6 +31,7 @@ from app.services.photo_pipeline import (
     load_trip_nodes,
     suggest_visit_stops,
 )
+from app.services.device_access import ensure_device_cookie, load_owned_trip
 from app.services.photo_storage import (
     MAX_BYTES,
     MAX_FILES,
@@ -55,14 +56,15 @@ def _item_on_trip(db: Session, trip_id: UUID, item_id: UUID) -> ItineraryItem:
     return item
 
 
-router = APIRouter(prefix="/trips", tags=["photos"])
+router = APIRouter(
+    prefix="/trips",
+    tags=["photos"],
+    dependencies=[Depends(ensure_device_cookie)],
+)
 
 
-def _get_trip(db: Session, trip_id: UUID) -> Trip:
-    trip = db.get(Trip, trip_id)
-    if trip is None:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    return trip
+def _get_trip(db: Session, trip_id: UUID, request: Request) -> Trip:
+    return load_owned_trip(db, trip_id, request.state.device_id)
 
 
 def _file_url(trip_id: UUID, photo_id: UUID, variant: str) -> str:
@@ -154,7 +156,7 @@ async def upload_photos(
     item_id: UUID | None = None,
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     form = await request.form(max_part_size=MAX_BYTES)
     files = _form_files(form)
     item_id = _form_item_id(form, item_id)
@@ -224,8 +226,8 @@ async def upload_photos(
 
 
 @router.get("/{trip_id}/photo-jobs/{job_id}", response_model=PhotoJobOut)
-def get_photo_job(trip_id: UUID, job_id: UUID, db: Session = Depends(get_db)):
-    _get_trip(db, trip_id)
+def get_photo_job(trip_id: UUID, job_id: UUID, request: Request, db: Session = Depends(get_db)):
+    _get_trip(db, trip_id, request)
     job = db.get(PhotoJob, job_id)
     if job is None or job.trip_id != trip_id:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -235,11 +237,12 @@ def get_photo_job(trip_id: UUID, job_id: UUID, db: Session = Depends(get_db)):
 @router.get("/{trip_id}/photos", response_model=list[PhotoAssetOut])
 def list_photos(
     trip_id: UUID,
+    request: Request,
     item_id: UUID | None = None,
     review: str | None = None,
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     photos = (
         db.query(PhotoAsset)
         .options(joinedload(PhotoAsset.assignments).joinedload(PhotoAssignment.visit_stop))
@@ -271,8 +274,8 @@ def _is_loose_pending(row: PhotoAssetOut) -> bool:
 
 
 @router.get("/{trip_id}/photos/map-summary", response_model=list[PhotoMapSummaryItemOut])
-def map_summary(trip_id: UUID, db: Session = Depends(get_db)):
-    _get_trip(db, trip_id)
+def map_summary(trip_id: UUID, request: Request, db: Session = Depends(get_db)):
+    _get_trip(db, trip_id, request)
     photos = (
         db.query(PhotoAsset)
         .options(joinedload(PhotoAsset.assignments).joinedload(PhotoAssignment.visit_stop))
@@ -363,10 +366,11 @@ def _visit_stop_out(db: Session, stop: VisitStop) -> VisitStopOut:
 @router.get("/{trip_id}/visit-stops", response_model=list[VisitStopOut])
 def list_visit_stops(
     trip_id: UUID,
+    request: Request,
     status: str | None = None,
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     created = suggest_visit_stops(db, trip_id, load_trip_nodes(db, trip_id))
     if created:
         db.commit()
@@ -393,9 +397,10 @@ def patch_visit_stop(
     trip_id: UUID,
     stop_id: UUID,
     body: VisitStopPatch,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     stop = _get_visit_stop(db, trip_id, stop_id)
     if body.action == "confirm":
         confirm_visit_stop(db, stop, body.place_name)
@@ -417,10 +422,11 @@ def patch_visit_stop(
 def get_photo_file(
     trip_id: UUID,
     photo_id: UUID,
+    request: Request,
     variant: str = "preview",
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     photo = db.get(PhotoAsset, photo_id)
     if photo is None or photo.trip_id != trip_id:
         raise HTTPException(status_code=404, detail="照片不存在")
@@ -448,9 +454,10 @@ def patch_assignment(
     trip_id: UUID,
     photo_id: UUID,
     body: AssignmentPatch,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     photo = db.get(PhotoAsset, photo_id)
     if photo is None or photo.trip_id != trip_id:
         raise HTTPException(status_code=404, detail="照片不存在")
@@ -496,9 +503,10 @@ def patch_assignment(
 def batch_assign(
     trip_id: UUID,
     body: BatchAssignRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    _get_trip(db, trip_id)
+    _get_trip(db, trip_id, request)
     _item_on_trip(db, trip_id, body.item_id)
     assigned_ids: list[UUID] = []
     for photo_id in body.photo_ids:
@@ -529,8 +537,8 @@ def batch_assign(
 
 
 @router.delete("/{trip_id}/photos/{photo_id}", status_code=204)
-def delete_photo(trip_id: UUID, photo_id: UUID, db: Session = Depends(get_db)):
-    _get_trip(db, trip_id)
+def delete_photo(trip_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(get_db)):
+    _get_trip(db, trip_id, request)
     photo = db.get(PhotoAsset, photo_id)
     if photo is None or photo.trip_id != trip_id:
         raise HTTPException(status_code=404, detail="照片不存在")

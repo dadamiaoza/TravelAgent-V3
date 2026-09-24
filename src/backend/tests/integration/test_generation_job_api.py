@@ -301,9 +301,12 @@ def test_create_trip_preserves_existing_trip_fields(api_client: TestClient) -> N
 def test_progress_without_job_keeps_compatible_unknown_payload(
     api_client: TestClient,
 ) -> None:
+    device_id = str(uuid4())
+    api_client.cookies.set("ta_device", device_id)
     with SessionLocal() as db:
         trip = Trip(
             destination=f"job-api-no-job-{uuid4()}",
+            device_id=device_id,
             start_date=date(2031, 3, 1),
             end_date=date(2031, 3, 2),
             status="generating",
