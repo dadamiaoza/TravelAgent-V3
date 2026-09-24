@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -56,8 +56,13 @@ from app.services.generation_jobs import (
     get_latest_job_for_trip,
     update_job,
 )
+from app.services.device_access import ensure_device_cookie, load_owned_trip
 
-router = APIRouter(prefix="/trips", tags=["trips"])
+router = APIRouter(
+    prefix="/trips",
+    tags=["trips"],
+    dependencies=[Depends(ensure_device_cookie)],
+)
 
 @router.post("/suggest", response_model=TripSuggestOut)
 def suggest_trip(body: TripSuggestRequest):
@@ -116,22 +121,40 @@ def _trip_out_with_job(trip: Trip, job_id: UUID) -> TripOut:
     return TripOut.model_validate(trip).model_copy(update={"job_id": job_id})
 
 
+def _require_dates_together(start_date, end_date) -> None:
+    if (start_date is None) != (end_date is None):
+        raise HTTPException(
+            status_code=422,
+            detail="start_date 与 end_date 需同时提供或同时留空",
+        )
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise HTTPException(status_code=422, detail="end_date 不能早于 start_date")
+
+
+def _owned_or_404(db: Session, trip_id: UUID, device_id: str) -> Trip:
+    return load_owned_trip(db, trip_id, device_id)
+
+
 @router.post("", response_model=TripOut, status_code=201)
 def create_trip(
     body: TripCreate,
+    request: Request,
     db: Session = Depends(get_db),
     idempotency_key: Annotated[str | None, Header()] = None,
 ):
     """Create a trip immediately, then generate itinerary in background."""
+    device_id = request.state.device_id
+    _require_dates_together(body.start_date, body.end_date)
     key = _normalized_idempotency_key(idempotency_key)
     if key:
         existing = get_job_by_idempotency_key(db, key)
         if existing is not None:
             trip = db.get(Trip, existing.trip_id)
-            if trip is None:
-                raise HTTPException(status_code=500, detail="Idempotent trip not found")
+            if trip is None or trip.device_id != device_id:
+                raise HTTPException(status_code=404, detail="Trip not found")
             return _trip_out_with_job(trip, existing.id)
 
+    undated = body.start_date is None
     trip = Trip(
         destination=body.destination,
         city=body.city,
@@ -142,8 +165,14 @@ def create_trip(
         budget_max=body.budget_max,
         user_prompt=body.user_prompt,
         must_visit=body.must_visit,
-        status="generating",
+        status="draft" if undated else "generating",
+        device_id=device_id,
     )
+    if undated:
+        db.add(trip)
+        db.commit()
+        db.refresh(trip)
+        return trip
     db.add(trip)
     db.flush()
     try:
@@ -166,7 +195,7 @@ def create_trip(
             existing = get_job_by_idempotency_key(db, key)
             if existing is not None:
                 trip = db.get(Trip, existing.trip_id)
-                if trip is not None:
+                if trip is not None and trip.device_id == device_id:
                     return _trip_out_with_job(trip, existing.id)
         raise
     db.refresh(trip)
@@ -194,14 +223,16 @@ def _progress_payload(job: GenerationJob | None) -> dict:
 
 
 @router.get("/{trip_id}/progress")
-def get_generation_progress(trip_id: UUID, db: Session = Depends(get_db)):
+def get_generation_progress(trip_id: UUID, request: Request, db: Session = Depends(get_db)):
     """查询异步生成进度（从 generation_jobs 读取）。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return _progress_payload(get_latest_job_for_trip(db, trip_id))
 
 
 @router.get("/{trip_id}/progress/stream")
-def get_generation_progress_stream(trip_id: UUID, db: Session = Depends(get_db)):
+def get_generation_progress_stream(trip_id: UUID, request: Request, db: Session = Depends(get_db)):
     """SSE 实时推送生成进度。Job GET remains the durable source of truth."""
+    _owned_or_404(db, trip_id, request.state.device_id)
 
     async def event_generator():
         import asyncio
@@ -226,12 +257,9 @@ def get_generation_progress_stream(trip_id: UUID, db: Session = Depends(get_db))
 
 
 @router.get("/{trip_id}", response_model=TripOut)
-def get_trip(trip_id: UUID, db: Session = Depends(get_db)):
+def get_trip(trip_id: UUID, request: Request, db: Session = Depends(get_db)):
     """Get a trip with all days and items."""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    return trip
+    return _owned_or_404(db, trip_id, request.state.device_id)
 
 
 @router.patch("/{trip_id}/items/{item_id}", response_model=ItineraryItemOut)
@@ -239,9 +267,11 @@ def update_itinerary_item(
     trip_id: UUID,
     item_id: UUID,
     body: ItineraryItemUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """更新单个行程节点（改名称会自动重新地理编码）。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return update_item(db, trip_id, item_id, body)
 
 
@@ -249,9 +279,11 @@ def update_itinerary_item(
 def create_itinerary_item(
     trip_id: UUID,
     body: ItineraryItemCreate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """新增单个行程节点。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return create_item(db, trip_id, body)
 
 
@@ -259,9 +291,11 @@ def create_itinerary_item(
 def delete_itinerary_item(
     trip_id: UUID,
     item_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """删除单个行程节点，返回最新完整行程。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return delete_item(db, trip_id, item_id)
 
 
@@ -269,9 +303,11 @@ def delete_itinerary_item(
 def create_day_endpoint(
     trip_id: UUID,
     body: ItineraryDayCreate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """新增一天。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return create_day(db, trip_id, body)
 
 
@@ -279,9 +315,11 @@ def create_day_endpoint(
 def delete_day_endpoint(
     trip_id: UUID,
     day_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """删除一天，并重排剩余 Day 编号和日期。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return delete_day(db, trip_id, day_id)
 
 
@@ -289,9 +327,11 @@ def delete_day_endpoint(
 def sync_trip_endpoint(
     trip_id: UUID,
     body: TripSyncRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """轻量最终一致性同步：批量保存排序和名称修改。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return sync_trip(db, trip_id, body)
 
 
@@ -299,9 +339,11 @@ def sync_trip_endpoint(
 def reoptimize_day(
     trip_id: UUID,
     day_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """重算当天交通时间/路线，并重新生成游玩时间段。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return reoptimize_day(db, trip_id, day_id)
 
 
@@ -310,9 +352,11 @@ def reorder_day_items(
     trip_id: UUID,
     day_id: UUID,
     body: ItineraryDayReorder,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """同一天内按 item_ids 顺序重新编号并重算时间段。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return reorder_day(db, trip_id, day_id, body)
 
 
@@ -320,12 +364,13 @@ def reorder_day_items(
 def import_entities_to_trip(
     trip_id: UUID,
     body: EntityImportRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """把用户勾选的攻略候选 POI 写入指定行程，补全对应 Day/Item。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = _owned_or_404(db, trip_id, request.state.device_id)
+    if trip.start_date is None:
+        raise HTTPException(status_code=400, detail="行程尚未设置日期")
 
     entities = (
         db.query(SourceEntity)
@@ -381,12 +426,11 @@ def import_entities_to_trip(
 def update_trip(
     trip_id: UUID,
     body: TripUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """编辑行程标题（destination）。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = _owned_or_404(db, trip_id, request.state.device_id)
     if body.destination is not None:
         trip.destination = body.destination.strip()
     db.commit()
@@ -409,12 +453,11 @@ def _run_trip_chat(
 def trip_chat(
     trip_id: UUID,
     body: TripChatRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """带行程上下文的 AI 对话，返回文本和结构化建议（同步版本）。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = _owned_or_404(db, trip_id, request.state.device_id)
 
     thread_id = body.thread_id or chat_thread_id(trip_id)
     return _run_trip_chat(trip, body, thread_id, db)
@@ -424,12 +467,11 @@ def trip_chat(
 def trip_chat_stream(
     trip_id: UUID,
     body: TripChatRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """SSE：思考/工具进度事件，再整段回复，最后附建议。"""
-    trip = db.query(Trip).filter(Trip.id == trip_id).first()
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = _owned_or_404(db, trip_id, request.state.device_id)
     # Load collections on the request thread before the worker starts.
     for day in trip.days:
         _ = list(day.items)
@@ -507,13 +549,21 @@ def trip_chat_stream(
 def apply_trip_delta(
     trip_id: UUID,
     body: DeltaApplyRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """应用一条 AI 建议 Delta，返回最新完整行程。"""
+    _owned_or_404(db, trip_id, request.state.device_id)
     return apply_delta(db, trip_id, body.delta)
 
 
 @router.get("", response_model=list[TripBrief])
-def list_trips(db: Session = Depends(get_db)):
-    """List all trips (brief)."""
-    return db.query(Trip).order_by(Trip.created_at.desc()).all()
+def list_trips(request: Request, db: Session = Depends(get_db)):
+    """List trips bound to the current anonymous device."""
+    device_id = request.state.device_id
+    return (
+        db.query(Trip)
+        .filter(Trip.device_id == device_id)
+        .order_by(Trip.created_at.desc())
+        .all()
+    )

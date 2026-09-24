@@ -24,8 +24,8 @@ class TripCreate(BaseModel):
     destination: str = Field(..., min_length=1, max_length=128, examples=["北京"])
     city: str | None = Field(default=None, max_length=128)
 
-    start_date: date = Field(..., examples=["2026-06-01"])
-    end_date: date = Field(..., examples=["2026-06-03"])
+    start_date: date | None = Field(default=None, examples=["2026-06-01"])
+    end_date: date | None = Field(default=None, examples=["2026-06-03"])
     people_count: int = Field(default=1, ge=1, le=20)
     budget_min: int | None = None
     budget_max: int | None = None
@@ -289,8 +289,8 @@ class TripOut(BaseModel):
     destination: str
     city: str | None = None
 
-    start_date: date
-    end_date: date
+    start_date: date | None = None
+    end_date: date | None = None
     people_count: int
     budget_min: int | None = None
     budget_max: int | None = None
@@ -309,8 +309,8 @@ class TripBrief(BaseModel):
     """Minimal trip info for list views."""
     id: UUID
     destination: str
-    start_date: date
-    end_date: date
+    start_date: date | None = None
+    end_date: date | None = None
     status: str
 
     model_config = {"from_attributes": True}

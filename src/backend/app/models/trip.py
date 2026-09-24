@@ -12,11 +12,12 @@ class Trip(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     destination: Mapped[str] = mapped_column(String(128))
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    start_date: Mapped[date] = mapped_column(Date())
-    end_date: Mapped[date] = mapped_column(Date())
+    start_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     people_count: Mapped[int] = mapped_column(Integer(), default=1)
     budget_min: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     budget_max: Mapped[int | None] = mapped_column(Integer(), nullable=True)

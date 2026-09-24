@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import type { SourceDocument, Trip } from "@/lib/types";
 import { waitForGenerationJob } from "@/lib/generationJob";
+import { tripDateRangeLabel } from "@/lib/tripStatus";
 
 export default function SourcePage() {
   const [searchParams] = useSearchParams();
@@ -195,7 +196,7 @@ export default function SourcePage() {
             <option value="">不选择，稍后根据攻略创建新行程</option>
             {trips.map((trip) => (
               <option key={trip.id} value={trip.id}>
-                {trip.destination} · {trip.start_date} 至 {trip.end_date}
+                {trip.destination} · {tripDateRangeLabel(trip.start_date, trip.end_date)}
               </option>
             ))}
           </select>

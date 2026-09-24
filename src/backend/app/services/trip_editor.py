@@ -290,9 +290,15 @@ def _renumber_by_ids(db: Session, item_ids: list) -> None:
         db.query(ItineraryItem).filter(ItineraryItem.id == item_id).update({"seq": seq})
 
 
+def _require_start_date(trip: Trip):
+    if trip.start_date is None:
+        raise HTTPException(status_code=400, detail="行程尚未设置日期")
+
+
 def create_day(db: Session, trip_id: UUID, body: ItineraryDayCreate) -> Trip:
     """Append a new day to the trip and renumber dates."""
     trip = _get_trip(db, trip_id)
+    _require_start_date(trip)
     next_index = max((day.day_index for day in trip.days), default=0) + 1
     day = ItineraryDay(
         trip_id=trip.id,
@@ -309,6 +315,7 @@ def create_day(db: Session, trip_id: UUID, body: ItineraryDayCreate) -> Trip:
 def delete_day(db: Session, trip_id: UUID, day_id: UUID) -> Trip:
     """Delete a day and renumber remaining days to keep dates continuous."""
     trip = _get_trip(db, trip_id)
+    _require_start_date(trip)
     day = _get_day(db, trip_id, day_id)
     db.delete(day)
     db.flush()

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import TripPromptForm from "@/components/TripPromptForm";
 import { api } from "@/lib/api";
-import { tripStatusClassName, tripStatusLabel } from "@/lib/tripStatus";
+import { tripDateRangeLabel, tripStatusClassName, tripStatusLabel } from "@/lib/tripStatus";
 import type { Trip } from "@/lib/types";
 
 const PREVIEW_COUNT = 5;
@@ -78,7 +78,7 @@ export default function HomePage() {
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-ink">{trip.destination}</span>
                       <span className="mt-0.5 block text-xs text-ink-tertiary">
-                        {trip.start_date} 至 {trip.end_date}
+                        {tripDateRangeLabel(trip.start_date, trip.end_date)}
                       </span>
                     </span>
                     <span

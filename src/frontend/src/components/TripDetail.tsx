@@ -9,6 +9,7 @@ import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
 import PhotoArchivePanel from "@/components/PhotoArchivePanel";
 import { photosForItem } from "@/lib/photos";
+import { tripDateRangeLabel } from "@/lib/tripStatus";
 import { useTripPhotos, useUploadTripPhotos } from "@/hooks/useTripPhotos";
 
 export default function TripDetail({ trip }: { trip: Trip }) {
@@ -77,7 +78,7 @@ export default function TripDetail({ trip }: { trip: Trip }) {
             {!editingTitle ? (
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-semibold text-gray-900">
-                  {trip.destination} · {trip.start_date} 至 {trip.end_date}
+                  {trip.destination} · {tripDateRangeLabel(trip.start_date, trip.end_date)}
                 </h2>
                 <button
                   type="button"
