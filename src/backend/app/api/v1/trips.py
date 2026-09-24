@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -557,13 +558,43 @@ def apply_trip_delta(
     return apply_delta(db, trip_id, body.delta)
 
 
+def _place_counts(db: Session, trip_ids: list[UUID]) -> dict[UUID, int]:
+    if not trip_ids:
+        return {}
+    rows = (
+        db.query(ItineraryDay.trip_id, func.count(ItineraryItem.id))
+        .join(ItineraryItem, ItineraryItem.day_id == ItineraryDay.id)
+        .filter(ItineraryDay.trip_id.in_(trip_ids))
+        .group_by(ItineraryDay.trip_id)
+        .all()
+    )
+    return {trip_id: int(count) for trip_id, count in rows}
+
+
+def _trip_brief(trip: Trip, place_count: int) -> TripBrief:
+    return TripBrief(
+        id=trip.id,
+        destination=trip.destination,
+        city=trip.city,
+        start_date=trip.start_date,
+        end_date=trip.end_date,
+        people_count=trip.people_count,
+        place_count=place_count,
+        status=trip.status,
+        created_at=trip.created_at,
+        cover_url=None,
+    )
+
+
 @router.get("", response_model=list[TripBrief])
 def list_trips(request: Request, db: Session = Depends(get_db)):
     """List trips bound to the current anonymous device."""
     device_id = request.state.device_id
-    return (
+    trips = (
         db.query(Trip)
         .filter(Trip.device_id == device_id)
         .order_by(Trip.created_at.desc())
         .all()
     )
+    counts = _place_counts(db, [trip.id for trip in trips])
+    return [_trip_brief(trip, counts.get(trip.id, 0)) for trip in trips]

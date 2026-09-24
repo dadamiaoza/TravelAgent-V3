@@ -42,6 +42,21 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-chrome px-5 py-16 sm:px-8 sm:py-20">
       <div className="mx-auto max-w-2xl">
+        <nav className="mb-8 flex justify-center gap-2 text-sm" aria-label="主导航">
+          <Link
+            to="/"
+            aria-current="page"
+            className="rounded-full border border-line-tertiary bg-elevated px-3 py-1 font-medium text-ink"
+          >
+            创作
+          </Link>
+          <Link
+            to="/trips"
+            className="rounded-full px-3 py-1 text-ink-tertiary hover:text-ink-secondary"
+          >
+            我的行程
+          </Link>
+        </nav>
         <div className="mb-12 text-center">
           <h1 className="text-4xl font-semibold tracking-tight text-ink">AI 旅行规划助手</h1>
           <p className="mt-3 text-sm text-ink-tertiary">
