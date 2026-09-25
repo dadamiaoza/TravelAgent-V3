@@ -5,6 +5,7 @@ from sqlalchemy import String, Integer, Float, Boolean, Date, Time, DateTime, Fo
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
+from app.models import photo as _photo_models  # noqa: F401  — register photo_assets for cover_photo_id
 
 
 class Trip(Base):
@@ -15,6 +16,12 @@ class Trip(Base):
     device_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     destination: Mapped[str] = mapped_column(String(128))
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # IANA name. Null until create-time derivation or an explicit value is stored.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Optional explicit library cover. Null means "earliest uploaded photo".
+    cover_photo_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("photo_assets.id", ondelete="SET NULL"), nullable=True
+    )
 
     start_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date(), nullable=True)

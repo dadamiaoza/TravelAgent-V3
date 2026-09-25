@@ -288,6 +288,7 @@ class TripOut(BaseModel):
     id: UUID
     destination: str
     city: str | None = None
+    timezone: str | None = None
 
     start_date: date | None = None
     end_date: date | None = None
@@ -306,10 +307,11 @@ class TripOut(BaseModel):
 
 
 class TripBrief(BaseModel):
-    """Library card payload. Cover stays empty until a public asset exists."""
+    """Library card payload. cover_url is one owned photo, or null for a gradient."""
     id: UUID
     destination: str
     city: str | None = None
+    timezone: str | None = None
     start_date: date | None = None
     end_date: date | None = None
     people_count: int = 1

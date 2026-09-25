@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
+from app.services.destination_timezone import effective_timezone
 from app.schemas.trip import (
     TripCreate,
     ItineraryDayCreate,
@@ -342,6 +343,7 @@ def create_trip_with_itinerary(db: Session, body: TripCreate) -> Trip:
         budget_max=body.budget_max,
         user_prompt=body.user_prompt,
         must_visit=body.must_visit,
+        timezone=effective_timezone(None, body.city, body.destination),
     )
     db.add(trip)
     db.flush()
