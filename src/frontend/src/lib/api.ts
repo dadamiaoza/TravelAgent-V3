@@ -35,6 +35,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${url}`, {
     ...options,
     headers,
+    credentials: "include",
   });
   if (!response.ok) {
     const detail = await response.text();

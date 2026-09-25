@@ -20,6 +20,7 @@ import {
   type LibraryFilter,
   type LibraryTrip,
 } from "@/lib/tripLibrary";
+import DemoAccount from "@/components/DemoAccount";
 import { api } from "@/lib/api";
 
 type LoadState = "loading" | "error" | "ready";
@@ -125,9 +126,10 @@ export default function MyTripsPage() {
             );
           })}
         </div>
-        <p className="mt-8 border-t border-line-tertiary px-3 pt-4 text-xs text-ink-tertiary">
-          本设备上的行程
-        </p>
+        <div className="mt-8 border-t border-line-tertiary px-3 pt-4">
+          <DemoAccount align="start" />
+          <p className="mt-2 text-xs text-ink-tertiary">本设备上的行程。演示登录只认领这台设备。</p>
+        </div>
       </aside>
 
       <main className="px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-10">
@@ -146,6 +148,10 @@ export default function MyTripsPage() {
               </p>
             )}
           </div>
+          <div className="flex items-center gap-2">
+            <div className="lg:hidden">
+              <DemoAccount />
+            </div>
           <div className="flex items-center gap-1 rounded-full border border-line-tertiary bg-elevated px-1.5 py-1 text-sm">
             <button
               type="button"
@@ -166,6 +172,7 @@ export default function MyTripsPage() {
             >
               ›
             </button>
+          </div>
           </div>
         </div>
 

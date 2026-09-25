@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import DemoAccount from "@/components/DemoAccount";
 import TripPromptForm from "@/components/TripPromptForm";
 import { api } from "@/lib/api";
 import { tripDateRangeLabel, tripStatusClassName, tripStatusLabel } from "@/lib/tripStatus";
@@ -42,7 +43,7 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-chrome px-5 py-16 sm:px-8 sm:py-20">
       <div className="mx-auto max-w-2xl">
-        <nav className="mb-8 flex justify-center gap-2 text-sm" aria-label="主导航">
+        <nav className="mb-8 flex items-center justify-center gap-2 text-sm" aria-label="主导航">
           <Link
             to="/"
             aria-current="page"
@@ -56,6 +57,7 @@ export default function HomePage() {
           >
             我的行程
           </Link>
+          <DemoAccount showLogin={false} />
         </nav>
         <div className="mb-12 text-center">
           <h1 className="text-4xl font-semibold tracking-tight text-ink">AI 旅行规划助手</h1>

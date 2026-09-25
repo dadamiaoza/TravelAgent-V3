@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     firecrawl_api_key: str = ""
     firecrawl_mcp_url: str = ""
     photo_upload_dir: str = str(_BACKEND_ROOT / "uploads")
+    # Pre-prod default: one-click demo login is on. Set DEMO_AUTH=0 to hide it.
+    # This path never sends email. DEMO_SESSION_SECRET only signs the demo cookie.
+    demo_auth: bool = True
+    demo_session_secret: str = "travelagent-demo-session-dev-key"
 
     @field_validator("database_url")
     @classmethod

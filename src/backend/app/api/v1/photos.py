@@ -64,7 +64,12 @@ router = APIRouter(
 
 
 def _get_trip(db: Session, trip_id: UUID, request: Request) -> Trip:
-    return load_owned_trip(db, trip_id, request.state.device_id)
+    return load_owned_trip(
+        db,
+        trip_id,
+        request.state.device_id,
+        getattr(request.state, "user_id", None),
+    )
 
 
 def _file_url(trip_id: UUID, photo_id: UUID, variant: str) -> str:
