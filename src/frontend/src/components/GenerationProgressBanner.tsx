@@ -17,22 +17,22 @@ export default function GenerationProgressBanner({
   const percent = job?.progress ?? progress?.progress ?? 0;
   const tone = failed
     ? {
-        box: "border-red-200 bg-red-50",
-        text: "text-red-700",
-        track: "bg-red-100",
-        bar: "bg-red-600",
-        button: "text-red-800",
+        box: "border-rose-200 bg-rose-50",
+        text: "text-rose-700",
+        track: "bg-rose-100",
+        bar: "bg-rose-600",
+        button: "text-rose-800",
       }
     : {
         box: "border-blue-200 bg-blue-50",
-        text: "text-blue-700",
+        text: "text-blue-800",
         track: "bg-blue-100",
         bar: "bg-blue-600",
         button: "text-blue-800",
       };
 
   return (
-    <div className={`mb-6 rounded-lg border p-4 ${tone.box}`}>
+    <div className={`rounded-2xl border p-4 ${tone.box}`}>
       <p className={`text-sm ${tone.text}`}>{message}</p>
       {!failed && (
         <div className={`mt-2 h-2 w-full overflow-hidden rounded ${tone.track}`}>

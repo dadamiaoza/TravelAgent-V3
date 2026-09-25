@@ -272,6 +272,40 @@ def get_trip(trip_id: UUID, request: Request, db: Session = Depends(get_db)):
     return _owned_or_404(db, trip_id, request)
 
 
+@router.post("/{trip_id}/retry", response_model=TripOut)
+def retry_trip_generation(
+    trip_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Start a new generation job for a failed trip owned by this device."""
+    trip = (
+        db.query(Trip)
+        .filter(Trip.id == trip_id, Trip.device_id == request.state.device_id)
+        .with_for_update()
+        .first()
+    )
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if trip.status != "generation_failed":
+        raise HTTPException(status_code=409, detail="只有生成失败的行程可以重新生成")
+    if trip.start_date is None or trip.end_date is None:
+        raise HTTPException(status_code=422, detail="请先补上出发和返程日期，再重新生成")
+
+    previous = get_latest_job_for_trip(db, trip.id)
+    payload = dict(previous.payload) if previous is not None and previous.payload else None
+    trip.status = "generating"
+    try:
+        job = create_job(db, trip.id, commit=False, payload=payload)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="这趟行程已经在生成中")
+    db.refresh(trip)
+    db.refresh(job)
+    return _trip_out_with_job(trip, job.id)
+
+
 @router.patch("/{trip_id}/items/{item_id}", response_model=ItineraryItemOut)
 def update_itinerary_item(
     trip_id: UUID,
