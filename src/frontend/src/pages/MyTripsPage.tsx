@@ -205,7 +205,7 @@ export default function MyTripsPage() {
         )}
 
         {loadState === "ready" && visible.length > 0 && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {visible.map((trip) => (
               <TripCard key={trip.id} trip={trip} />
             ))}
@@ -257,7 +257,7 @@ function TripCard({ trip }: { trip: LibraryTrip }) {
       to={`/trips/${trip.id}`}
       className="overflow-hidden rounded-xl border border-line-tertiary bg-elevated shadow-sm transition hover:border-[rgb(20_20_20/0.16)]"
     >
-      <div className="relative h-32" style={{ background: coverBackground(trip) }}>
+      <div className="relative h-[108px] md:h-[132px]" style={{ background: coverBackground(trip) }}>
         {badge && (
           <span
             className={`absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[11px] ${
