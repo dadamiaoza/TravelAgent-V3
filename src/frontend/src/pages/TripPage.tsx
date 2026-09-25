@@ -142,9 +142,6 @@ export default function TripPage() {
         {trip && shell === "ready" && (
           <>
             <TripIdentityHeader trip={trip} shell={shell} />
-            <p className="mb-4 text-sm text-ink-tertiary">
-              这是旅行计划。回来后到「回忆」按拍摄日看足迹，计划不会被照片改写。
-            </p>
             {warnings.length > 0 && (
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
                 <p className="text-sm font-medium text-amber-800">时效风险</p>
