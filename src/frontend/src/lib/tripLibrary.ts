@@ -1,10 +1,13 @@
 /**
  * 「我的行程」分区。
  *
- * 锁定规则按目的地当地日历日比较 T / S / E。行程上还没有 IANA 时区，
- * 列表壳暂时用浏览者本地日历日（或演示用的 ?asOf=YYYY-MM-DD）。
- * 这是过渡实现，不能当成目的地当地日已经正确。
+ * T 是目的地当地日历日：优先行程上的 IANA `timezone`，否则按城市/目的地
+ * 映射（见 destinationTimezones.ts）。映射不到时才退回浏览者本地日。
+ *
+ * `?asOf=YYYY-MM-DD` 冻结同一个日历日，方便演示矩阵。
+ * `?asOf=` 带时间的瞬间会按每条行程的目的地时区换算成日历日。
  */
+import { timezoneForPlace } from "./destinationTimezones";
 
 export type TimePartition = "upcoming" | "ongoing" | "past" | "undated";
 
@@ -14,6 +17,7 @@ export interface LibraryTrip {
   id: string;
   destination: string;
   city?: string | null;
+  timezone?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   people_count?: number | null;
@@ -39,7 +43,7 @@ export function filterLabel(filter: LibraryFilter): string {
   return FILTERS.find((item) => item.id === filter)?.label ?? "全部";
 }
 
-/** Viewer-local calendar day. Transitional stand-in for the destination-local day. */
+/** Viewer-local calendar day. Used only when the destination timezone is unknown. */
 export function viewerLocalDay(now: Date = new Date()): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -59,6 +63,62 @@ export function parseAsOf(raw: string | null): string | null {
     return null;
   }
   return raw;
+}
+
+export function resolvedTimezone(
+  trip: Pick<LibraryTrip, "timezone" | "city" | "destination">,
+): string | null {
+  const stored = trip.timezone?.trim();
+  if (stored) {
+    try {
+      Intl.DateTimeFormat("en-US", { timeZone: stored });
+      return stored;
+    } catch {
+      // Invalid stored name: try the city map, then the viewer-local fallback.
+    }
+  }
+  return timezoneForPlace(trip.city, trip.destination);
+}
+
+/** Calendar day of `instant` in an IANA zone. Null when the zone is unusable. */
+export function formatCalendarDay(instant: Date, timeZone: string): string | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(instant);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (!year || !month || !day) return null;
+    return `${year}-${month}-${day}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Destination-local calendar day for one trip.
+ * A date-only `asOf` freezes that day for every trip. An instant `asOf`
+ * (or the live clock) is converted in the trip timezone when one is known.
+ */
+export function calendarDayForTrip(
+  trip: Pick<LibraryTrip, "timezone" | "city" | "destination">,
+  now: Date,
+  asOf: string | null,
+): string {
+  const frozen = parseAsOf(asOf);
+  if (frozen) return frozen;
+  const instant = asOf && asOf.includes("T") ? new Date(asOf) : now;
+  const when = Number.isNaN(instant.getTime()) ? now : instant;
+  const zone = resolvedTimezone(trip);
+  if (zone) {
+    const local = formatCalendarDay(when, zone);
+    if (local) return local;
+  }
+  return viewerLocalDay(when);
 }
 
 export function departureYear(start: string | null | undefined): number | null {
@@ -106,12 +166,12 @@ export function inDepartureYear(
 }
 
 export function countForFilter(
-  trips: Pick<LibraryTrip, "start_date" | "end_date">[],
+  trips: LibraryTrip[],
   filter: LibraryFilter,
   year: number,
-  today: string,
+  dayOf: (trip: LibraryTrip) => string,
 ): number {
-  return trips.filter((trip) => tripVisible(trip, filter, year, today)).length;
+  return trips.filter((trip) => tripVisible(trip, filter, year, dayOf(trip))).length;
 }
 
 export function yearChoices(trips: Pick<LibraryTrip, "start_date">[], today: string): number[] {
@@ -212,9 +272,8 @@ const COVER_STOPS = [
   ["#fae8ff", "#f5d0fe"],
 ];
 
-/** Destination-colored gradient. Never a private photo. */
-export function coverBackground(trip: Pick<LibraryTrip, "city" | "destination" | "cover_url">): string {
-  if (trip.cover_url) return `center / cover no-repeat url("${trip.cover_url}")`;
+/** Gradient used when the trip has no single cover photo. */
+export function coverBackground(trip: Pick<LibraryTrip, "city" | "destination">): string {
   const key = `${trip.city || ""} ${trip.destination}`;
   let hash = 0;
   for (const char of key) hash = (hash + char.charCodeAt(0)) % COVER_STOPS.length;

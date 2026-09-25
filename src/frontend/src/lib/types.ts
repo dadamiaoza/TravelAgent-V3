@@ -4,6 +4,7 @@ export interface Trip {
   id: string;
   destination: string;
   city?: string | null;
+  timezone?: string | null;
   start_date: string | null;
   end_date: string | null;
   people_count: number;

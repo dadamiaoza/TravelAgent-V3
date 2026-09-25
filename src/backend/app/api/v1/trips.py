@@ -37,6 +37,8 @@ from app.schemas.trip import (
     DeltaApplyRequest,
     EntityImportRequest,
 )
+from app.services.destination_timezone import effective_timezone
+from app.services.trip_cover import covers_for_trips
 from app.services.trip_editor import (
     create_trip_with_itinerary,
     create_item,
@@ -168,6 +170,7 @@ def create_trip(
         must_visit=body.must_visit,
         status="draft" if undated else "generating",
         device_id=device_id,
+        timezone=effective_timezone(None, body.city, body.destination),
     )
     if undated:
         db.add(trip)
@@ -571,18 +574,19 @@ def _place_counts(db: Session, trip_ids: list[UUID]) -> dict[UUID, int]:
     return {trip_id: int(count) for trip_id, count in rows}
 
 
-def _trip_brief(trip: Trip, place_count: int) -> TripBrief:
+def _trip_brief(trip: Trip, place_count: int, cover_url: str | None) -> TripBrief:
     return TripBrief(
         id=trip.id,
         destination=trip.destination,
         city=trip.city,
+        timezone=effective_timezone(trip.timezone, trip.city, trip.destination),
         start_date=trip.start_date,
         end_date=trip.end_date,
         people_count=trip.people_count,
         place_count=place_count,
         status=trip.status,
         created_at=trip.created_at,
-        cover_url=None,
+        cover_url=cover_url,
     )
 
 
@@ -597,4 +601,5 @@ def list_trips(request: Request, db: Session = Depends(get_db)):
         .all()
     )
     counts = _place_counts(db, [trip.id for trip in trips])
-    return [_trip_brief(trip, counts.get(trip.id, 0)) for trip in trips]
+    covers = covers_for_trips(db, trips)
+    return [_trip_brief(trip, counts.get(trip.id, 0), covers.get(trip.id)) for trip in trips]

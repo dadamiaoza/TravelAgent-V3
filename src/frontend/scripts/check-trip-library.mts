@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import {
+  calendarDayForTrip,
   cardMeta,
   cardTitle,
   generationBadge,
   inDepartureYear,
+  resolvedTimezone,
   secondaryMeta,
   timePartition,
   tripVisible,
@@ -62,5 +64,29 @@ assert.equal(secondaryMeta(B), "规划中…");
 assert.equal(secondaryMeta(C), "可重试");
 assert.equal(secondaryMeta(A), "尚未生成");
 assert.equal(secondaryMeta(D), "8 个地点");
+
+const BOUNDARY = "2026-09-24T15:30:00Z";
+const osaka = { city: "大阪", destination: "美食", timezone: null };
+const chengdu = { city: "成都", destination: "火锅", timezone: null };
+const honolulu = { city: "檀香山", destination: "海岛", timezone: null };
+const unknown = { city: "无名镇", destination: "草稿", timezone: null };
+assert.equal(resolvedTimezone(osaka), "Asia/Tokyo");
+assert.equal(resolvedTimezone(chengdu), "Asia/Shanghai");
+assert.equal(resolvedTimezone(honolulu), "Pacific/Honolulu");
+assert.equal(resolvedTimezone(unknown), null);
+assert.equal(calendarDayForTrip(osaka, new Date(BOUNDARY), null), "2026-09-25");
+assert.equal(calendarDayForTrip(chengdu, new Date(BOUNDARY), null), "2026-09-24");
+assert.equal(calendarDayForTrip(honolulu, new Date(BOUNDARY), null), "2026-09-24");
+assert.equal(calendarDayForTrip(osaka, new Date(BOUNDARY), BOUNDARY), "2026-09-25");
+assert.equal(calendarDayForTrip(chengdu, new Date("2026-09-25T00:00:00Z"), "2026-09-24"), "2026-09-24");
+assert.equal(
+  timePartition(B.start_date, B.end_date, calendarDayForTrip(osaka, new Date(BOUNDARY), null)),
+  "ongoing",
+);
+assert.equal(
+  timePartition(B.start_date, B.end_date, calendarDayForTrip(chengdu, new Date(BOUNDARY), null)),
+  "upcoming",
+);
+assert.equal(calendarDayForTrip(unknown, new Date("2026-09-24T16:00:00Z"), null).length, 10);
 
 console.log("trip library A–G checks passed");

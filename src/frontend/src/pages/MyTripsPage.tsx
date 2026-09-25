@@ -4,6 +4,7 @@ import {
   badgeLabel,
   cardMeta,
   cardTitle,
+  calendarDayForTrip,
   countForFilter,
   coverBackground,
   filterLabel,
@@ -11,6 +12,7 @@ import {
   libraryFilters,
   MATRIX_DEMO_TRIPS,
   parseAsOf,
+  resolvedTimezone,
   secondaryMeta,
   tripVisible,
   viewerLocalDay,
@@ -30,12 +32,15 @@ function initialYear(today: string, options: number[]): number {
 
 export default function MyTripsPage() {
   const [params] = useSearchParams();
-  const today = parseAsOf(params.get("asOf")) ?? viewerLocalDay();
+  const asOf = params.get("asOf");
+  const frozenDay = parseAsOf(asOf);
+  const now = useMemo(() => new Date(), []);
+  const referenceToday = frozenDay ?? viewerLocalDay(now);
   const demo = params.get("demo");
   const [trips, setTrips] = useState<LibraryTrip[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [filter, setFilter] = useState<LibraryFilter>("all");
-  const [year, setYear] = useState(() => Number(today.slice(0, 4)));
+  const [year, setYear] = useState(() => Number(referenceToday.slice(0, 4)));
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -61,15 +66,20 @@ export default function MyTripsPage() {
     };
   }, [reloadKey, demo]);
 
-  const years = useMemo(() => yearChoices(trips, today), [trips, today]);
+  const years = useMemo(() => yearChoices(trips, referenceToday), [trips, referenceToday]);
+  const dayOf = useMemo(
+    () => (trip: LibraryTrip) => calendarDayForTrip(trip, now, asOf),
+    [now, asOf],
+  );
+  const usesViewerFallback = trips.some((trip) => resolvedTimezone(trip) == null);
 
   useEffect(() => {
-    if (!years.includes(year)) setYear(initialYear(today, years));
-  }, [years, year, today]);
+    if (!years.includes(year)) setYear(initialYear(referenceToday, years));
+  }, [years, year, referenceToday]);
 
   const visible = useMemo(
-    () => trips.filter((trip) => tripVisible(trip, filter, year, today)),
-    [trips, filter, year, today],
+    () => trips.filter((trip) => tripVisible(trip, filter, year, dayOf(trip))),
+    [trips, filter, year, dayOf],
   );
 
   const yearIndex = Math.max(0, years.indexOf(year));
@@ -98,7 +108,7 @@ export default function MyTripsPage() {
         </Link>
         <div className="space-y-0.5">
           {libraryFilters().map((item) => {
-            const count = countForFilter(trips, item.id, year, today);
+            const count = countForFilter(trips, item.id, year, dayOf);
             const active = filter === item.id;
             return (
               <button
@@ -126,7 +136,14 @@ export default function MyTripsPage() {
             <p className="text-[11px] uppercase tracking-[0.08em] text-ink-tertiary">Library</p>
             <h1 className="text-3xl font-semibold tracking-tight">我的行程</h1>
             {demo === "matrix" && (
-              <p className="mt-1 text-xs text-ink-tertiary">演示数据 · 基准日 {today}</p>
+              <p className="mt-1 text-xs text-ink-tertiary">
+                演示数据 · {frozenDay ? `基准日 ${frozenDay}` : "按目的地当地日历日"}
+              </p>
+            )}
+            {usesViewerFallback && !frozenDay && (
+              <p className="mt-1 text-xs text-ink-tertiary">
+                没有目的地时区的行程，按你所在地的日期分区。
+              </p>
             )}
           </div>
           <div className="flex items-center gap-1 rounded-full border border-line-tertiary bg-elevated px-1.5 py-1 text-sm">
@@ -252,12 +269,20 @@ function LibraryEmpty() {
 
 function TripCard({ trip }: { trip: LibraryTrip }) {
   const badge = generationBadge(trip.status);
+  const cover = trip.cover_url?.trim() || "";
   return (
     <Link
       to={`/trips/${trip.id}`}
       className="overflow-hidden rounded-xl border border-line-tertiary bg-elevated shadow-sm transition hover:border-[rgb(20_20_20/0.16)]"
     >
       <div className="relative h-[108px] md:h-[132px]" style={{ background: coverBackground(trip) }}>
+        {cover ? (
+          <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        ) : (
+          <span className="absolute inset-0 flex items-center justify-center text-xs text-ink-tertiary">
+            封面图 / 目的地
+          </span>
+        )}
         {badge && (
           <span
             className={`absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[11px] ${
@@ -271,9 +296,6 @@ function TripCard({ trip }: { trip: LibraryTrip }) {
             {badgeLabel(badge)}
           </span>
         )}
-        <span className="absolute inset-0 flex items-center justify-center text-xs text-ink-tertiary">
-          封面图 / 目的地
-        </span>
       </div>
       <div className="px-3 py-3">
         <h2 className="truncate text-[15px] font-semibold">{cardTitle(trip)}</h2>
