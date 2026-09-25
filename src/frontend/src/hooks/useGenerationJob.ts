@@ -56,7 +56,7 @@ export function useGenerationJob(
   }, [isGenerating, jobId, jobQuery.data?.status, queryClient]);
 
   useEffect(() => {
-    if (jobQuery.data?.status === "succeeded") {
+    if (jobQuery.data?.status === "succeeded" || jobQuery.data?.status === "failed") {
       queryClient.invalidateQueries({ queryKey: ["trip", tripId] });
     }
   }, [jobQuery.data?.status, queryClient, tripId]);

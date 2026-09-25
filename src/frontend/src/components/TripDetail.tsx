@@ -9,18 +9,18 @@ import ItineraryDayCard from "@/components/ItineraryDayCard";
 import TripMap from "@/components/TripMap";
 import PhotoArchivePanel from "@/components/PhotoArchivePanel";
 import { photosForItem } from "@/lib/photos";
-import { tripDateRangeLabel } from "@/lib/tripStatus";
+import { cardMeta, cardTitle } from "@/lib/tripLibrary";
+import { detailStatusClassName, detailStatusLabel, type TripDetailShell } from "@/lib/tripDetailState";
 import { useTripPhotos, useUploadTripPhotos } from "@/hooks/useTripPhotos";
 
-export default function TripDetail({ trip }: { trip: Trip }) {
-  const { dirtyTrip, isDirty } = useTripDraftSync(trip.id, trip);
-  const displayTrip = dirtyTrip ?? trip;
-  const days = displayTrip.days ?? [];
+export function TripIdentityHeader({
+  trip,
+  shell,
+}: {
+  trip: Trip;
+  shell: TripDetailShell;
+}) {
   const queryClient = useQueryClient();
-  const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
-  const focusItemId = useTripStore((s) => s.focusItemId);
-  const setSelectedDayIndex = useTripStore((s) => s.setSelectedDayIndex);
-  const setFocusItem = useTripStore((s) => s.setFocusItem);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(trip.destination);
 
@@ -33,6 +33,92 @@ export default function TripDetail({ trip }: { trip: Trip }) {
     },
   });
 
+  function handleSaveTitle() {
+    const value = titleDraft.trim();
+    if (!value) return;
+    updateTrip.mutate(value);
+  }
+
+  return (
+    <section className="mb-4 rounded-2xl border border-line-tertiary bg-elevated p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          {!editingTitle ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-2xl font-semibold tracking-tight text-ink">
+                {cardTitle(trip)}
+              </h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleDraft(trip.destination);
+                  setEditingTitle(true);
+                }}
+                className="rounded-full px-2 py-1 text-xs text-ink-tertiary hover:bg-chrome hover:text-ink"
+              >
+                编辑标题
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                className="rounded-full border border-line-tertiary bg-chrome px-3 py-1.5 text-sm text-ink"
+                aria-label="行程标题"
+              />
+              <button
+                type="button"
+                onClick={handleSaveTitle}
+                disabled={updateTrip.isPending}
+                className="rounded-full bg-blue-600 px-3 py-1.5 text-xs text-white disabled:opacity-60"
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingTitle(false)}
+                className="rounded-full border border-line-tertiary px-3 py-1.5 text-xs text-ink-secondary"
+              >
+                取消
+              </button>
+            </div>
+          )}
+          <p className="mt-1 text-sm text-ink-secondary">
+            {cardMeta(trip)}
+            {updateTrip.isError && (
+              <span className="ml-2 text-rose-700">标题没有保存，请再试一次</span>
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] ${detailStatusClassName(trip.status)}`}
+          >
+            {detailStatusLabel(trip.status)}
+          </span>
+          {shell === "ready" && (
+            <Link
+              to={`/sources?tripId=${trip.id}`}
+              className="rounded-full border border-line-tertiary px-3 py-1.5 text-sm text-ink-secondary hover:text-ink"
+            >
+              导入攻略
+            </Link>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export default function TripDetail({ trip }: { trip: Trip }) {
+  const { dirtyTrip, isDirty } = useTripDraftSync(trip.id, trip);
+  const displayTrip = dirtyTrip ?? trip;
+  const days = displayTrip.days ?? [];
+  const selectedDayIndex = useTripStore((s) => s.selectedDayIndex);
+  const focusItemId = useTripStore((s) => s.focusItemId);
+  const setSelectedDayIndex = useTripStore((s) => s.setSelectedDayIndex);
+  const setFocusItem = useTripStore((s) => s.setFocusItem);
   function handleSelectItem(itemId: string) {
     setFocusItem(itemId);
     requestAnimationFrame(() => {
@@ -45,12 +131,6 @@ export default function TripDetail({ trip }: { trip: Trip }) {
   function handleSelectDay(index: number) {
     setSelectedDayIndex(index);
     setFocusItem(null);
-  }
-
-  function handleSaveTitle() {
-    const value = titleDraft.trim();
-    if (!value) return;
-    updateTrip.mutate(value);
   }
 
   const currentDay = days[selectedDayIndex];
@@ -72,66 +152,11 @@ export default function TripDetail({ trip }: { trip: Trip }) {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            {!editingTitle ? (
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  {trip.destination} · {tripDateRangeLabel(trip.start_date, trip.end_date)}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTitleDraft(trip.destination);
-                    setEditingTitle(true);
-                  }}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  编辑标题
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <input
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveTitle}
-                  disabled={updateTrip.isPending}
-                  className="rounded bg-blue-600 px-2 py-1 text-xs text-white disabled:opacity-60"
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingTitle(false)}
-                  className="rounded bg-gray-200 px-2 py-1 text-xs"
-                >
-                  取消
-                </button>
-              </div>
-            )}
-            <p className="mt-1 text-sm text-gray-500">
-              {displayTrip.people_count} 人 · 状态：{displayTrip.status}
-              {isDirty && (
-                <span className="ml-2 inline-block rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-600">
-                  未保存
-                </span>
-              )}
-            </p>
-          </div>
-          <Link
-            to={`/sources?tripId=${trip.id}`}
-            className="shrink-0 rounded border border-blue-600 px-3 py-1 text-sm text-blue-600 hover:bg-blue-50"
-          >
-            导入攻略到当前行程
-          </Link>
-        </div>
-      </section>
+      {isDirty && (
+        <p className="inline-flex rounded-full bg-rose-50 px-2.5 py-0.5 text-xs text-rose-700">
+          未保存
+        </p>
+      )}
 
       {days.length > 0 && (
         <TripMap
@@ -164,8 +189,8 @@ export default function TripDetail({ trip }: { trip: Trip }) {
           />
         </div>
       ) : (
-        <p className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center text-gray-500">
-          该行程暂无内容
+        <p className="rounded-2xl border border-dashed border-line-tertiary bg-elevated px-4 py-10 text-center text-sm text-ink-tertiary">
+          这趟行程还没有地点
         </p>
       )}
 
