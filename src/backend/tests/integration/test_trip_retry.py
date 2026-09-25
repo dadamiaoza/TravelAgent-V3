@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.db.session import SessionLocal
 from app.main import app
 from app.models.trip import GenerationJob, Trip
+from app.services.demo_auth import DEMO_USER_ID
 
 
 def _client() -> TestClient:
@@ -126,6 +127,45 @@ def test_retry_rejects_non_failed_and_other_devices():
         assert other.post(f"/api/v1/trips/{uuid4()}/retry").status_code == 404
     finally:
         _delete([trip_id, draft_id])
+
+
+def test_retry_follows_demo_claim_rules():
+    owner = _client()
+    other = _client()
+    created = owner.post(
+        "/api/v1/trips",
+        json={
+            "destination": "演示认领后重试",
+            "city": "成都",
+            "start_date": "2034-04-01",
+            "end_date": "2034-04-03",
+        },
+    )
+    assert created.status_code == 201, created.text
+    trip_id = created.json()["id"]
+    try:
+        assert owner.post("/api/v1/auth/demo/login").status_code == 200
+        with SessionLocal() as db:
+            row = db.get(Trip, trip_id)
+            assert row is not None
+            assert row.user_id == DEMO_USER_ID
+        _mark_failed(trip_id)
+
+        retried = owner.post(f"/api/v1/trips/{trip_id}/retry")
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["status"] == "generating"
+
+        _mark_failed(trip_id)
+        assert other.post("/api/v1/auth/demo/login").status_code == 200
+        assert other.post(f"/api/v1/trips/{trip_id}/retry").status_code == 404
+
+        assert owner.post("/api/v1/auth/logout").status_code == 204
+        logged_out = owner.post(f"/api/v1/trips/{trip_id}/retry")
+        assert logged_out.status_code == 404
+        opened = owner.get(f"/api/v1/trips/{trip_id}")
+        assert opened.status_code == 404
+    finally:
+        _delete([trip_id])
 
 
 def test_retry_requires_dates_when_failed():

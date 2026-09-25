@@ -278,14 +278,20 @@ def retry_trip_generation(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Start a new generation job for a failed trip owned by this device."""
+    """Start a new generation job for a failed trip this caller may see.
+
+    Device scope comes first. A demo session also reaches rows claimed by
+    that user; logged-out callers cannot retry a claimed row.
+    """
+    device_id = request.state.device_id
+    user_id = getattr(request.state, "user_id", None)
     trip = (
         db.query(Trip)
-        .filter(Trip.id == trip_id, Trip.device_id == request.state.device_id)
+        .filter(Trip.id == trip_id, Trip.device_id == device_id)
         .with_for_update()
         .first()
     )
-    if trip is None:
+    if not trip_visible_to(trip, device_id, user_id):
         raise HTTPException(status_code=404, detail="Trip not found")
     if trip.status != "generation_failed":
         raise HTTPException(status_code=409, detail="只有生成失败的行程可以重新生成")
