@@ -306,12 +306,17 @@ class TripOut(BaseModel):
 
 
 class TripBrief(BaseModel):
-    """Minimal trip info for list views."""
+    """Library card payload. Cover stays empty until a public asset exists."""
     id: UUID
     destination: str
+    city: str | None = None
     start_date: date | None = None
     end_date: date | None = None
+    people_count: int = 1
+    place_count: int = 0
     status: str
+    created_at: datetime | None = None
+    cover_url: str | None = None
 
     model_config = {"from_attributes": True}
 

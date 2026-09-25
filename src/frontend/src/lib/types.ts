@@ -3,9 +3,12 @@
 export interface Trip {
   id: string;
   destination: string;
+  city?: string | null;
   start_date: string | null;
   end_date: string | null;
   people_count: number;
+  place_count?: number;
+  cover_url?: string | null;
   budget_min?: number | null;
   budget_max?: number | null;
   status: string;
