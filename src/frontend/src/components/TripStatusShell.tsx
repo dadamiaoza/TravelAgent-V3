@@ -44,10 +44,7 @@ export default function TripStatusShell({
     const retryable = canRetryGeneration(trip);
     return (
       <section className="rounded-2xl border border-line-tertiary bg-elevated px-6 py-10 text-center shadow-sm">
-        <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] text-rose-700">
-          可重试
-        </span>
-        <h2 className="mt-3 text-base font-semibold text-ink">行程没有生成成功</h2>
+        <h2 className="text-base font-semibold text-ink">行程没有生成成功</h2>
         <p className="mx-auto mt-2 max-w-md text-sm text-ink-secondary">
           规划中断了。在这里重新生成即可，列表上的「可重试」只表示状态，不会从卡片直接重试。
         </p>
@@ -77,10 +74,7 @@ export default function TripStatusShell({
 
   return (
     <section className="rounded-2xl border border-dashed border-line-tertiary bg-elevated px-6 py-10 text-center">
-      <span className="inline-flex rounded-full border border-line-tertiary bg-chrome px-2.5 py-0.5 text-[11px] text-ink-secondary">
-        草稿
-      </span>
-      <h2 className="mt-3 text-base font-semibold text-ink">这还是一份草稿</h2>
+      <h2 className="text-base font-semibold text-ink">这还是一份草稿</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-ink-tertiary">
         出发和返程日期还没定，所以还不会生成路线。确定日期之后才能开始规划，这里没有重新生成。
       </p>
