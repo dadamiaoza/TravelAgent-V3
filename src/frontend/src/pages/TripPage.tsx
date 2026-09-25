@@ -117,8 +117,13 @@ export default function TripPage() {
   return (
     <main className="min-h-screen bg-chrome px-4 pb-16 pt-5 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           {backLink}
+          {trip && (
+            <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
+              {trip.destination}
+            </h1>
+          )}
           {tabs}
         </div>
 
