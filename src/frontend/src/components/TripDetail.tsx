@@ -11,14 +11,17 @@ import PhotoArchivePanel from "@/components/PhotoArchivePanel";
 import { photosForItem } from "@/lib/photos";
 import { cardMeta, cardTitle } from "@/lib/tripLibrary";
 import { detailStatusClassName, detailStatusLabel, type TripDetailShell } from "@/lib/tripDetailState";
+import GenerationWarningPill from "@/components/GenerationWarningPill";
 import { useTripPhotos, useUploadTripPhotos } from "@/hooks/useTripPhotos";
 
 export function TripIdentityHeader({
   trip,
   shell,
+  warningMessage = null,
 }: {
   trip: Trip;
   shell: TripDetailShell;
+  warningMessage?: string | null;
 }) {
   const queryClient = useQueryClient();
   const [editingTitle, setEditingTitle] = useState(false);
@@ -92,11 +95,16 @@ export function TripIdentityHeader({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
-          <span
-            className={`rounded-full border px-2.5 py-0.5 text-[11px] ${detailStatusClassName(trip.status)}`}
-          >
-            {detailStatusLabel(trip.status)}
-          </span>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span
+              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${detailStatusClassName(trip.status)}`}
+            >
+              {detailStatusLabel(trip.status)}
+            </span>
+            {shell === "ready" && warningMessage && (
+              <GenerationWarningPill message={warningMessage} />
+            )}
+          </div>
           {shell === "ready" && (
             <Link
               to={`/sources?tripId=${trip.id}`}

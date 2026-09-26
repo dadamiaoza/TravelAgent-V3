@@ -2,7 +2,8 @@ import { Link, NavLink, Outlet, useLocation, useOutletContext, useParams } from 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTrip } from "@/hooks/useTrip";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
-import { warningStages } from "@/lib/generationJob";
+import { latestWarningMessage } from "@/lib/generationJob";
+import GenerationWarningPill from "@/components/GenerationWarningPill";
 import { api } from "@/lib/api";
 import { tripDetailShell, type TripDetailShell } from "@/lib/tripDetailState";
 import ChatPanel from "@/components/ChatPanel";
@@ -39,7 +40,7 @@ export default function TripPage() {
   const { data: trip, isLoading, isError } = useTrip(tripId ?? "");
   const { job, progress } = useGenerationJob(tripId, trip?.status);
   const shell: TripDetailShell | null = trip ? tripDetailShell(trip) : null;
-  const warnings = warningStages(job, progress);
+  const warningMessage = latestWarningMessage(job, progress);
   const retry = useMutation({
     mutationFn: () => api.post<Trip>(`/trips/${tripId}/retry`, {}),
     onSuccess: (data) => {
@@ -99,6 +100,7 @@ export default function TripPage() {
                 {trip.destination}
               </h1>
             )}
+            {warningMessage && <GenerationWarningPill message={warningMessage} />}
             {tabs}
           </div>
         </div>
@@ -146,17 +148,7 @@ export default function TripPage() {
 
         {trip && shell === "ready" && (
           <>
-            <TripIdentityHeader trip={trip} shell={shell} />
-            {warnings.length > 0 && (
-              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm font-medium text-amber-800">时效风险</p>
-                <ul className="mt-2 space-y-1 text-xs text-amber-800">
-                  {warnings.map((stage, index) => (
-                    <li key={`${stage.key}-${stage.at}-${index}`}>{stage.message}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <TripIdentityHeader trip={trip} shell={shell} warningMessage={warningMessage} />
             <Outlet context={{ trip } satisfies TripOutletContext} />
           </>
         )}

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.agents.itinerary_gen import create_itinerary_gen
 from app.agents.tools.route_optimizer import optimize_itinerary
 from app.models.trip import Trip
+from app.schemas.fill_draft import gate_fill_draft
 from app.services.itinerary_persistence import persist_itinerary
 from app.services.visit_fields import copy_visit_fields
 
@@ -229,6 +230,7 @@ def generate_itinerary_draft(
         selected_entities=selected_entities,
         thread_id=thread_id,
     )
+    gate_fill_draft(itinerary, on_stage)
 
     _emit_stage(on_stage, "route", 70, "正在补路线...")
     return route_itinerary_draft(itinerary)
