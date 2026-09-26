@@ -17,6 +17,25 @@ export function warningStages(
   return stages.filter((stage) => stage.key === "warning");
 }
 
+/** Latest verify/route degradation, if the job recorded one. */
+export function latestWarningMessage(
+  job?: GenerationJob | null,
+  progress?: GenerationProgress | null,
+): string | null {
+  const stages = warningStages(job, progress);
+  const message = stages.length ? stages[stages.length - 1]?.message?.trim() : "";
+  return message || null;
+}
+
+/** Short Chinese copy for a status chip. Full text stays on the title tooltip. */
+export function shortWarningCopy(message: string): string {
+  const text = message.replace(/\s+/g, " ").trim();
+  if (!text) return "生成有降级";
+  const first = text.split(/[；;]/)[0]?.trim() || text;
+  if (first.length <= 24) return first;
+  return `${first.slice(0, 24)}…`;
+}
+
 export async function waitForGenerationJob(
   trip: Pick<Trip, "id" | "job_id">,
   options?: { timeoutMs?: number; intervalMs?: number },

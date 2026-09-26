@@ -15,6 +15,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.session import SessionLocal
 from app.models.trip import Trip, GenerationJob
+from app.schemas.fill_draft import FillDraftValidationError, gate_fill_draft
 from app.services.generation_jobs import (
     ClaimedGenerationJob,
     append_job_stage,
@@ -70,6 +71,8 @@ def classify_generation_error(exc: Exception) -> ErrorDisposition:
     """Classify execution failures without exposing internal details to users."""
     if isinstance(exc, MissingTripError):
         return ErrorDisposition(False, "TRIP_NOT_FOUND", "关联的行程不存在")
+    if isinstance(exc, FillDraftValidationError):
+        return ErrorDisposition(True, "MALFORMED_MODEL_OUTPUT", exc.safe_message)
     if isinstance(exc, ValidationError):
         return ErrorDisposition(False, "INVALID_INPUT", "行程生成失败，请检查输入后重试")
     if isinstance(exc, ValueError):
@@ -172,6 +175,7 @@ def _default_generate(
         selected_entities=list(generation_input.selected_entities) or None,
         thread_id=generation_input.thread_id,
     )
+    gate_fill_draft(filled, on_stage)
     if on_stage is not None:
         on_stage("route", 70, "正在补路线...")
     routed = route_itinerary_draft(filled)
