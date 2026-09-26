@@ -16,7 +16,10 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.session import SessionLocal
 from app.models.trip import Trip, GenerationJob
+from app.schemas.draft_boundary import DraftBoundaryError
 from app.schemas.fill_draft import FillDraftValidationError, gate_fill_draft
+from app.schemas.persist_draft import gate_persist_draft
+from app.schemas.route_draft import gate_route_draft
 from app.services.generation_jobs import (
     FILL_DRAFT_PAYLOAD_KEY,
     ClaimedGenerationJob,
@@ -83,7 +86,7 @@ def classify_generation_error(exc: Exception) -> ErrorDisposition:
     """Classify execution failures without exposing internal details to users."""
     if isinstance(exc, MissingTripError):
         return ErrorDisposition(False, "TRIP_NOT_FOUND", "关联的行程不存在")
-    if isinstance(exc, FillDraftValidationError):
+    if isinstance(exc, DraftBoundaryError):
         return ErrorDisposition(True, "MALFORMED_MODEL_OUTPUT", exc.safe_message)
     if isinstance(exc, ValidationError):
         return ErrorDisposition(False, "INVALID_INPUT", "行程生成失败，请检查输入后重试")
@@ -226,6 +229,7 @@ def _default_generate(
         if on_stage("route", 70, message) is False:
             return None
     routed = route_itinerary_draft(filled)
+    gate_route_draft(routed, on_stage)
     recorded: list[str] = []
     for message in collect_route_degradation_messages(routed):
         if not _record_warning(on_stage, ROUTE_WARNING_PROGRESS, message, recorded):
@@ -316,6 +320,7 @@ def _execute_claim(claim: ClaimedGenerationJob, regenerate: Regenerate) -> None:
             else:
                 draft = regenerate(generation_input)
 
+        gate_persist_draft(draft, report)
         if not finalize_job_success(claim, draft):
             logger.warning("stale generation owner could not complete job %s", claim.id)
     except Exception as exc:

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.trip import Trip, ItineraryDay, ItineraryItem
 from app.services.destination_timezone import effective_timezone
+from app.schemas.persist_draft import gate_persist_draft
 from app.schemas.trip import (
     TripCreate,
     ItineraryDayCreate,
@@ -403,6 +404,7 @@ def regenerate_trip(
         thread_id=f"trip-{trip.id}",
         generator=generator,
     )
+    gate_persist_draft(draft)
     persist_itinerary(db, trip, draft, trip.start_date)
     return trip
 

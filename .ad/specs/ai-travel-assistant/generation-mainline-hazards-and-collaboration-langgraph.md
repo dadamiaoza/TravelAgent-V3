@@ -91,11 +91,17 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 下列各项在 2026-09-26 的 `main` 上仍是计划，除非「现状」写明已经落地。本文不实现它们。
 
-### 1. fill / route / verify 的 Draft schema（计划）
+### 1. fill / route / verify 的 Draft schema（已落地）
 
 为三个阶段的草稿定义可校验结构（整数 `day_index` / `seq`、必填 `poi_name`、坐标是否允许缺失、路段分钟的类型）。边界校验失败写成明确的 stage error，或可重试的畸形输出错误（现有 `MALFORMED_MODEL_OUTPUT` 只覆盖 `ValueError`，例如 JSON 截取失败）。不要把类型错误留到 `persist_itinerary` 再变成不可重试的 `INTERNAL_ERROR`。
 
-**现状：** 没有这层 schema。阶段之间传递普通 `dict`。
+**现状：** 已落地。三道门都就地校验，不改写交给下游的 `dict`。失败是 `DraftBoundaryError`（fill 仍是其子类 `FillDraftValidationError`）。Worker 先记 `key=error` 的 stage，再分成可重试的 `MALFORMED_MODEL_OUTPUT`，用户看到的是该门的中文，而不是落库 `TypeError` 变成不可重试的 `INTERNAL_ERROR`。若只落到通用 `ValueError` 分支，文案会是「AI 返回内容格式异常」；这三道门用自己的 `safe_message`。
+
+- **fill 出口**（`gate_fill_draft`，进度 40，「行程草稿的坐标或顺序无效，无法继续排路线」）：`day_index` / `seq` 必须是 JSON 整数，字符串 `"1"` 在这里失败。`poi_name` 非空，同一天 `seq` 唯一，`day_index` 唯一。坐标两边都缺可以继续，route 会地理编码；只出现一边，或不是范围内的有限数，则失败。fill 不检查路段分钟：`optimize_itinerary` 会把采用的分钟改写成整数。
+- **route 出口 / verify 入口**（`gate_route_draft`，route 之后、降级 warning 和 verify 之前，进度 80，「路线草稿的站点或路段时间无效，无法继续核对」）：沿用 fill 的天数、站点和坐标规则。`travel_minutes_from_prev` 或 `travel_minutes` 若存在，必须是非负整数（字符串、浮点、null 失败；缺省允许，persist 把缺省路段当成 0）。`duration_h` 若存在必须是有限非负数字（`1.5` 可以，null 和数字字符串不行）。route 写入、verify 不依赖的字段若出现则类型必须正确：`order_source` / `order_degrade_reason` / `day_boundary_warning` / `travel_estimate_source` / `travel_discrepancy` 为字符串或 null，`travel_amap_minutes` / `travel_estimate_minutes` 为非负整数或 null，`route_verified` 为布尔或 null，`route_polyline` 为数组或 null。这些键都可以不出现。`order_source=nearest_neighbor` 和 `day_boundary_warning` 通过本门，仍然只是后面的 warning。
+- **verify 出口 / persist 入口**（`gate_persist_draft`，`finalize_job_success` 之前，进度 96，「行程草稿字段不合法，无法保存」）：对齐 `persist_itinerary` 真正读取、且类型错误会在落库变成异常的字段。整数 `day_index`（`timedelta(days=day_index - 1)`）、整数 `seq`、非空 `poi_name`、可选 `duration_h`、可选 `travel_minutes_from_prev`、坐标对、可选 `route_type` / `transport_mode` / `travel_advice` / POI 文本、可选 `route_verified` 布尔、可选 `route_polyline` 数组。不把 `order_source` 或 `travel_amap_minutes` 当成落库失败。自定义 `regenerate` 不经过 route 门时，仍会被这道门拦住。verify 超时和工具异常仍记 warning，Job 可以成功，不会升格成 schema 失败。
+
+仍是软的：sanity 通过的别扭顺序、最近邻重排、跨天过远、时效核对降级。生成仍是固定 Worker，不是 LangGraph StateGraph。
 
 ### 2. 从 route 续跑（fill 草稿已持久化）
 
@@ -183,6 +189,7 @@ flowchart LR
 
 代码：
 
+- `src/backend/app/schemas/fill_draft.py`、`route_draft.py`、`persist_draft.py` — fill / route / persist 三道硬 Draft 门
 - `src/backend/app/services/job_worker.py` — `_default_generate`、心跳、错误分类
 - `src/backend/app/services/itinerary.py` — `assemble_days_from_entities`、`fill_itinerary_draft`、`route_itinerary_draft`
 - `src/backend/app/services/fact_verify.py` — `verify_itinerary_draft`、`apply_verify_to_draft`
