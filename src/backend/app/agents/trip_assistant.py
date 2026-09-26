@@ -7,7 +7,8 @@ The user message is only the traveler's text.
 
 History resume:
 - Checkpointer keeps the full thread.
-- Display API returns the most recent DISPLAY_HISTORY_LIMIT user/ai bubbles.
+- Display API returns the most recent DISPLAY_HISTORY_LIMIT user turns
+  (HumanMessage boundaries), flattened to user/ai bubbles for the FE.
 - Model context is trimmed to MODEL_CONTEXT_TURNS user turns via middleware
   (checkpoint is not pruned).
 """
@@ -31,7 +32,8 @@ from app.services.trip_chat import WRITE_MODE_AUTO
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
-# Display bubbles (user + ai) returned by GET .../chat/history.
+# Display user turns (HumanMessage boundaries) returned by GET .../chat/history.
+# Each turn includes its AI replies after flatten, so bubble count is typically ~2x.
 DISPLAY_HISTORY_LIMIT = 30
 # User turns (HumanMessage boundaries) the model sees each invoke.
 MODEL_CONTEXT_TURNS = 12
@@ -167,9 +169,15 @@ def messages_for_display(
     *,
     limit: int = DISPLAY_HISTORY_LIMIT,
 ) -> list[dict[str, str]]:
-    """Filter tool/system noise; keep the most recent ``limit`` user/ai bubbles."""
+    """Filter tool/system noise; keep the most recent ``limit`` user turns as bubbles.
+
+    Truncates at HumanMessage boundaries (same as model-context trim), then
+    flattens to role user|ai for the FE. Intervening AI replies that belong to
+    those turns are kept; tool/system messages are dropped.
+    """
+    scoped = trim_messages_to_turns(messages, max_turns=limit) if limit > 0 else list(messages)
     bubbles: list[dict[str, str]] = []
-    for msg in messages:
+    for msg in scoped:
         if _is_tool_or_system(msg):
             continue
         if _is_human(msg):
@@ -185,9 +193,7 @@ def messages_for_display(
                 # Pure tool-call AI messages (empty content) are not bubbles.
                 continue
             bubbles.append({"role": "ai", "content": content})
-    if limit <= 0:
-        return bubbles
-    return bubbles[-limit:]
+    return bubbles
 
 
 def get_chat_history(thread_id: str, *, limit: int = DISPLAY_HISTORY_LIMIT) -> dict[str, Any]:

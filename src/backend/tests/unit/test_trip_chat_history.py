@@ -65,12 +65,47 @@ def test_messages_for_display_filters_noise_and_caps() -> None:
         messages.append(ToolMessage(content=f"tool-{i}", tool_call_id=str(i)))
         messages.append(AIMessage(content=f"ai-{i}"))
     bubbles = messages_for_display(messages, limit=DISPLAY_HISTORY_LIMIT)
-    assert len(bubbles) == DISPLAY_HISTORY_LIMIT
+    users = [b for b in bubbles if b["role"] == "user"]
+    ais = [b for b in bubbles if b["role"] == "ai"]
+    # 40 user turns → keep last 30 turns → 30 user + 30 ai bubbles (tools filtered)
+    assert len(users) == DISPLAY_HISTORY_LIMIT
+    assert len(ais) == DISPLAY_HISTORY_LIMIT
+    assert len(bubbles) == DISPLAY_HISTORY_LIMIT * 2
     assert bubbles[0]["role"] == "user"
-    assert bubbles[0]["content"] == "user-25"  # 40 pairs * 2 bubbles = 80; last 30 => from pair 25
+    assert bubbles[0]["content"] == "user-10"  # last 30 of 40 starts at index 10
     assert bubbles[-1] == {"role": "ai", "content": "ai-39"}
     assert all(b["role"] in {"user", "ai"} for b in bubbles)
     assert not any("tool-" in b["content"] for b in bubbles)
+
+
+def test_messages_for_display_keeps_exactly_n_user_turns() -> None:
+    """Display cap is user turns, not total bubbles."""
+    messages: list = []
+    for i in range(35):
+        messages.append(HumanMessage(content=f"u{i}"))
+        messages.append(AIMessage(content=f"a{i}"))
+    bubbles = messages_for_display(messages, limit=30)
+    users = [b for b in bubbles if b["role"] == "user"]
+    ais = [b for b in bubbles if b["role"] == "ai"]
+    assert len(users) == 30
+    assert len(ais) == 30
+    assert users[0]["content"] == "u5"
+    assert ais[-1]["content"] == "a34"
+    # Multi-AI within a turn still counts as one user turn
+    multi = [
+        HumanMessage(content="old"),
+        AIMessage(content="old-a"),
+    ]
+    for i in range(30):
+        multi.append(HumanMessage(content=f"keep-{i}"))
+        multi.append(AIMessage(content="", tool_calls=[{"name": "t", "args": {}, "id": str(i)}]))
+        multi.append(ToolMessage(content=f"tool-{i}", tool_call_id=str(i)))
+        multi.append(AIMessage(content=f"keep-ai-{i}"))
+    multi_bubbles = messages_for_display(multi, limit=30)
+    multi_users = [b for b in multi_bubbles if b["role"] == "user"]
+    assert len(multi_users) == 30
+    assert multi_users[0]["content"] == "keep-0"
+    assert not any(b["content"] == "old" for b in multi_bubbles)
 
 
 def test_messages_for_display_empty() -> None:
