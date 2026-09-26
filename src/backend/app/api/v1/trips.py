@@ -4,6 +4,7 @@ import queue
 import re
 import threading
 import uuid
+from copy import deepcopy
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -299,7 +300,8 @@ def retry_trip_generation(
         raise HTTPException(status_code=422, detail="请先补上出发和返程日期，再重新生成")
 
     previous = get_latest_job_for_trip(db, trip.id)
-    payload = dict(previous.payload) if previous is not None and previous.payload else None
+    # Job lineage: selected entities plus a gated fill draft, when one was stored.
+    payload = deepcopy(previous.payload) if previous is not None and previous.payload else None
     trip.status = "generating"
     try:
         job = create_job(db, trip.id, commit=False, payload=payload)
