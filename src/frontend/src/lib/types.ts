@@ -151,6 +151,8 @@ export interface GenerationProgress {
   message: string;
   stages?: GenerationJobStage[];
   job_id?: string | null;
+  /** Latest job payload still has a dict fill draft the worker can resume from. */
+  has_fill_draft?: boolean;
 }
 
 export type GenerationJobStatus =

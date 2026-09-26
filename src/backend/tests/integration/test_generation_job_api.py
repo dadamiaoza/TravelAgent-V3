@@ -324,6 +324,7 @@ def test_progress_without_job_keeps_compatible_unknown_payload(
             "message": "暂无进度信息",
             "stages": [],
             "job_id": None,
+            "has_fill_draft": False,
         }
     finally:
         with SessionLocal() as db:

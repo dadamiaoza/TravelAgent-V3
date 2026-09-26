@@ -4,7 +4,6 @@ import queue
 import re
 import threading
 import uuid
-from copy import deepcopy
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -21,6 +20,7 @@ from app.models.source import SourceEntity
 from app.models.trip import Trip, ItineraryDay, ItineraryItem, GenerationJob
 from app.schemas.trip import (
     TripCreate,
+    TripRetryRequest,
     TripUpdate,
     TripSuggestRequest,
     TripSuggestOut,
@@ -55,9 +55,11 @@ from app.services.trip_editor import (
 )
 from app.services.trip_chat import chat_thread_id, run_trip_chat
 from app.services.generation_jobs import (
+    copy_job_payload_for_retry,
     create_job,
     get_job_by_idempotency_key,
     get_latest_job_for_trip,
+    payload_has_reusable_fill_draft,
     update_job,
 )
 from app.services.device_access import ensure_device_cookie, load_owned_trip, trip_visible_to
@@ -217,6 +219,7 @@ def create_trip(
 
 
 def _progress_payload(job: GenerationJob | None) -> dict:
+    has_fill_draft = payload_has_reusable_fill_draft(None if job is None else job.payload)
     if job is None:
         return {
             "status": "unknown",
@@ -224,6 +227,7 @@ def _progress_payload(job: GenerationJob | None) -> dict:
             "message": "暂无进度信息",
             "stages": [],
             "job_id": None,
+            "has_fill_draft": has_fill_draft,
         }
     return {
         "status": job.status or "unknown",
@@ -231,6 +235,7 @@ def _progress_payload(job: GenerationJob | None) -> dict:
         "message": job.message or "",
         "stages": list(job.stages or []),
         "job_id": str(job.id),
+        "has_fill_draft": has_fill_draft,
     }
 
 
@@ -279,11 +284,17 @@ def retry_trip_generation(
     trip_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
+    body: TripRetryRequest | None = None,
 ):
     """Start a new generation job for a failed trip this caller may see.
 
     Device scope comes first. A demo session also reaches rows claimed by
     that user; logged-out callers cannot retry a claimed row.
+
+    The next job copies the previous payload. discard_fill_draft removes
+    only fill_draft so fill runs again. selected_entities stay. Omitting
+    the body, or leaving the flag false, still resumes from a valid draft.
+    Eligibility is unchanged: generation_failed, both dates, same owner.
     """
     device_id = request.state.device_id
     user_id = getattr(request.state, "user_id", None)
@@ -301,8 +312,11 @@ def retry_trip_generation(
         raise HTTPException(status_code=422, detail="请先补上出发和返程日期，再重新生成")
 
     previous = get_latest_job_for_trip(db, trip.id)
-    # Job lineage: selected entities plus a gated fill draft, when one was stored.
-    payload = deepcopy(previous.payload) if previous is not None and previous.payload else None
+    discard_fill_draft = bool(body and body.discard_fill_draft)
+    payload = copy_job_payload_for_retry(
+        previous.payload if previous is not None else None,
+        discard_fill_draft=discard_fill_draft,
+    )
     trip.status = "generating"
     try:
         job = create_job(db, trip.id, commit=False, payload=payload)

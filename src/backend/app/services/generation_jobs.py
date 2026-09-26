@@ -22,6 +22,30 @@ STALE_RETRY_DELAY = timedelta(seconds=5)
 FILL_DRAFT_PAYLOAD_KEY = "fill_draft"
 
 
+def payload_has_reusable_fill_draft(payload: dict | None) -> bool:
+    """True when payload holds a dict the worker can try to resume from."""
+    if not payload:
+        return False
+    return isinstance(payload.get(FILL_DRAFT_PAYLOAD_KEY), dict)
+
+
+def copy_job_payload_for_retry(
+    payload: dict | None,
+    *,
+    discard_fill_draft: bool = False,
+) -> dict:
+    """Copy a job payload onto the next user-started generation job.
+
+    The default keeps a gated fill draft so route can resume.
+    discard_fill_draft removes only that key. selected_entities stay, so
+    dropping the draft does not drop places the user already checked.
+    """
+    copied = deepcopy(payload) if payload else {}
+    if discard_fill_draft:
+        copied.pop(FILL_DRAFT_PAYLOAD_KEY, None)
+    return copied
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 

@@ -60,6 +60,10 @@ def test_retry_failed_trip_starts_a_new_generating_job():
     trip_id = created.json()["id"]
     payload = {"selected_entities": [{"poi_name": "宽窄巷子", "day_index": 1, "seq": 1}]}
     try:
+        payload["fill_draft"] = {
+            "city": "成都",
+            "days": [{"day_index": 1, "items": [{"seq": 1, "poi_name": "宽窄巷子"}]}],
+        }
         old_job_id = _mark_failed(trip_id, payload=payload)
 
         retried = device.post(f"/api/v1/trips/{trip_id}/retry")
@@ -84,6 +88,7 @@ def test_retry_failed_trip_starts_a_new_generating_job():
             stored = db.get(GenerationJob, body["job_id"])
             assert stored is not None
             assert stored.payload["selected_entities"][0]["poi_name"] == "宽窄巷子"
+            assert stored.payload["fill_draft"]["days"][0]["items"][0]["poi_name"] == "宽窄巷子"
 
         again = device.post(f"/api/v1/trips/{trip_id}/retry")
         assert again.status_code == 409
@@ -110,10 +115,22 @@ def test_retry_rejects_non_failed_and_other_devices():
     draft_id = draft.json()["id"]
     try:
         assert owner.post(f"/api/v1/trips/{trip_id}/retry").status_code == 409
+        assert owner.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        ).status_code == 409
         assert other.post(f"/api/v1/trips/{trip_id}/retry").status_code == 404
+        assert other.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        ).status_code == 404
 
         _mark_failed(trip_id)
         assert other.post(f"/api/v1/trips/{trip_id}/retry").status_code == 404
+        assert other.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        ).status_code == 404
 
         with SessionLocal() as db:
             row = db.get(Trip, trip_id)
@@ -122,6 +139,10 @@ def test_retry_rejects_non_failed_and_other_devices():
             db.commit()
         generated = owner.post(f"/api/v1/trips/{trip_id}/retry")
         assert generated.status_code == 409
+        assert owner.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        ).status_code == 409
 
         assert owner.post(f"/api/v1/trips/{draft_id}/retry").status_code == 409
         assert other.post(f"/api/v1/trips/{uuid4()}/retry").status_code == 404
@@ -158,14 +179,106 @@ def test_retry_follows_demo_claim_rules():
         _mark_failed(trip_id)
         assert other.post("/api/v1/auth/demo/login").status_code == 200
         assert other.post(f"/api/v1/trips/{trip_id}/retry").status_code == 404
+        assert other.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        ).status_code == 404
 
         assert owner.post("/api/v1/auth/logout").status_code == 204
         logged_out = owner.post(f"/api/v1/trips/{trip_id}/retry")
         assert logged_out.status_code == 404
+        assert owner.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        ).status_code == 404
         opened = owner.get(f"/api/v1/trips/{trip_id}")
         assert opened.status_code == 404
     finally:
         _delete([trip_id])
+
+
+def test_discard_fill_draft_drops_only_the_draft_on_the_next_job():
+    device = _client()
+    created = device.post(
+        "/api/v1/trips",
+        json={
+            "destination": "丢掉草稿",
+            "city": "杭州",
+            "start_date": "2034-05-01",
+            "end_date": "2034-05-02",
+            "people_count": 2,
+        },
+    )
+    assert created.status_code == 201, created.text
+    trip_id = created.json()["id"]
+    draft = {
+        "city": "杭州",
+        "days": [{"day_index": 1, "items": [{"seq": 1, "poi_name": "西湖"}]}],
+    }
+    try:
+        _mark_failed(
+            trip_id,
+            payload={
+                "selected_entities": [{"poi_name": "灵隐寺", "day_index": 1, "seq": 1}],
+                "fill_draft": draft,
+            },
+        )
+        before = device.get(f"/api/v1/trips/{trip_id}/progress")
+        assert before.status_code == 200
+        assert before.json()["has_fill_draft"] is True
+
+        retried = device.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        )
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["status"] == "generating"
+        with SessionLocal() as db:
+            stored = db.get(GenerationJob, retried.json()["job_id"])
+            assert stored is not None
+            assert "fill_draft" not in (stored.payload or {})
+            assert stored.payload["selected_entities"][0]["poi_name"] == "灵隐寺"
+        after = device.get(f"/api/v1/trips/{trip_id}/progress")
+        assert after.json()["has_fill_draft"] is False
+        assert after.json()["job_id"] == retried.json()["job_id"]
+    finally:
+        _delete([trip_id])
+
+
+def test_empty_and_false_retry_body_still_copy_fill_draft():
+    device = _client()
+    ids: list[str] = []
+    try:
+        for body in ({}, {"discard_fill_draft": False}):
+            created = device.post(
+                "/api/v1/trips",
+                json={
+                    "destination": "沿用草稿",
+                    "city": "杭州",
+                    "start_date": "2034-06-01",
+                    "end_date": "2034-06-02",
+                },
+            )
+            assert created.status_code == 201, created.text
+            trip_id = created.json()["id"]
+            ids.append(trip_id)
+            _mark_failed(
+                trip_id,
+                payload={
+                    "selected_entities": [{"poi_name": "西湖", "day_index": 1, "seq": 1}],
+                    "fill_draft": {"city": "杭州", "days": []},
+                },
+            )
+            retried = device.post(f"/api/v1/trips/{trip_id}/retry", json=body)
+            assert retried.status_code == 200, retried.text
+            with SessionLocal() as db:
+                stored = db.get(GenerationJob, retried.json()["job_id"])
+                assert stored is not None
+                assert stored.payload["fill_draft"]["city"] == "杭州"
+                assert stored.payload["selected_entities"][0]["poi_name"] == "西湖"
+            assert device.get(f"/api/v1/trips/{trip_id}/progress").json()["has_fill_draft"] is True
+    finally:
+        _delete(ids)
 
 
 def test_retry_requires_dates_when_failed():
@@ -185,6 +298,11 @@ def test_retry_requires_dates_when_failed():
         response = device.post(f"/api/v1/trips/{trip_id}/retry")
         assert response.status_code == 422
         assert "日期" in response.json()["detail"]
+        discarded = device.post(
+            f"/api/v1/trips/{trip_id}/retry",
+            json={"discard_fill_draft": True},
+        )
+        assert discarded.status_code == 422
         opened = device.get(f"/api/v1/trips/{trip_id}")
         assert opened.json()["status"] == "generation_failed"
     finally:
