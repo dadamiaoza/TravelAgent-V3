@@ -329,11 +329,15 @@ class TripBrief(BaseModel):
 # ── Chat schemas ──
 
 class ChatRequest(BaseModel):
+    """LEGACY / 学习遗留请求体（POST /api/v1/chat）。生产聊天使用 TripChatRequest。"""
+
     message: str = Field(..., min_length=1, examples=["帮我规划北京3日游，偏好历史文化"])
     thread_id: str | None = None  # 可选，指定后可以延续之前的对话
 
 
 class ChatOut(BaseModel):
+    """LEGACY / 学习遗留响应（reply + thread_id）。生产聊天响应是 TripChatOut。"""
+
     reply: str
     thread_id: str
 
