@@ -35,6 +35,7 @@ from app.schemas.trip import (
     TripSyncRequest,
     TripChatRequest,
     TripChatOut,
+    TripChatHistoryOut,
     DeltaApplyRequest,
     EntityImportRequest,
 )
@@ -54,6 +55,7 @@ from app.services.trip_editor import (
     regenerate_trip,
 )
 from app.services.trip_chat import chat_thread_id, run_trip_chat
+from app.agents.trip_assistant import get_chat_history
 from app.services.generation_jobs import (
     copy_job_payload_for_retry,
     create_job,
@@ -514,6 +516,20 @@ def _run_trip_chat(
 ) -> TripChatOut:
     """Run the trip assistant graph and return reply + suggestions."""
     return run_trip_chat(trip=trip, body=body, thread_id=thread_id, db=db, progress=progress)
+
+
+
+@router.get("/{trip_id}/chat/history", response_model=TripChatHistoryOut)
+def trip_chat_history(
+    trip_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Resume collaboration chat bubbles from the trip-chat checkpointer thread."""
+    _owned_or_404(db, trip_id, request)
+    thread_id = chat_thread_id(trip_id)
+    payload = get_chat_history(thread_id)
+    return TripChatHistoryOut(**payload)
 
 
 @router.post("/{trip_id}/chat", response_model=TripChatOut)

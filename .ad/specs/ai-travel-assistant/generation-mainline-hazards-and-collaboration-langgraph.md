@@ -170,6 +170,20 @@ flowchart LR
 
 ---
 
+
+### Collaboration chat history resume
+
+Locked defaults (checkpointer remains source of truth for the `trip-chat-{id}` thread):
+
+| Layer | Cap | Notes |
+|--|--|--|
+| Display turns | **30** | `GET /api/v1/trips/{id}/chat/history` keeps last 30 user turns (HumanMessage boundaries), flattens to user/ai bubbles; empty → `[]` |
+| Model context | **~12 turns** | Middleware trims to the last 12 user turns before each model call; checkpoint is not pruned |
+| Itinerary truth | per-turn DB | Still injected via system prompt each invoke |
+
+Frontend `ChatPanel` hydrates bubbles + `thread_id` on mount / `tripId` change so leave → return resumes the same thread without re-stating context.
+
+
 ## 6. 刻意不做
 
 - 不把生产生成改成 LangGraph `StateGraph` 或自定义 TypedDict State。
