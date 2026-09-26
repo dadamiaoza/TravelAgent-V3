@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { latestWarningMessage, shortWarningCopy } from "@/lib/generationJob";
+import { shortWarningCopy, warningMessages } from "@/lib/generationJob";
 import type { GenerationJob, GenerationProgress } from "@/lib/types";
 
 export default function GenerationProgressBanner({
@@ -13,7 +13,7 @@ export default function GenerationProgressBanner({
 }) {
   const [open, setOpen] = useState(false);
   const stages = job?.stages?.length ? job.stages : progress?.stages ?? [];
-  const warning = latestWarningMessage(job, progress);
+  const warnings = warningMessages(job, progress);
   const message =
     job?.message ?? progress?.message ?? (failed ? "行程生成失败，请稍后重试" : "正在生成行程…");
   const percent = job?.progress ?? progress?.progress ?? 0;
@@ -36,11 +36,11 @@ export default function GenerationProgressBanner({
   return (
     <div className={`rounded-2xl border p-4 ${tone.box}`}>
       <p className={`text-sm ${tone.text}`}>{message}</p>
-      {warning && (
-        <p className="mt-2 text-sm font-medium text-amber-800" title={warning}>
+      {warnings.map((warning) => (
+        <p key={warning} className="mt-2 text-sm font-medium text-amber-800" title={warning}>
           {shortWarningCopy(warning)}
         </p>
-      )}
+      ))}
       {!failed && (
         <div className={`mt-2 h-2 w-full overflow-hidden rounded ${tone.track}`}>
           <div

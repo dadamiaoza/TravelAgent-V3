@@ -1,5 +1,13 @@
 import { api } from "@/lib/api";
-import type { GenerationJob, GenerationJobStage, GenerationProgress, Trip } from "@/lib/types";
+import type { GenerationJob, GenerationProgress, Trip } from "@/lib/types";
+
+export {
+  latestWarningMessage,
+  libraryDegradationSignal,
+  shortWarningCopy,
+  warningMessages,
+  warningStages,
+} from "@/lib/degradationCopy";
 
 export function isTerminalJobStatus(status: string | undefined): boolean {
   return status === "succeeded" || status === "failed";
@@ -7,33 +15,6 @@ export function isTerminalJobStatus(status: string | undefined): boolean {
 
 export function isActiveJobStatus(status: string | undefined): boolean {
   return status === "pending" || status === "running" || status === "retry_wait";
-}
-
-export function warningStages(
-  job?: GenerationJob | null,
-  progress?: GenerationProgress | null,
-): GenerationJobStage[] {
-  const stages = job?.stages?.length ? job.stages : progress?.stages ?? [];
-  return stages.filter((stage) => stage.key === "warning");
-}
-
-/** Latest verify/route degradation, if the job recorded one. */
-export function latestWarningMessage(
-  job?: GenerationJob | null,
-  progress?: GenerationProgress | null,
-): string | null {
-  const stages = warningStages(job, progress);
-  const message = stages.length ? stages[stages.length - 1]?.message?.trim() : "";
-  return message || null;
-}
-
-/** Short Chinese copy for a status chip. Full text stays on the title tooltip. */
-export function shortWarningCopy(message: string): string {
-  const text = message.replace(/\s+/g, " ").trim();
-  if (!text) return "生成有降级";
-  const first = text.split(/[；;]/)[0]?.trim() || text;
-  if (first.length <= 24) return first;
-  return `${first.slice(0, 24)}…`;
 }
 
 export async function waitForGenerationJob(

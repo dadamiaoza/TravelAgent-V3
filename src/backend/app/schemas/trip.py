@@ -319,6 +319,9 @@ class TripBrief(BaseModel):
     status: str
     created_at: datetime | None = None
     cover_url: str | None = None
+    # Warning-stage copy from the latest succeeded job. Empty when the trip
+    # was generated without route or verify degradation.
+    degradations: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
