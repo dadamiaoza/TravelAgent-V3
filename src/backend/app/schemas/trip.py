@@ -408,5 +408,16 @@ class TripChatOut(BaseModel):
     applied: list[ItineraryDelta] = []
 
 
+
+class TripChatHistoryMessage(BaseModel):
+    role: str  # "user" | "ai" — matches ChatPanel bubble roles
+    content: str
+
+
+class TripChatHistoryOut(BaseModel):
+    thread_id: str
+    messages: list[TripChatHistoryMessage] = []
+
+
 class DeltaApplyRequest(BaseModel):
     delta: ItineraryDelta

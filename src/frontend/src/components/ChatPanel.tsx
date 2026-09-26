@@ -615,6 +615,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const [writeMode, setWriteMode] = useState<TripChatWriteMode>("propose");
   const [handled, setHandled] = useState<Record<string, "accepted" | "ignored" | "failed">>({});
@@ -645,6 +646,43 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
     if (!el || !stickToBottom.current) return;
     el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryLoading(true);
+    setMessages([]);
+    setThreadId(undefined);
+    setHandled({});
+    stickToBottom.current = true;
+
+    (async () => {
+      try {
+        const data = await api.get<{ thread_id: string; messages: { role: "user" | "ai"; content: string }[] }>(
+          `/trips/${tripId}/chat/history`,
+        );
+        if (cancelled) return;
+        setThreadId(data.thread_id || undefined);
+        setMessages(
+          (data.messages ?? []).map((row) => ({
+            id: newId(),
+            role: row.role === "ai" ? "ai" : "user",
+            content: row.content,
+          })),
+        );
+      } catch {
+        if (!cancelled) {
+          setMessages([]);
+          setThreadId(undefined);
+        }
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tripId]);
 
   async function refreshTrip() {
     const data = await api.get<Trip>(`/trips/${tripId}`);
@@ -794,7 +832,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
 
   return (
     <aside
-      aria-busy={loading}
+      aria-busy={loading || historyLoading}
       className="flex h-[70vh] min-h-[28rem] max-h-[70vh] w-full flex-col overflow-hidden rounded-lg border border-line-tertiary bg-chrome shadow-sm lg:h-[calc(100dvh-10.5rem)] lg:max-h-[calc(100dvh-2rem)] lg:min-h-[26rem]"
     >
       <header className="flex items-center justify-between gap-3 border-b border-line-tertiary px-3 py-2.5">
@@ -813,7 +851,13 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
         }}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
-        {turns.length === 0 ? (
+        {historyLoading ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-3 py-4 text-[12px] text-ink-tertiary">
+            <Spinner />
+            <span>加载对话记录…</span>
+          </div>
+        ) : turns.length === 0 ? (
+
           <div className="flex h-full flex-col justify-center px-3 py-4">
             <p className="mb-2 text-[12px] text-ink-tertiary">可以这样说</p>
             <div className="flex flex-col items-start gap-1.5">
@@ -852,7 +896,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             ref={inputRef}
             value={input}
             rows={2}
-            disabled={loading}
+            disabled={loading || historyLoading}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -872,7 +916,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
               <button
                 type="button"
                 onClick={() => setWriteMode("propose")}
-                disabled={loading}
+                disabled={loading || historyLoading}
                 className={`rounded px-2 py-1 text-[11px] ${
                   writeMode === "propose"
                     ? "bg-elevated font-medium text-ink shadow-sm"
@@ -884,7 +928,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
               <button
                 type="button"
                 onClick={() => setWriteMode("auto_apply")}
-                disabled={loading}
+                disabled={loading || historyLoading}
                 className={`rounded px-2 py-1 text-[11px] ${
                   writeMode === "auto_apply"
                     ? "bg-elevated font-medium text-ink shadow-sm"
@@ -897,7 +941,7 @@ export default function ChatPanel({ tripId }: { tripId: string }) {
             <button
               type="button"
               onClick={() => void handleSend()}
-              disabled={loading || !input.trim()}
+              disabled={loading || historyLoading || !input.trim()}
               className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-ink px-2.5 text-[12px] text-elevated disabled:opacity-40"
             >
               {loading ? <Spinner /> : "发送"}
