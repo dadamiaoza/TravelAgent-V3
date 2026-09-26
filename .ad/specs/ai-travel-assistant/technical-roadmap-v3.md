@@ -44,7 +44,7 @@ FastAPI
               └───────────────────────────────────────────────┘
 ```
 
-两种编排不要合成一个 Supervisor：生成依赖固定用 Job 图；协作用带工具的行程协作图，由模型选工具。
+两种编排不要合成一个 Supervisor：生成依赖固定用 Job 图；协作用带工具的行程协作图，由模型选工具。主线路软契约、重试与降级可见性，以及生成侧为何保持 Job 图、协作侧如何用 LangGraph，见 [generation-mainline-hazards-and-collaboration-langgraph.md](generation-mainline-hazards-and-collaboration-langgraph.md)。
 
 ---
 
