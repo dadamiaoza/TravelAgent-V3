@@ -115,11 +115,11 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 **现状：** 已落地。持久化选的是 Job `warning` stage，不新增 `trip.status`，也不把 `order_source` 做成日程列。`collect_route_degradation_messages` 在 route 之后、verify 之前，把本轮事实追加进当前 Job：同一降级原因的天合并成一句「第N天已按最近邻重排（原因）」，每条 `day_boundary_warning` 单独一句；verify 的 warning 仍是原来的摘要。`claim_next_job` 每次领取都会把 stage 重置成 `prepare`，所以同一 Job 重试成功后不会留下上一轮的 warning。详情在 `ready` 时用 `warningMessages` 把这些 stage 画成与「已生成」并排的琥珀胶囊（`GenerationWarningPill` / `shortWarningCopy`，全文在 title）。地图顶栏同样并排。列表 `GET /trips` 的 `TripBrief.degradations` 取该行程最近一次 **succeeded** Job 的 warning 文案；「我的行程」有内容才显示一枚短胶囊，多条时标题里能看到全文。没有降级的行程不出现胶囊。跨天仍只告警，不挪点。
 
-### 5. 文档与代码入口：生产是 Job 图，Supervisor 是遗留（文档侧部分已写）
+### 5. 文档与代码入口：生产是 Job 图，Supervisor 是遗留（入口已标明）
 
 对外说明以 Job 任务图和 `POST /trips/{id}/chat` 为准。`supervisor` / `POST /api/v1/chat` 保留为学习代码时，应在入口处标明遗留，避免再被接进行程页或生成 Worker。
 
-**现状：** [CONTEXT.md](../../../CONTEXT.md) 的「2026-09 产品形态修正」和路线图已经这样写。代码里 `create_supervisor_agent` 与 `POST /api/v1/chat` 仍在，前端未接。本文件补的是隐患与 LangGraph 边界，不改这些入口。
+**现状：** 代码入口标记已落地。[CONTEXT.md](../../../CONTEXT.md) 的「2026-09 产品形态修正」和路线图仍是对外口径。`create_supervisor_agent`（`app/agents/supervisor.py`）与 `POST /api/v1/chat`（`app/api/v1/chat.py`）保留可运行，模块与函数文档标明 LEGACY / 学习遗留，并写明生产替代是 `GenerationJob` Worker 与 `POST /trips/{id}/chat`。该路由在 OpenAPI 中为 `deprecated`，响应带 `Deprecation: true`；`app/main.py` 挂载处注明这是学习遗留。前端未接。不要把它接进行程页、我的行程、GenerationJob 或 `trip_assistant`。用户主动丢掉 fill 草稿再重填仍属第 2 条，不在本条范围内。
 
 ---
 

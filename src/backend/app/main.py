@@ -33,7 +33,25 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Travel Assistant", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="AI Travel Assistant",
+    version="0.1.0",
+    lifespan=lifespan,
+    description=(
+        "生产生成是 GenerationJob Worker（fill → route → verify → persist）。"
+        "生产协作聊天是 POST /api/v1/trips/{trip_id}/chat 与 /chat/stream。"
+        "POST /api/v1/chat 是 LEGACY / 学习遗留（Supervisor），不是行程页或生成入口。"
+    ),
+    openapi_tags=[
+        {
+            "name": "chat",
+            "description": (
+                "LEGACY / 学习遗留。不是主助手，也不是 GenerationJob。"
+                "生产协作聊天见 trips：POST /trips/{trip_id}/chat 与 /chat/stream。"
+            ),
+        }
+    ],
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,5 +67,7 @@ app.include_router(trips_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(sources_router, prefix="/api/v1")
 app.include_router(facts_router, prefix="/api/v1")
+# LEGACY / 学习遗留：Supervisor 的 POST /api/v1/chat。不是行程页、我的行程或 GenerationJob。
+# 生产协作聊天在 trips 路由：POST /trips/{trip_id}/chat 与 /chat/stream。
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(photos_router, prefix="/api/v1")

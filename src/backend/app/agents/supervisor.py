@@ -1,4 +1,11 @@
-"""Supervisor Agent — Step 6 of agent learning path.
+"""LEGACY / 学习遗留 — Supervisor Agent（学习路径 Step 6，不是生产入口）。
+
+生产生成是 GenerationJob Worker：fill → route → verify → persist。
+生产协作聊天是 POST /trips/{id}/chat 与 /chat/stream
+（trip_assistant，线程 trip-chat-{id}）。
+
+create_supervisor_agent 只供学习多 Agent 编排。请勿接入行程页、我的行程、
+GenerationJob 或 trip_assistant。
 
 MULTI-AGENT ORCHESTRATION: A supervisor agent that manages 4 specialized
 sub-agents. The supervisor uses Tool Calling to decide which sub-agent to
@@ -32,7 +39,11 @@ _supervisor_checkpointer = PostgresSaver(_conn)
 
 
 def create_supervisor_agent():
-    """Create the multi-agent supervisor.
+    """LEGACY / 学习遗留。编译学习用的多 Agent Supervisor。
+
+    不是生产行程生成，也不是行程页聊天。生产替代：
+    GenerationJob Worker（fill → route → verify → persist）；
+    协作聊天 POST /trips/{id}/chat（trip_assistant）。
 
     Returns a compiled LangGraph workflow that manages all 4 sub-agents.
     The supervisor decides which agent(s) to invoke based on user input.

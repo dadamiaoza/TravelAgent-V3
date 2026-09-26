@@ -6,4 +6,4 @@
 #   guide_parser.py  ← Step 2: Agent with multiple tools
 #   itinerary_gen.py ← Step 3: Agent with memory
 #   route_optimizer.py ← Step 4: Chained agent calls
-#   supervisor.py    ← Step 5: Multi-agent orchestration
+#   supervisor.py    ← LEGACY / 学习遗留：多 Agent 编排。生产是 GenerationJob 与 POST /trips/{id}/chat
