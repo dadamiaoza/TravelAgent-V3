@@ -103,17 +103,19 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 仍是软的：sanity 通过的别扭顺序、最近邻重排、跨天过远、时效核对降级。生成仍是固定 Worker，不是 LangGraph StateGraph。
 
-### 2. 从 route 续跑（fill 草稿已持久化）
+### 2. 从 route 续跑（fill 草稿已持久化；用户可丢掉草稿再重填）
 
 把 fill 草稿持久化到数据库或 Job payload，使用户或 Worker 可以只重跑 route → verify → persist，避免再调用 `itinerary_gen`。成功终稿今天会写入行程表，但那是排路和核对之后的结果，不能当作「再排一次同一份 fill」。
 
-**现状：** 续跑已落地。fill 通过 `gate_fill_draft` 后，把这份草稿写入当前 `GenerationJob.payload["fill_draft"]`（与 `selected_entities` 同一 JSONB，不另做终稿真源）。然后才 route → verify → persist。Worker 内 `schedule_job_retry` 重领同一 Job，以及 `POST /trips/{id}/retry` 复制上一份 payload 再开 Job，只要草稿还在且再次过门，就跳过 fill / `itinerary_gen`，路线阶段文案为「沿用已生成的草稿，正在补路线...」。fill 失败或门禁失败不写草稿，重试仍整段 fill。终稿仍只在 `persist_itinerary` 成功后落行程表。尚未做：用户主动丢掉草稿再重填。生成 checkpointer 在新的 LLM fill 前清除，见本节第 3 条。
+**现状：** 续跑已落地。fill 通过 `gate_fill_draft` 后，把这份草稿写入当前 `GenerationJob.payload["fill_draft"]`（与 `selected_entities` 同一 JSONB，不另做终稿真源）。然后才 route → verify → persist。Worker 内 `schedule_job_retry` 重领同一 Job（payload 不动），以及不带丢弃标志的 `POST /trips/{id}/retry` 复制上一份 payload 再开 Job。只要草稿还在且再次过门，就跳过 fill / `itinerary_gen`，路线阶段文案为「沿用已生成的草稿，正在补路线...」。fill 失败或门禁失败不写草稿，重试仍整段 fill。终稿仍只在 `persist_itinerary` 成功后落行程表。生成 checkpointer 在新的 LLM fill 前清除，见本节第 3 条。
+
+用户主动丢掉草稿再重填已落地，仍走同一条 `POST /trips/{id}/retry`，不另开生成入口。JSON 体 `{"discard_fill_draft": true}` 时，下一份 Job 的 payload 去掉 `fill_draft`，`selected_entities` 原样保留：丢掉草稿不等于丢掉用户勾选。资格与默认重试相同，仅 `trip.status == "generation_failed"`、出发和返程日期都在、设备归属与演示认领规则不变。已生成的行程仍是 409，详情 ready 壳没有重新生成。省略 body、空对象、或 `discard_fill_draft` 为 false，仍复制草稿并从 route 续跑。Worker 内部 `schedule_job_retry` 不读这个标志，自动重领仍续跑。丢掉草稿后的 Job 没有可复用 fill，因此必须再 fill：有勾选则组装，否则走 LLM。LLM 那次在 `fill_itinerary_draft` 之前按第 3 条清除 `trip-{id}` checkpointer。`GET /trips/{id}/progress` 增加 `has_fill_draft`（payload 里有 dict 草稿才为真）。详情失败壳只在它为真时显示「丢掉草稿重新规划」，确认后才发送该标志；「重新生成」仍走默认续跑。
 
 ### 3. 生成与聊天的 thread 前缀；生成侧重跑时丢掉过期 checkpoint（LLM fill 前已清除）
 
 聊天已使用 `trip-chat-{id}`，并在每轮从库重载行程。生成仍使用 `trip-{id}`。新的一次会调用 `itinerary_gen` 的生成应清除该 `trip-{id}` 上的旧消息，避免 checkpoint 里的上一份规划影响下一次 fill。勾选 fill 与从 route 续跑不经过该 Agent，不清除这条线程。
 
-**现状：** 生成侧重填前清除已落地。协作侧不改：`chat_thread_id` 仍是 `trip-chat-{id}`，每轮从库重载行程，本条不改聊天 checkpointer。没有 `selected_entities`、也没有可复用的 `fill_draft` 时，Worker 在 `fill_itinerary_draft` 之前调用 `clear_itinerary_gen_thread`，即 `PostgresSaver.delete_thread`，只删除该 `trip-{id}` 在 `checkpoints`、`checkpoint_blobs`、`checkpoint_writes` 中的行，下一次 invoke 读不到上一份规划消息。勾选 fill 与从 route 续跑不调用 `itinerary_gen`，因此不清除。该函数拒绝 `trip-chat-` 前缀。checkpoint 里的行程 JSON 仍不是真源。本条没有剩余实现项；用户主动丢掉草稿再重填仍属第 2 条，那次若再走 LLM fill，会用同一条清除。
+**现状：** 生成侧重填前清除已落地。协作侧不改：`chat_thread_id` 仍是 `trip-chat-{id}`，每轮从库重载行程，本条不改聊天 checkpointer。没有 `selected_entities`、也没有可复用的 `fill_draft` 时，Worker 在 `fill_itinerary_draft` 之前调用 `clear_itinerary_gen_thread`，即 `PostgresSaver.delete_thread`，只删除该 `trip-{id}` 在 `checkpoints`、`checkpoint_blobs`、`checkpoint_writes` 中的行，下一次 invoke 读不到上一份规划消息。勾选 fill 与从 route 续跑不调用 `itinerary_gen`，因此不清除。该函数拒绝 `trip-chat-` 前缀。checkpoint 里的行程 JSON 仍不是真源。本条没有剩余实现项。第 2 条的丢掉草稿再重填若再走 LLM fill，会用同一条清除。
 
 ### 4. 前端把 verify / route 降级放到与「已生成」同一优先级（已落地）
 
@@ -125,7 +127,7 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 对外说明以 Job 任务图和 `POST /trips/{id}/chat` 为准。`supervisor` / `POST /api/v1/chat` 保留为学习代码时，应在入口处标明遗留，避免再被接进行程页或生成 Worker。
 
-**现状：** 代码入口标记已落地。[CONTEXT.md](../../../CONTEXT.md) 的「2026-09 产品形态修正」和路线图仍是对外口径。`create_supervisor_agent`（`app/agents/supervisor.py`）与 `POST /api/v1/chat`（`app/api/v1/chat.py`）保留可运行，模块与函数文档标明 LEGACY / 学习遗留，并写明生产替代是 `GenerationJob` Worker 与 `POST /trips/{id}/chat`。该路由在 OpenAPI 中为 `deprecated`，响应带 `Deprecation: true`；`app/main.py` 挂载处注明这是学习遗留。前端未接。不要把它接进行程页、我的行程、GenerationJob 或 `trip_assistant`。用户主动丢掉 fill 草稿再重填仍属第 2 条，不在本条范围内。
+**现状：** 代码入口标记已落地。[CONTEXT.md](../../../CONTEXT.md) 的「2026-09 产品形态修正」和路线图仍是对外口径。`create_supervisor_agent`（`app/agents/supervisor.py`）与 `POST /api/v1/chat`（`app/api/v1/chat.py`）保留可运行，模块与函数文档标明 LEGACY / 学习遗留，并写明生产替代是 `GenerationJob` Worker 与 `POST /trips/{id}/chat`。该路由在 OpenAPI 中为 `deprecated`，响应带 `Deprecation: true`；`app/main.py` 挂载处注明这是学习遗留。前端未接。不要把它接进行程页、我的行程、GenerationJob 或 `trip_assistant`。用户主动丢掉 fill 草稿再重填已在第 2 条落地，不在本条范围内。
 
 ---
 

@@ -42,12 +42,16 @@ export default function TripPage() {
   const shell: TripDetailShell | null = trip ? tripDetailShell(trip) : null;
   const warnings = warningMessages(job, progress);
   const retry = useMutation({
-    mutationFn: () => api.post<Trip>(`/trips/${tripId}/retry`, {}),
+    mutationFn: (discardFillDraft: boolean) =>
+      api.post<Trip>(`/trips/${tripId}/retry`, {
+        discard_fill_draft: discardFillDraft,
+      }),
     onSuccess: (data) => {
       queryClient.setQueryData(["trip", tripId], data);
       queryClient.removeQueries({ queryKey: ["progress", tripId] });
     },
   });
+  const discardingDraft = retry.isPending && retry.variables === true;
 
   const tabs = tripId && shell === "ready" ? (
     <nav aria-label="行程视图" className="flex flex-wrap items-center gap-1">
@@ -81,8 +85,19 @@ export default function TripPage() {
             job={job}
             progress={progress}
             retrying={retry.isPending}
+            discardingDraft={discardingDraft}
             retryError={retry.isError ? readableRetryError(retry.error) : null}
-            onRetry={() => retry.mutate()}
+            onRetry={() => retry.mutate(false)}
+            onDiscardFillDraft={() => {
+              if (
+                !window.confirm(
+                  "丢掉已保存的景点草稿，重新规划后再排路线？你勾选的地点会保留。",
+                )
+              ) {
+                return;
+              }
+              retry.mutate(true);
+            }}
           />
         </div>
       </main>

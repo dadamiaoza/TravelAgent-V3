@@ -41,6 +41,18 @@ class TripGenerate(BaseModel):
     pass  # No extra fields needed for MVP — reads trip constraints from DB later
 
 
+class TripRetryRequest(BaseModel):
+    """Body for POST /trips/{id}/retry.
+
+    Omitted, empty, or false keeps the previous job payload, including a
+    gated fill draft, so the next attempt can resume at route.
+    discard_fill_draft drops only that draft. Checked places in
+    selected_entities stay on the next job.
+    """
+
+    discard_fill_draft: bool = False
+
+
 
 class TripUpdate(BaseModel):
     """编辑行程标题（destination）。"""

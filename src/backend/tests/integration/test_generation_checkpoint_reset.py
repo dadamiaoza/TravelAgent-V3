@@ -1,4 +1,5 @@
 """Seeded generation checkpoints are dropped only when LLM fill is about to run."""
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -223,6 +224,96 @@ def test_selected_entities_leave_generation_checkpoints_in_place(
             assert [item.poi_name for day in trip.days for item in day.items] == ["西湖"]
     finally:
         _wipe(generation_thread)
+
+
+REFILL_DRAFT = {
+    "city": "杭州",
+    "days": [
+        {
+            "day_index": 1,
+            "theme": "雷峰",
+            "route_type": "city",
+            "items": [
+                {
+                    "seq": 1,
+                    "poi_name": "雷峰塔",
+                    "duration_h": 1,
+                    "travel_minutes_from_prev": 0,
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_discard_fill_draft_clears_checkpoints_before_the_new_llm_fill(
+    api_client: TestClient,
+) -> None:
+    created = api_client.post("/api/v1/trips", json=_create_payload()).json()
+    trip_id = created["id"]
+    generation_thread = f"trip-{trip_id}"
+    chat_thread = chat_thread_id(UUID(trip_id))
+    fills = {"count": 0, "during": "unset", "thread_id": None}
+    routed: list[dict] = []
+
+    def fill(**kwargs):
+        fills["count"] += 1
+        fills["during"] = _messages(generation_thread)
+        fills["thread_id"] = kwargs["thread_id"]
+        if fills["count"] == 1:
+            return deepcopy(GOOD_DRAFT)
+        return deepcopy(REFILL_DRAFT)
+
+    def route(draft):
+        routed.append(deepcopy(draft))
+        if fills["count"] == 1:
+            raise TimeoutError("route timeout")
+        return draft
+
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, created["job_id"])
+        assert job is not None
+        job.max_attempts = 1
+        db.commit()
+
+    try:
+        with (
+            patch("app.services.job_worker.fill_itinerary_draft", side_effect=fill),
+            patch("app.services.job_worker.route_itinerary_draft", side_effect=route),
+            patch(
+                "app.services.job_worker.verify_itinerary_draft",
+                return_value=VerifyOutcome(),
+            ),
+        ):
+            assert process_pending_jobs() == 1
+            with SessionLocal() as db:
+                trip = db.get(Trip, UUID(trip_id))
+                job = db.get(GenerationJob, created["job_id"])
+                assert trip is not None and job is not None
+                assert trip.status == "generation_failed"
+                assert job.payload["fill_draft"]["days"][0]["items"][0]["poi_name"] == "西湖"
+
+            _seed(generation_thread, PRIOR_FILL)
+            _seed(chat_thread, CHAT_NOTE)
+            assert _messages(generation_thread) == [PRIOR_FILL]
+
+            retried = api_client.post(
+                f"/api/v1/trips/{trip_id}/retry",
+                json={"discard_fill_draft": True},
+            )
+            assert retried.status_code == 200, retried.text
+            assert process_pending_jobs() == 1
+
+        assert fills["count"] == 2
+        assert fills["thread_id"] == generation_thread
+        assert fills["during"] is None
+        assert routed[0]["days"][0]["items"][0]["poi_name"] == "西湖"
+        assert routed[1]["days"][0]["items"][0]["poi_name"] == "雷峰塔"
+        assert _messages(generation_thread) is None
+        assert _row_counts(generation_thread) == {table: 0 for table in _CHECKPOINT_TABLES}
+        assert _messages(chat_thread) == [CHAT_NOTE]
+    finally:
+        _wipe(generation_thread, chat_thread)
 
 
 def test_fill_draft_resume_does_not_drop_generation_checkpoints(

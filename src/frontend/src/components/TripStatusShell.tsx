@@ -14,16 +14,20 @@ export default function TripStatusShell({
   job,
   progress,
   retrying,
+  discardingDraft = false,
   retryError,
   onRetry,
+  onDiscardFillDraft,
 }: {
   trip: Trip;
   shell: Exclude<TripDetailShell, "ready">;
   job?: GenerationJob;
   progress?: GenerationProgress;
   retrying: boolean;
+  discardingDraft?: boolean;
   retryError: string | null;
   onRetry: () => void;
+  onDiscardFillDraft?: () => void;
 }) {
   if (shell === "generating") {
     return (
@@ -55,14 +59,31 @@ export default function TripStatusShell({
           </p>
         )}
         {retryable ? (
-          <button
-            type="button"
-            onClick={onRetry}
-            disabled={retrying}
-            className="mt-5 rounded-full bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-60"
-          >
-            {retrying ? "正在重新生成…" : "重新生成"}
-          </button>
+          <div className="mt-5 flex flex-col items-center gap-3">
+            {progress?.has_fill_draft ? (
+              <p className="mx-auto max-w-md text-sm text-ink-secondary">
+                已保存一份景点草稿。重新生成会沿用它，只补路线。
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={retrying}
+              className="rounded-full bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-60"
+            >
+              {retrying && !discardingDraft ? "正在重新生成…" : "重新生成"}
+            </button>
+            {progress?.has_fill_draft && onDiscardFillDraft ? (
+              <button
+                type="button"
+                onClick={onDiscardFillDraft}
+                disabled={retrying}
+                className="rounded-full border border-line-tertiary bg-elevated px-4 py-2 text-sm text-ink-secondary hover:text-ink disabled:opacity-60"
+              >
+                {discardingDraft ? "正在重新规划…" : "丢掉草稿重新规划"}
+              </button>
+            ) : null}
+          </div>
         ) : (
           <p className="mx-auto mt-4 max-w-md text-sm text-ink-tertiary">
             出发和返程日期还不完整，现在还不能重新生成。

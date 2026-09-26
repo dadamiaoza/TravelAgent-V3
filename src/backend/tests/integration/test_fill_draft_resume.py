@@ -312,6 +312,90 @@ def test_http_retry_reuses_fill_draft_and_skips_fill(
         assert [item.poi_name for day in trip.days for item in day.items] == ["西湖"]
 
 
+REFILL_DRAFT = {
+    "city": "杭州",
+    "days": [
+        {
+            "day_index": 1,
+            "theme": "雷峰",
+            "route_type": "city",
+            "items": [
+                {
+                    "seq": 1,
+                    "poi_name": "雷峰塔",
+                    "duration_h": 1,
+                    "travel_minutes_from_prev": 0,
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_http_discard_fill_draft_runs_fill_again_and_routes_the_new_draft(
+    api_client: TestClient,
+    pipeline: dict,
+) -> None:
+    created = api_client.post("/api/v1/trips", json=_create_payload()).json()
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, created["job_id"])
+        assert job is not None
+        job.max_attempts = 1
+        db.commit()
+
+    def produce(attempt: int):
+        if attempt == 1:
+            return deepcopy(GOOD_DRAFT)
+        return deepcopy(REFILL_DRAFT)
+
+    pipeline["fill_producer"] = produce
+    pipeline["fail_route_times"] = 1
+
+    assert process_pending_jobs() == 1
+    with SessionLocal() as db:
+        trip = db.get(Trip, UUID(created["id"]))
+        job = db.get(GenerationJob, created["job_id"])
+        assert trip is not None and job is not None
+        assert trip.status == "generation_failed"
+        assert _poi_names(job.payload[FILL_DRAFT_PAYLOAD_KEY]) == ["西湖"]
+
+    progress = api_client.get(f"/api/v1/trips/{created['id']}/progress")
+    assert progress.json()["has_fill_draft"] is True
+
+    retried = api_client.post(
+        f"/api/v1/trips/{created['id']}/retry",
+        json={"discard_fill_draft": True},
+    )
+    assert retried.status_code == 200, retried.text
+    new_job_id = retried.json()["job_id"]
+    with SessionLocal() as db:
+        new_job = db.get(GenerationJob, new_job_id)
+        assert new_job is not None
+        assert FILL_DRAFT_PAYLOAD_KEY not in (new_job.payload or {})
+        assert new_job.payload["selected_entities"][0]["poi_name"] == "西湖"
+
+    assert process_pending_jobs() == 1
+    assert pipeline["fill"] == 2
+    assert len(pipeline["routed"]) == 2
+    assert _poi_names(pipeline["routed"][0]) == ["西湖"]
+    assert _poi_names(pipeline["routed"][1]) == ["雷峰塔"]
+    assert pipeline["routed"][0] != pipeline["routed"][1]
+
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, new_job_id)
+        trip = db.get(Trip, UUID(created["id"]))
+        assert job is not None and trip is not None
+        assert job.status == "succeeded"
+        assert trip.status == "generated"
+        assert _poi_names(job.payload[FILL_DRAFT_PAYLOAD_KEY]) == ["雷峰塔"]
+        assert job.payload["selected_entities"][0]["poi_name"] == "西湖"
+        messages = _stage_messages(job)
+        assert "正在按勾选排行程..." in messages
+        assert RESUME_ROUTE_MESSAGE not in messages
+        assert ROUTE_STAGE_MESSAGE in messages
+        assert [item.poi_name for day in trip.days for item in day.items] == ["雷峰塔"]
+
+
 def test_invalid_stored_draft_is_dropped_and_the_next_attempt_fills(
     api_client: TestClient,
     pipeline: dict,
