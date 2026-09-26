@@ -12,48 +12,21 @@ are positive and unique.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError, model_validator
 
+from app.schemas.draft_boundary import DraftBoundaryError, require_coordinate_pair
+
 FILL_DRAFT_ERROR_MESSAGE = "行程草稿的坐标或顺序无效，无法继续排路线"
 _ERROR_STAGE_PROGRESS = 40
 
 
-class FillDraftValidationError(ValueError):
+class FillDraftValidationError(DraftBoundaryError):
     """Raised when a fill draft must not continue into route."""
 
     safe_message = FILL_DRAFT_ERROR_MESSAGE
-
-    def __init__(self, detail: str) -> None:
-        super().__init__(detail[:500])
-
-
-def _finite_number(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    number = float(value)
-    if not math.isfinite(number):
-        return None
-    return number
-
-
-def _coordinate_pair(data: dict) -> None:
-    lat_present = "lat" in data and data.get("lat") is not None
-    lng_present = "lng" in data and data.get("lng") is not None
-    if not lat_present and not lng_present:
-        return
-    lat = _finite_number(data.get("lat"))
-    lng = _finite_number(data.get("lng"))
-    if (
-        lat is None
-        or lng is None
-        or not -90.0 <= lat <= 90.0
-        or not -180.0 <= lng <= 180.0
-    ):
-        raise ValueError("景点坐标必须是有限经纬度")
 
 
 class FillDraftItem(BaseModel):
@@ -66,7 +39,7 @@ class FillDraftItem(BaseModel):
     @classmethod
     def _require_coordinate_pair(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            _coordinate_pair(data)
+            require_coordinate_pair(data)
         return data
 
 

@@ -14,6 +14,8 @@ from app.agents.itinerary_gen import create_itinerary_gen
 from app.agents.tools.route_optimizer import optimize_itinerary
 from app.models.trip import Trip
 from app.schemas.fill_draft import gate_fill_draft
+from app.schemas.persist_draft import gate_persist_draft
+from app.schemas.route_draft import gate_route_draft
 from app.services.itinerary_persistence import persist_itinerary
 from app.services.visit_fields import copy_visit_fields
 
@@ -233,7 +235,9 @@ def generate_itinerary_draft(
     gate_fill_draft(itinerary, on_stage)
 
     _emit_stage(on_stage, "route", 70, "正在补路线...")
-    return route_itinerary_draft(itinerary)
+    routed = route_itinerary_draft(itinerary)
+    gate_route_draft(routed, on_stage)
+    return routed
 
 
 def generate_itinerary(db: Session, trip: Trip) -> Trip:
@@ -253,6 +257,7 @@ def generate_itinerary(db: Session, trip: Trip) -> Trip:
         must_visit=trip.must_visit,
         thread_id=f"trip-{trip.id}",
     )
+    gate_persist_draft(draft)
     persist_itinerary(db, trip, draft, trip.start_date)
     return trip
 
