@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Iterator
@@ -17,13 +18,16 @@ from app.db.session import SessionLocal
 from app.models.trip import Trip, GenerationJob
 from app.schemas.fill_draft import FillDraftValidationError, gate_fill_draft
 from app.services.generation_jobs import (
+    FILL_DRAFT_PAYLOAD_KEY,
     ClaimedGenerationJob,
     append_job_stage,
     claim_next_job,
+    clear_job_fill_draft,
     finalize_job_success,
     mark_job_failed,
     recover_stale_jobs,
     renew_heartbeat,
+    save_job_fill_draft,
     schedule_job_retry,
 )
 from app.services.itinerary import fill_itinerary_draft, route_itinerary_draft
@@ -33,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SECONDS = 30.0
 HEARTBEAT_JOIN_TIMEOUT_SECONDS = 1.0
+ROUTE_STAGE_MESSAGE = "正在补路线..."
+RESUME_ROUTE_MESSAGE = "沿用已生成的草稿，正在补路线..."
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,7 @@ class GenerationInput:
     must_visit: tuple[str, ...]
     selected_entities: tuple[dict, ...]
     thread_id: str
+    fill_draft: dict | None = None
 
 
 Regenerate = Callable[[GenerationInput], dict]
@@ -142,6 +149,7 @@ def _load_generation_input(claim: ClaimedGenerationJob) -> GenerationInput:
         job = db.get(GenerationJob, claim.id)
         payload = (job.payload if job is not None else None) or {}
         entities = payload.get("selected_entities") or []
+        raw_draft = payload.get(FILL_DRAFT_PAYLOAD_KEY)
         return GenerationInput(
             trip_id=trip.id,
             destination=trip.destination,
@@ -155,29 +163,54 @@ def _load_generation_input(claim: ClaimedGenerationJob) -> GenerationInput:
             must_visit=tuple(trip.must_visit or ()),
             selected_entities=tuple(entities),
             thread_id=f"trip-{trip.id}",
+            fill_draft=raw_draft if isinstance(raw_draft, dict) else None,
         )
 
 
 def _default_generate(
     generation_input: GenerationInput,
     on_stage: Callable[[str, int, str], bool | None] | None = None,
-) -> dict:
-    filled = fill_itinerary_draft(
-        destination=generation_input.destination,
-        city=generation_input.city,
-        start_date=generation_input.start_date,
-        end_date=generation_input.end_date,
-        people_count=generation_input.people_count,
-        budget_min=generation_input.budget_min,
-        budget_max=generation_input.budget_max,
-        user_prompt=generation_input.user_prompt,
-        must_visit=list(generation_input.must_visit) or None,
-        selected_entities=list(generation_input.selected_entities) or None,
-        thread_id=generation_input.thread_id,
-    )
-    gate_fill_draft(filled, on_stage)
+    *,
+    claim: ClaimedGenerationJob | None = None,
+) -> dict | None:
+    """Fill, or resume from a stored fill draft, then route and verify.
+
+    Returns None when this attempt no longer owns the job and must stop
+    without finalizing.
+    """
+    resumed = generation_input.fill_draft is not None
+    if resumed:
+        try:
+            filled = gate_fill_draft(deepcopy(generation_input.fill_draft), on_stage)
+        except FillDraftValidationError:
+            if claim is not None:
+                clear_job_fill_draft(claim)
+            raise
+        logger.info(
+            "resuming generation for trip %s from persisted fill draft",
+            generation_input.trip_id,
+        )
+    else:
+        filled = fill_itinerary_draft(
+            destination=generation_input.destination,
+            city=generation_input.city,
+            start_date=generation_input.start_date,
+            end_date=generation_input.end_date,
+            people_count=generation_input.people_count,
+            budget_min=generation_input.budget_min,
+            budget_max=generation_input.budget_max,
+            user_prompt=generation_input.user_prompt,
+            must_visit=list(generation_input.must_visit) or None,
+            selected_entities=list(generation_input.selected_entities) or None,
+            thread_id=generation_input.thread_id,
+        )
+        gate_fill_draft(filled, on_stage)
+        if claim is not None and not save_job_fill_draft(claim, filled):
+            return None
     if on_stage is not None:
-        on_stage("route", 70, "正在补路线...")
+        message = RESUME_ROUTE_MESSAGE if resumed else ROUTE_STAGE_MESSAGE
+        if on_stage("route", 70, message) is False:
+            return None
     routed = route_itinerary_draft(filled)
     if on_stage is not None:
         on_stage("verify", 90, "正在核对开放时间/天气...")
@@ -214,17 +247,26 @@ def _execute_claim(claim: ClaimedGenerationJob, regenerate: Regenerate) -> None:
     try:
         generation_input = _load_generation_input(claim)
         report = _stage_reporter(claim)
-        fill_message = (
-            "正在按勾选排行程..."
-            if generation_input.selected_entities
-            else "正在规划景点..."
-        )
-        if not report("fill", 30, fill_message):
-            return
+        using_default = regenerate is _default_generate
+        resuming = using_default and generation_input.fill_draft is not None
+        if not resuming:
+            fill_message = (
+                "正在按勾选排行程..."
+                if generation_input.selected_entities
+                else "正在规划景点..."
+            )
+            if not report("fill", 30, fill_message):
+                return
 
         with _heartbeat_during(claim):
-            if regenerate is _default_generate:
-                draft = _default_generate(generation_input, on_stage=report)
+            if using_default:
+                draft = _default_generate(
+                    generation_input,
+                    on_stage=report,
+                    claim=claim,
+                )
+                if draft is None:
+                    return
             else:
                 draft = regenerate(generation_input)
 

@@ -96,11 +96,11 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 **现状：** 没有这层 schema。阶段之间传递普通 `dict`。
 
-### 2. 从 route 续跑（计划）
+### 2. 从 route 续跑（fill 草稿已持久化）
 
 把 fill 草稿持久化到数据库或 Job payload，使用户或 Worker 可以只重跑 route → verify → persist，避免再调用 `itinerary_gen`。成功终稿今天会写入行程表，但那是排路和核对之后的结果，不能当作「再排一次同一份 fill」。
 
-**现状：** 未做。失败重试整段执行 `_default_generate`。`POST /trips/{id}/retry` 只接受 `generation_failed`，并复制上一份 Job payload（勾选实体），然后新开一个完整 Job。
+**现状：** 续跑已落地。fill 通过 `gate_fill_draft` 后，把这份草稿写入当前 `GenerationJob.payload["fill_draft"]`（与 `selected_entities` 同一 JSONB，不另做终稿真源）。然后才 route → verify → persist。Worker 内 `schedule_job_retry` 重领同一 Job，以及 `POST /trips/{id}/retry` 复制上一份 payload 再开 Job，只要草稿还在且再次过门，就跳过 fill / `itinerary_gen`，路线阶段文案为「沿用已生成的草稿，正在补路线...」。fill 失败或门禁失败不写草稿，重试仍整段 fill。终稿仍只在 `persist_itinerary` 成功后落行程表。尚未做：用户主动丢掉草稿再重填；生成 checkpointer 清除（本节第 3 条）。
 
 ### 3. 生成与聊天的 thread 前缀；生成侧重跑时丢掉过期 checkpoint（计划，聊天侧已落地）
 
@@ -170,7 +170,7 @@ flowchart LR
 - 不因跨天过远自动把景点改到另一天。
 - 不把 checkpoint 里的行程 JSON 当作真源。
 - 不在协作 Agent 里嵌套 `itinerary_gen` 或路线 Agent，也不把聊天当成静默的全量重新生成。
-- 不在本决策里实现 Draft schema、从 route 续跑或前端降级改版。那些仍是第 4 节的计划。
+- 不在本决策里实现 Draft schema、从 route 续跑或前端降级改版。落地进度以第 4 节各条「现状」为准。
 
 ---
 

@@ -1,4 +1,5 @@
 """Generation job persistence helpers."""
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -7,6 +8,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.session import SessionLocal
 from app.models.trip import GenerationJob, Trip
@@ -16,6 +18,8 @@ from app.services.itinerary_persistence import persist_itinerary
 SessionFactory = Callable[[], Session]
 STALE_HEARTBEAT_AFTER = timedelta(minutes=10)
 STALE_RETRY_DELAY = timedelta(seconds=5)
+# Gated fill snapshot on GenerationJob.payload. Not the final itinerary.
+FILL_DRAFT_PAYLOAD_KEY = "fill_draft"
 
 
 def _now() -> datetime:
@@ -345,6 +349,66 @@ def retry_delay(attempts: int) -> timedelta:
     """Return bounded exponential retry delay for a completed attempt."""
     seconds = min(5 * (2 ** max(attempts - 1, 0)), 60)
     return timedelta(seconds=seconds)
+
+
+def save_job_fill_draft(
+    claim: ClaimedGenerationJob,
+    draft: dict,
+    *,
+    session_factory: SessionFactory = SessionLocal,
+) -> bool:
+    """Store a gated fill draft on the owned running job.
+
+    Other payload keys, including selected entities, stay in place. The
+    itinerary tables remain the source of truth after a successful persist.
+    """
+    snapshot = deepcopy(draft)
+    with session_factory() as db:
+        with db.begin():
+            job = db.execute(
+                select(GenerationJob)
+                .where(
+                    GenerationJob.id == claim.id,
+                    GenerationJob.status == GenerationJobStatus.RUNNING.value,
+                    GenerationJob.run_token == claim.run_token,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if job is None:
+                return False
+            payload = deepcopy(job.payload or {})
+            payload[FILL_DRAFT_PAYLOAD_KEY] = snapshot
+            job.payload = payload
+            flag_modified(job, "payload")
+            return True
+
+
+def clear_job_fill_draft(
+    claim: ClaimedGenerationJob,
+    *,
+    session_factory: SessionFactory = SessionLocal,
+) -> bool:
+    """Drop a stored fill draft that no longer passes the fill gate."""
+    with session_factory() as db:
+        with db.begin():
+            job = db.execute(
+                select(GenerationJob)
+                .where(
+                    GenerationJob.id == claim.id,
+                    GenerationJob.status == GenerationJobStatus.RUNNING.value,
+                    GenerationJob.run_token == claim.run_token,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if job is None:
+                return False
+            payload = deepcopy(job.payload or {})
+            if FILL_DRAFT_PAYLOAD_KEY not in payload:
+                return True
+            payload.pop(FILL_DRAFT_PAYLOAD_KEY, None)
+            job.payload = payload
+            flag_modified(job, "payload")
+            return True
 
 
 def schedule_job_retry(
