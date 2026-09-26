@@ -2,7 +2,7 @@ import { Link, NavLink, Outlet, useLocation, useOutletContext, useParams } from 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTrip } from "@/hooks/useTrip";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
-import { latestWarningMessage } from "@/lib/generationJob";
+import { warningMessages } from "@/lib/generationJob";
 import GenerationWarningPill from "@/components/GenerationWarningPill";
 import { api } from "@/lib/api";
 import { tripDetailShell, type TripDetailShell } from "@/lib/tripDetailState";
@@ -40,7 +40,7 @@ export default function TripPage() {
   const { data: trip, isLoading, isError } = useTrip(tripId ?? "");
   const { job, progress } = useGenerationJob(tripId, trip?.status);
   const shell: TripDetailShell | null = trip ? tripDetailShell(trip) : null;
-  const warningMessage = latestWarningMessage(job, progress);
+  const warnings = warningMessages(job, progress);
   const retry = useMutation({
     mutationFn: () => api.post<Trip>(`/trips/${tripId}/retry`, {}),
     onSuccess: (data) => {
@@ -100,7 +100,9 @@ export default function TripPage() {
                 {trip.destination}
               </h1>
             )}
-            {warningMessage && <GenerationWarningPill message={warningMessage} />}
+            {warnings.map((message) => (
+              <GenerationWarningPill key={message} message={message} />
+            ))}
             {tabs}
           </div>
         </div>
@@ -148,7 +150,7 @@ export default function TripPage() {
 
         {trip && shell === "ready" && (
           <>
-            <TripIdentityHeader trip={trip} shell={shell} warningMessage={warningMessage} />
+            <TripIdentityHeader trip={trip} shell={shell} warningMessages={warnings} />
             <Outlet context={{ trip } satisfies TripOutletContext} />
           </>
         )}

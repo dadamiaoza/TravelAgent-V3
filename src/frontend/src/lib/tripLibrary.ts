@@ -25,6 +25,7 @@ export interface LibraryTrip {
   status: string;
   created_at?: string | null;
   cover_url?: string | null;
+  degradations?: string[] | null;
 }
 
 const FILTERS: { id: LibraryFilter; label: string }[] = [

@@ -33,6 +33,7 @@ from app.services.generation_jobs import (
 from app.agents.itinerary_gen import clear_itinerary_gen_thread
 from app.services.itinerary import fill_itinerary_draft, route_itinerary_draft
 from app.services.fact_verify import apply_verify_to_draft, verify_itinerary_draft
+from app.services.route_degradation import collect_route_degradation_messages
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,9 @@ HEARTBEAT_INTERVAL_SECONDS = 30.0
 HEARTBEAT_JOIN_TIMEOUT_SECONDS = 1.0
 ROUTE_STAGE_MESSAGE = "正在补路线..."
 RESUME_ROUTE_MESSAGE = "沿用已生成的草稿，正在补路线..."
+ROUTE_WARNING_PROGRESS = 75
+VERIFY_WARNING_PROGRESS = 95
+VERIFY_FAILED_MESSAGE = "时效核对未完成，行程已按路线生成"
 
 
 @dataclass(frozen=True)
@@ -222,8 +226,12 @@ def _default_generate(
         if on_stage("route", 70, message) is False:
             return None
     routed = route_itinerary_draft(filled)
-    if on_stage is not None:
-        on_stage("verify", 90, "正在核对开放时间/天气...")
+    recorded: list[str] = []
+    for message in collect_route_degradation_messages(routed):
+        if not _record_warning(on_stage, ROUTE_WARNING_PROGRESS, message, recorded):
+            return None
+    if not _emit_stage(on_stage, "verify", 90, "正在核对开放时间/天气..."):
+        return None
     try:
         outcome = verify_itinerary_draft(
             routed,
@@ -231,13 +239,41 @@ def _default_generate(
             start_date=generation_input.start_date,
         )
         apply_verify_to_draft(routed, outcome)
-        if outcome.warnings and on_stage is not None:
-            on_stage("warning", 95, outcome.summary[:500])
+        if outcome.warnings:
+            if not _record_warning(on_stage, VERIFY_WARNING_PROGRESS, outcome.summary[:500], recorded):
+                return None
     except Exception:
         logger.exception("generation verify failed for trip %s", generation_input.trip_id)
-        if on_stage is not None:
-            on_stage("warning", 95, "时效核对未完成，行程已按路线生成")
+        if not _record_warning(on_stage, VERIFY_WARNING_PROGRESS, VERIFY_FAILED_MESSAGE, recorded):
+            return None
     return routed
+
+
+def _emit_stage(
+    on_stage: Callable[[str, int, str], bool | None] | None,
+    key: str,
+    progress: int,
+    message: str,
+) -> bool:
+    """Return False only when the owner rejected the stage write."""
+    if on_stage is None:
+        return True
+    return on_stage(key, progress, message) is not False
+
+
+def _record_warning(
+    on_stage: Callable[[str, int, str], bool | None] | None,
+    progress: int,
+    message: str,
+    recorded: list[str],
+) -> bool:
+    text = " ".join(str(message).split()).strip()[:500]
+    if not text or text in recorded:
+        return True
+    if not _emit_stage(on_stage, "warning", progress, text):
+        return False
+    recorded.append(text)
+    return True
 
 
 def _stage_reporter(claim: ClaimedGenerationJob):

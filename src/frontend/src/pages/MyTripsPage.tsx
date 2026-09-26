@@ -21,7 +21,9 @@ import {
   type LibraryTrip,
 } from "@/lib/tripLibrary";
 import DemoAccount from "@/components/DemoAccount";
+import GenerationWarningPill from "@/components/GenerationWarningPill";
 import { api } from "@/lib/api";
+import { libraryDegradationSignal } from "@/lib/generationJob";
 
 type LoadState = "loading" | "error" | "ready";
 
@@ -277,6 +279,7 @@ function LibraryEmpty() {
 function TripCard({ trip }: { trip: LibraryTrip }) {
   const badge = generationBadge(trip.status);
   const cover = trip.cover_url?.trim() || "";
+  const degradation = libraryDegradationSignal(trip.degradations);
   return (
     <Link
       to={`/trips/${trip.id}`}
@@ -306,6 +309,11 @@ function TripCard({ trip }: { trip: LibraryTrip }) {
       </div>
       <div className="px-3 py-3">
         <h2 className="truncate text-[15px] font-semibold">{cardTitle(trip)}</h2>
+        {degradation && (
+          <div className="mt-1.5">
+            <GenerationWarningPill message={degradation.title} label={degradation.label} />
+          </div>
+        )}
         <p className="mt-1 text-xs text-ink-secondary">{cardMeta(trip)}</p>
         <div className="mt-2.5 flex items-center justify-between text-[11px] text-ink-tertiary">
           <span>{secondaryMeta(trip)}</span>

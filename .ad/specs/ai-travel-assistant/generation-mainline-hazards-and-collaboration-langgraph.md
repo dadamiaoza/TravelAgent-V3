@@ -24,12 +24,12 @@ Worker 在 `src/backend/app/services/job_worker.py`。领取 Job 后 `_load_gene
    - payload 里有勾选实体：`assemble_days_from_entities`，不调用 LLM。  
    - 否则：`itinerary_gen` Agent，`invoke` 的 `thread_id` 就是上面的 `trip-{id}`。输出经 `_parse_agent_output` 从消息里截取 JSON，没有 Draft schema。
 2. **route** — `route_itinerary_draft`。始终调用 Python 函数 `optimize_itinerary`（`app/agents/tools/route_optimizer.py`），不调用 `create_route_optimizer` Agent。生产默认 `respect_fill_order=True`：先按 fill 顺序计时，只在 sanity 失败时整日退回最近邻，并写 `order_source=nearest_neighbor` 与 `order_degrade_reason`。触发条件（代码常量）：顺序无效、同日跨城跳跃（`_CROSS_CITY_JUMP_M` = 250 km）、fill 路时相对最近邻基线 ≥ 1.5 倍且绝对多出 ≥ 30 分钟、或高德路段未核验达到一半。`reorder=False` 会锁定调用方顺序。
-3. **verify** — `verify_itinerary_draft` / `apply_verify_to_draft`（`app/services/fact_verify.py`）。天气与开放时间在进程内调用，超时 12 秒。超时和工具异常在 verify 内部收成 `VerifyOutcome(degraded=True, warnings=…)`；Worker 再包一层 `try/except`。有 warning 时记一条 `key=warning` 的 stage（进度 95）。**Job 仍可成功。**
+3. **verify** — `verify_itinerary_draft` / `apply_verify_to_draft`（`app/services/fact_verify.py`）。天气与开放时间在进程内调用，超时 12 秒。超时和工具异常在 verify 内部收成 `VerifyOutcome(degraded=True, warnings=…)`；Worker 再包一层 `try/except`。有 warning 时记一条 `key=warning` 的 stage（进度 95）。route 降级也用同一类 stage（进度 75），写在 verify stage 之前。**Job 仍可成功。**
 4. **persist** — `finalize_job_success` 在同一事务里调用 `persist_itinerary`，把终稿写成 `ItineraryDay` / `ItineraryItem`，`trip.status = "generated"`，并追加 `done` stage，文案「行程生成完成」。
 
 进度 stage 的用户文案：fill 30（有勾选为「正在按勾选排行程...」，否则「正在规划景点...」）、route 70（「正在补路线...」）、verify 90（「正在核对开放时间/天气...」）。
 
-跨天过远：`_annotate_cross_day_boundaries` 只在下一天写入 `day_boundary_warning`，并把同一句话追加到下一天第一站的 `travel_advice`。产品规则是告警，不自动把景点挪到另一天。阈值与同日跨城跳跃相同，都是 250 km。`day_boundary_warning`、`order_source`、`order_degrade_reason` 没有对应的日程列；落库后能留下的主要是被抄进 `travel_advice` 的那句文字。
+跨天过远：`_annotate_cross_day_boundaries` 只在下一天写入 `day_boundary_warning`，并把同一句话追加到下一天第一站的 `travel_advice`。产品规则是告警，不自动把景点挪到另一天。阈值与同日跨城跳跃相同，都是 250 km。`day_boundary_warning`、`order_source`、`order_degrade_reason` 仍然没有日程列。route 之后，Worker 把最近邻重排和跨天告警写成 `key=warning` 的 stage，和 verify 降级放在一起；跨天那句话仍会留在 `travel_advice`。这些 stage 跟 Job 走，列表用 `TripBrief.degradations` 读最近一次成功 Job。
 
 协作侧的 thread 隔离已经写在 `trip_assistant.py` 模块说明里，并由 `trip_chat.chat_thread_id` 实现：聊天是 `trip-chat-{id}`，生成是 `trip-{id}`。每轮 `run_trip_chat` 用 `build_trip_context` 从数据库重新加载行程，放进当轮 system prompt。行程真源是库，不是 checkpoint 里的旧消息。
 
@@ -39,7 +39,8 @@ flowchart LR
   fill --> route[route]
   route --> verify[verify]
   verify --> persist[persist]
-  verify -.-> warn[warning stage]
+  route -.-> warn[warning stage]
+  verify -.-> warn
   warn --> persist
   persist --> done[succeeded · status=generated]
 ```
@@ -68,7 +69,7 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 **3. Verify 超时或工具失败。** 天气 / 开放时间在 12 秒预算内失败时，`verify_itinerary_draft` 返回降级 warning（「时效核对未完成，行程已按路线生成」或单点查询失败）。Worker 把摘要写成 `warning` stage。`finalize_job_success` 仍把 Job 标成 succeeded，行程状态变成 `generated`。
 
-**4. 界面上的主状态是「已生成」。** `trip.status === "generated"` 时详情壳是 `ready`，文案来自 `tripStatus.ts` 的「已生成」。列表徽章只区分规划中 / 可重试 / 草稿，没有「已生成但降级」。详情页会把 Job stage 里 `key === "warning"` 的条目画成次级的「时效风险」条（`TripPage` + `warningStages`），它不改变 ready 壳。路线降级（`order_source`、`order_degrade_reason`、`day_boundary_warning`）不进 Job stage；跨天那句话若抄进了 `travel_advice`，只出现在节点详情的「交通」里。用户看到的主结论仍是生成完成。
+**4. 界面上的主状态仍是「已生成」。** `trip.status === "generated"` 时详情壳是 `ready`，文案来自 `tripStatus.ts` 的「已生成」。route / verify 降级不改这个枚举：详情在目的地旁和「已生成」旁把每一条 `key=warning` 的 stage 画成同级琥珀胶囊（短文案，全文在 title）。列表在卡片上多一枚同样的胶囊；没有降级则不出现。跨天那句话若抄进了 `travel_advice`，节点详情的「交通」里仍能看到。
 
 **5. 想「只重排这一份」时，fill 会被再烧一次。** 中间 fill 草稿没有单独落库，Job payload 只带着创建时的 `selected_entities`。失败重试有两条，都会整段重跑 `_default_generate`：Worker 内的 `schedule_job_retry`，以及 `POST /trips/{id}/retry`（仅当 `trip.status == "generation_failed"`，否则 409）。无勾选时第二次 fill 再调 LLM，结果可以是另一份行程。生成 checkpointer 仍挂在 `trip-{id}` 上，新的一次生成会接着旧消息写，库里的行程真源与 checkpoint 历史可以分叉。协作线程 `trip-chat-{id}` 不读这条生成线程，但生成侧重跑自己会读到旧规划消息。
 
@@ -108,11 +109,11 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 **现状：** 生成侧重填前清除已落地。协作侧不改：`chat_thread_id` 仍是 `trip-chat-{id}`，每轮从库重载行程，本条不改聊天 checkpointer。没有 `selected_entities`、也没有可复用的 `fill_draft` 时，Worker 在 `fill_itinerary_draft` 之前调用 `clear_itinerary_gen_thread`，即 `PostgresSaver.delete_thread`，只删除该 `trip-{id}` 在 `checkpoints`、`checkpoint_blobs`、`checkpoint_writes` 中的行，下一次 invoke 读不到上一份规划消息。勾选 fill 与从 route 续跑不调用 `itinerary_gen`，因此不清除。该函数拒绝 `trip-chat-` 前缀。checkpoint 里的行程 JSON 仍不是真源。本条没有剩余实现项；用户主动丢掉草稿再重填仍属第 2 条，那次若再走 LLM fill，会用同一条清除。
 
-### 4. 前端把 verify / route 降级放到与「已生成」同一优先级（计划）
+### 4. 前端把 verify / route 降级放到与「已生成」同一优先级（已落地）
 
 `ready` / 「已生成」可以保留，但路线降级和时效降级应作为同级事实出现：是否最近邻重排、为何重排、跨天过远、时效核对未完成。次级黄条只覆盖 Job 的 `warning` stage，覆盖不了未落库的 `order_source`。
 
-**现状：** 部分。详情页在行程已生成后仍会拉取 Job，并把 `warning` stage 显示为「时效风险」。它不改变壳和状态文案。列表没有降级徽章。`order_source` 与 `day_boundary_warning` 不是行程字段。
+**现状：** 已落地。持久化选的是 Job `warning` stage，不新增 `trip.status`，也不把 `order_source` 做成日程列。`collect_route_degradation_messages` 在 route 之后、verify 之前，把本轮事实追加进当前 Job：同一降级原因的天合并成一句「第N天已按最近邻重排（原因）」，每条 `day_boundary_warning` 单独一句；verify 的 warning 仍是原来的摘要。`claim_next_job` 每次领取都会把 stage 重置成 `prepare`，所以同一 Job 重试成功后不会留下上一轮的 warning。详情在 `ready` 时用 `warningMessages` 把这些 stage 画成与「已生成」并排的琥珀胶囊（`GenerationWarningPill` / `shortWarningCopy`，全文在 title）。地图顶栏同样并排。列表 `GET /trips` 的 `TripBrief.degradations` 取该行程最近一次 **succeeded** Job 的 warning 文案；「我的行程」有内容才显示一枚短胶囊，多条时标题里能看到全文。没有降级的行程不出现胶囊。跨天仍只告警，不挪点。
 
 ### 5. 文档与代码入口：生产是 Job 图，Supervisor 是遗留（文档侧部分已写）
 
@@ -193,4 +194,5 @@ flowchart LR
 - `src/backend/app/services/trip_chat.py` — 工具、`write_mode`、每轮从库加载
 - `src/backend/app/api/v1/trips.py` — `POST /trips/{id}/chat`、`/chat/stream`、`/retry`
 - `src/backend/app/agents/supervisor.py`、`src/backend/app/api/v1/chat.py` — 学习遗留
-- `src/frontend/src/lib/tripStatus.ts`、`src/frontend/src/lib/generationJob.ts`、`src/frontend/src/pages/TripPage.tsx` — 「已生成」与 warning stage
+- `src/backend/app/services/route_degradation.py` — 最近邻 / 跨天文案，以及从 warning stage 读回
+- `src/frontend/src/lib/tripStatus.ts`、`src/frontend/src/lib/degradationCopy.ts`、`src/frontend/src/pages/TripPage.tsx`、`src/frontend/src/pages/MyTripsPage.tsx` — 「已生成」与同级降级胶囊

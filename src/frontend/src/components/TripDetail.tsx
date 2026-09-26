@@ -17,11 +17,11 @@ import { useTripPhotos, useUploadTripPhotos } from "@/hooks/useTripPhotos";
 export function TripIdentityHeader({
   trip,
   shell,
-  warningMessage = null,
+  warningMessages = [],
 }: {
   trip: Trip;
   shell: TripDetailShell;
-  warningMessage?: string | null;
+  warningMessages?: string[];
 }) {
   const queryClient = useQueryClient();
   const [editingTitle, setEditingTitle] = useState(false);
@@ -44,7 +44,7 @@ export function TripIdentityHeader({
 
   return (
     <section className="mb-4 rounded-2xl border border-line-tertiary bg-elevated p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           {!editingTitle ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -94,16 +94,17 @@ export function TripIdentityHeader({
             )}
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex max-w-full flex-col items-end gap-2">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
             <span
               className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${detailStatusClassName(trip.status)}`}
             >
               {detailStatusLabel(trip.status)}
             </span>
-            {shell === "ready" && warningMessage && (
-              <GenerationWarningPill message={warningMessage} />
-            )}
+            {shell === "ready" &&
+              warningMessages.map((message) => (
+                <GenerationWarningPill key={message} message={message} />
+              ))}
           </div>
           {shell === "ready" && (
             <Link

@@ -61,6 +61,7 @@ from app.services.generation_jobs import (
     update_job,
 )
 from app.services.device_access import ensure_device_cookie, load_owned_trip, trip_visible_to
+from app.services.route_degradation import warning_stage_messages
 
 router = APIRouter(
     prefix="/trips",
@@ -622,7 +623,12 @@ def _place_counts(db: Session, trip_ids: list[UUID]) -> dict[UUID, int]:
     return {trip_id: int(count) for trip_id, count in rows}
 
 
-def _trip_brief(trip: Trip, place_count: int, cover_url: str | None) -> TripBrief:
+def _trip_brief(
+    trip: Trip,
+    place_count: int,
+    cover_url: str | None,
+    degradations: list[str] | None = None,
+) -> TripBrief:
     return TripBrief(
         id=trip.id,
         destination=trip.destination,
@@ -635,7 +641,32 @@ def _trip_brief(trip: Trip, place_count: int, cover_url: str | None) -> TripBrie
         status=trip.status,
         created_at=trip.created_at,
         cover_url=cover_url,
+        degradations=degradations or [],
     )
+
+
+def _degradations_for_trips(db: Session, trips: list[Trip]) -> dict[UUID, list[str]]:
+    """Latest succeeded job's warning stages, only for generated trips."""
+    generated_ids = [trip.id for trip in trips if trip.status == "generated"]
+    if not generated_ids:
+        return {}
+    jobs = (
+        db.query(GenerationJob)
+        .filter(GenerationJob.trip_id.in_(generated_ids))
+        .order_by(GenerationJob.created_at.desc())
+        .all()
+    )
+    latest: dict[UUID, GenerationJob] = {}
+    for job in jobs:
+        latest.setdefault(job.trip_id, job)
+    found: dict[UUID, list[str]] = {}
+    for trip_id, job in latest.items():
+        if job.status != "succeeded":
+            continue
+        messages = warning_stage_messages(job.stages)
+        if messages:
+            found[trip_id] = messages
+    return found
 
 
 @router.get("", response_model=list[TripBrief])
@@ -651,4 +682,13 @@ def list_trips(request: Request, db: Session = Depends(get_db)):
     trips = query.order_by(Trip.created_at.desc()).all()
     counts = _place_counts(db, [trip.id for trip in trips])
     covers = covers_for_trips(db, trips)
-    return [_trip_brief(trip, counts.get(trip.id, 0), covers.get(trip.id)) for trip in trips]
+    degradations = _degradations_for_trips(db, trips)
+    return [
+        _trip_brief(
+            trip,
+            counts.get(trip.id, 0),
+            covers.get(trip.id),
+            degradations.get(trip.id),
+        )
+        for trip in trips
+    ]

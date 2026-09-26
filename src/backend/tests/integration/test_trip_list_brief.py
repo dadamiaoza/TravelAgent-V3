@@ -53,6 +53,7 @@ def test_list_brief_includes_card_fields_and_one_cover():
         assert match["created_at"]
         assert match["timezone"] == "Asia/Shanghai"
         assert match["cover_url"] is None
+        assert match["degradations"] == []
     finally:
         with SessionLocal() as db:
             db.query(Trip).filter(Trip.id == trip_id).delete(synchronize_session=False)
