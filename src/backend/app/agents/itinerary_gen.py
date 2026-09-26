@@ -16,6 +16,9 @@ from app.core.llm import chat_model
 _conn = connect(settings.database_url, autocommit=True, prepare_threshold=0, row_factory=dict_row)
 _checkpointer = PostgresSaver(_conn)
 
+# Collaboration chat uses this prefix on the same checkpoint tables.
+_CHAT_THREAD_PREFIX = "trip-chat-"
+
 ITINERARY_GEN_TOOLS = [search_attractions]
 ITINERARY_GEN_SYSTEM_PROMPT = (
     "你是一个旅行行程规划助手。你的工作流程：\n"
@@ -53,6 +56,27 @@ ITINERARY_GEN_SYSTEM_PROMPT = (
     "- travel_minutes_from_prev 是路段时间不是停留时间；有大致把握时填正整数且 travel_estimate_source 为 llm，否则填 0 且 source 为 null\n"
     "- 如果用户分多次规划（多轮对话），务必检查历史消息已分配的景点，不要重复"
 )
+
+
+def clear_itinerary_gen_thread(thread_id: str) -> None:
+    """Delete PostgresSaver history for one generation thread.
+
+    A later ``itinerary_gen`` invoke on this ``thread_id`` must not load a
+    prior fill's messages. ``PostgresSaver.delete_thread`` removes that
+    thread's rows from ``checkpoints``, ``checkpoint_blobs``, and
+    ``checkpoint_writes`` only.
+
+    Chat threads (``trip-chat-{id}``) share those tables and are refused
+    here. Call this only when a generation attempt is about to invoke the
+    fill agent — not for selected-entity fill or resume-from-route.
+    """
+    if (
+        not isinstance(thread_id, str)
+        or not thread_id
+        or thread_id.startswith(_CHAT_THREAD_PREFIX)
+    ):
+        raise ValueError("refusing to clear a non-generation checkpoint thread")
+    _checkpointer.delete_thread(thread_id)
 
 
 def create_itinerary_gen():

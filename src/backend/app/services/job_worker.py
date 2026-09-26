@@ -30,6 +30,7 @@ from app.services.generation_jobs import (
     save_job_fill_draft,
     schedule_job_retry,
 )
+from app.agents.itinerary_gen import clear_itinerary_gen_thread
 from app.services.itinerary import fill_itinerary_draft, route_itinerary_draft
 from app.services.fact_verify import apply_verify_to_draft, verify_itinerary_draft
 
@@ -191,6 +192,15 @@ def _default_generate(
             generation_input.trip_id,
         )
     else:
+        # Selected entities never call itinerary_gen. A reusable fill_draft
+        # already returned above. Clear only when this attempt will LLM-fill,
+        # so a prior trip-{id} history cannot shape the next invoke.
+        if not generation_input.selected_entities:
+            clear_itinerary_gen_thread(generation_input.thread_id)
+            logger.info(
+                "cleared itinerary_gen checkpoints for %s before llm fill",
+                generation_input.thread_id,
+            )
         filled = fill_itinerary_draft(
             destination=generation_input.destination,
             city=generation_input.city,

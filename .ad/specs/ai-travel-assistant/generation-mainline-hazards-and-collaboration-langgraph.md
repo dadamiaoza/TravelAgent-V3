@@ -100,13 +100,13 @@ LangGraph State 适合另一类问题：行程聊天需要一轮里动态选择 
 
 把 fill 草稿持久化到数据库或 Job payload，使用户或 Worker 可以只重跑 route → verify → persist，避免再调用 `itinerary_gen`。成功终稿今天会写入行程表，但那是排路和核对之后的结果，不能当作「再排一次同一份 fill」。
 
-**现状：** 续跑已落地。fill 通过 `gate_fill_draft` 后，把这份草稿写入当前 `GenerationJob.payload["fill_draft"]`（与 `selected_entities` 同一 JSONB，不另做终稿真源）。然后才 route → verify → persist。Worker 内 `schedule_job_retry` 重领同一 Job，以及 `POST /trips/{id}/retry` 复制上一份 payload 再开 Job，只要草稿还在且再次过门，就跳过 fill / `itinerary_gen`，路线阶段文案为「沿用已生成的草稿，正在补路线...」。fill 失败或门禁失败不写草稿，重试仍整段 fill。终稿仍只在 `persist_itinerary` 成功后落行程表。尚未做：用户主动丢掉草稿再重填；生成 checkpointer 清除（本节第 3 条）。
+**现状：** 续跑已落地。fill 通过 `gate_fill_draft` 后，把这份草稿写入当前 `GenerationJob.payload["fill_draft"]`（与 `selected_entities` 同一 JSONB，不另做终稿真源）。然后才 route → verify → persist。Worker 内 `schedule_job_retry` 重领同一 Job，以及 `POST /trips/{id}/retry` 复制上一份 payload 再开 Job，只要草稿还在且再次过门，就跳过 fill / `itinerary_gen`，路线阶段文案为「沿用已生成的草稿，正在补路线...」。fill 失败或门禁失败不写草稿，重试仍整段 fill。终稿仍只在 `persist_itinerary` 成功后落行程表。尚未做：用户主动丢掉草稿再重填。生成 checkpointer 在新的 LLM fill 前清除，见本节第 3 条。
 
-### 3. 生成与聊天的 thread 前缀；生成侧重跑时丢掉过期 checkpoint（计划，聊天侧已落地）
+### 3. 生成与聊天的 thread 前缀；生成侧重跑时丢掉过期 checkpoint（LLM fill 前已清除）
 
-聊天已使用 `trip-chat-{id}`，并在每轮从库重载行程。生成仍使用 `trip-{id}`，新 Job 不会清空或跳过 `itinerary_gen` 的 PostgresSaver 历史。收紧时：新的一次生成应清除或跳过该 `trip-{id}` 上的旧消息，避免 checkpoint 里的上一份规划影响下一次 fill。勾选 fill 不经过该 Agent，这条只约束无勾选的 LLM fill。
+聊天已使用 `trip-chat-{id}`，并在每轮从库重载行程。生成仍使用 `trip-{id}`。新的一次会调用 `itinerary_gen` 的生成应清除该 `trip-{id}` 上的旧消息，避免 checkpoint 里的上一份规划影响下一次 fill。勾选 fill 与从 route 续跑不经过该 Agent，不清除这条线程。
 
-**现状：** 前缀隔离在协作侧已实现。生成侧未做清除或跳过。
+**现状：** 生成侧重填前清除已落地。协作侧不改：`chat_thread_id` 仍是 `trip-chat-{id}`，每轮从库重载行程，本条不改聊天 checkpointer。没有 `selected_entities`、也没有可复用的 `fill_draft` 时，Worker 在 `fill_itinerary_draft` 之前调用 `clear_itinerary_gen_thread`，即 `PostgresSaver.delete_thread`，只删除该 `trip-{id}` 在 `checkpoints`、`checkpoint_blobs`、`checkpoint_writes` 中的行，下一次 invoke 读不到上一份规划消息。勾选 fill 与从 route 续跑不调用 `itinerary_gen`，因此不清除。该函数拒绝 `trip-chat-` 前缀。checkpoint 里的行程 JSON 仍不是真源。本条没有剩余实现项；用户主动丢掉草稿再重填仍属第 2 条，那次若再走 LLM fill，会用同一条清除。
 
 ### 4. 前端把 verify / route 降级放到与「已生成」同一优先级（计划）
 
@@ -188,7 +188,7 @@ flowchart LR
 - `src/backend/app/services/itinerary_persistence.py` — 终稿落库，`status=generated`
 - `src/backend/app/services/generation_jobs.py` — `finalize_job_success`、`schedule_job_retry`、`mark_job_failed`
 - `src/backend/app/agents/tools/route_optimizer.py` — `optimize_itinerary`（生产排路函数）
-- `src/backend/app/agents/itinerary_gen.py` — 无勾选时的规划 Agent 与生成 checkpointer
+- `src/backend/app/agents/itinerary_gen.py` — 无勾选时的规划 Agent、生成 checkpointer，以及 `clear_itinerary_gen_thread`
 - `src/backend/app/agents/trip_assistant.py` — 协作 Agent，`trip-chat-{id}`
 - `src/backend/app/services/trip_chat.py` — 工具、`write_mode`、每轮从库加载
 - `src/backend/app/api/v1/trips.py` — `POST /trips/{id}/chat`、`/chat/stream`、`/retry`
